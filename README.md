@@ -10,7 +10,7 @@ All processing runs on-device.
 ## Tech Stack
 
 - Swift + SwiftUI
-- Core ML (`apple/coreml-depth-anything-v2-small`)
+- Core ML (Depth Anything v2 Base `.mlpackage`, user-supplied)
 - AVFoundation reader/writer pipeline
 - CPU stereo warp + lightweight hole fill
 
@@ -29,9 +29,9 @@ All processing runs on-device.
 /Users/easonsmith/Desktop/practice/StereoShift/StereoShift/scripts/download_depth_anything_v2.sh
 ```
 
-2. Open the Xcode project and ensure this folder exists in the app bundle resources:
+2. If the script cannot find a Base Core ML package automatically, place one manually at:
 
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Resources/DepthAnythingV2SmallFP16.mlpackage`
+- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Resources/DepthAnythingV2BaseFP16.mlpackage`
 
 `DepthEstimator` will load either compiled `.mlmodelc` or compile `.mlpackage` at runtime.
 

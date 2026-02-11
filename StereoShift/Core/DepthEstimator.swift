@@ -17,9 +17,9 @@ actor DepthEstimator {
     private let shortSide: Int = 518
     private let longSideMultiple: Int = 14
     private let modelNameCandidates = [
-        "DepthAnythingV2SmallFP16",
-        "DepthAnythingV2Small",
-        "coreml-depth-anything-v2-small"
+        "DepthAnythingV2BaseFP16",
+        "DepthAnythingV2Base",
+        "coreml-depth-anything-v2-base"
     ]
 
     private var model: MLModel?
