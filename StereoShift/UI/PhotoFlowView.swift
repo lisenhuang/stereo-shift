@@ -5,6 +5,8 @@ struct PhotoFlowView: View {
     let pipeline: StereoPipeline
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
+    @Binding var saveDestination: SaveDestination
+    @ObservedObject var galleryLibrary: AppGalleryLibrary
 
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceImage: CGImage?
@@ -15,6 +17,7 @@ struct PhotoFlowView: View {
     @State private var isSaving = false
     @State private var showShareSheet = false
     @State private var errorMessage: String?
+    @State private var saveMessage: String?
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var generateTask: Task<Void, Never>?
@@ -53,7 +56,10 @@ struct PhotoFlowView: View {
             if let outputFileURL {
                 HStack(spacing: 12) {
                     Button(action: saveOutputToPhotos) {
-                        Label(isSaving ? "Saving…" : "Save", systemImage: "square.and.arrow.down")
+                        Label(
+                            isSaving ? "Saving…" : saveDestination.saveButtonTitle,
+                            systemImage: "square.and.arrow.down"
+                        )
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -70,6 +76,13 @@ struct PhotoFlowView: View {
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputFileURL])
+                }
+
+                if let saveMessage {
+                    Text(saveMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -120,6 +133,7 @@ struct PhotoFlowView: View {
                     sourceImage = image
                     outputImage = nil
                     outputFileURL = nil
+                    saveMessage = nil
                     isLoadingSelection = false
                 }
             } catch {
@@ -155,6 +169,7 @@ struct PhotoFlowView: View {
                 await MainActor.run {
                     outputImage = output
                     outputFileURL = fileURL
+                    saveMessage = nil
                     isGenerating = false
                 }
             } catch {
@@ -170,10 +185,22 @@ struct PhotoFlowView: View {
     private func saveOutputToPhotos() {
         guard let outputFileURL else { return }
         isSaving = true
+        saveMessage = nil
 
         Task {
             do {
-                try await PhotoLibrarySaver.saveImageFile(at: outputFileURL)
+                switch saveDestination {
+                case .appGallery:
+                    _ = try await galleryLibrary.saveMedia(at: outputFileURL, type: .image)
+                    await MainActor.run {
+                        saveMessage = "Saved to App Gallery."
+                    }
+                case .photos:
+                    try await PhotoLibrarySaver.saveImageFile(at: outputFileURL)
+                    await MainActor.run {
+                        saveMessage = "Saved to Photos."
+                    }
+                }
                 await MainActor.run {
                     isSaving = false
                 }

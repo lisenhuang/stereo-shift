@@ -6,6 +6,8 @@ struct VideoFlowView: View {
     let pipeline: StereoPipeline
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
+    @Binding var saveDestination: SaveDestination
+    @ObservedObject var galleryLibrary: AppGalleryLibrary
 
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceVideoURL: URL?
@@ -15,6 +17,7 @@ struct VideoFlowView: View {
     @State private var isSaving = false
     @State private var showShareSheet = false
     @State private var errorMessage: String?
+    @State private var saveMessage: String?
     @State private var progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
 
     @State private var selectionTask: Task<Void, Never>?
@@ -52,7 +55,10 @@ struct VideoFlowView: View {
 
                 HStack(spacing: 12) {
                     Button(action: saveOutputToPhotos) {
-                        Label(isSaving ? "Saving…" : "Save", systemImage: "square.and.arrow.down")
+                        Label(
+                            isSaving ? "Saving…" : saveDestination.saveButtonTitle,
+                            systemImage: "square.and.arrow.down"
+                        )
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
@@ -69,6 +75,13 @@ struct VideoFlowView: View {
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputVideoURL])
+                }
+
+                if let saveMessage {
+                    Text(saveMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
         }
@@ -125,6 +138,7 @@ struct VideoFlowView: View {
                         TempFiles.removeItemIfExists(at: oldOutput)
                     }
                     outputVideoURL = nil
+                    saveMessage = nil
                     isLoadingSelection = false
                 }
             } catch {
@@ -166,6 +180,7 @@ struct VideoFlowView: View {
 
                 await MainActor.run {
                     outputVideoURL = outputURL
+                    saveMessage = nil
                     isProcessing = false
                 }
             } catch {
@@ -193,10 +208,22 @@ struct VideoFlowView: View {
     private func saveOutputToPhotos() {
         guard let outputVideoURL else { return }
         isSaving = true
+        saveMessage = nil
 
         Task {
             do {
-                try await PhotoLibrarySaver.saveVideoFile(at: outputVideoURL)
+                switch saveDestination {
+                case .appGallery:
+                    _ = try await galleryLibrary.saveMedia(at: outputVideoURL, type: .video)
+                    await MainActor.run {
+                        saveMessage = "Saved to App Gallery."
+                    }
+                case .photos:
+                    try await PhotoLibrarySaver.saveVideoFile(at: outputVideoURL)
+                    await MainActor.run {
+                        saveMessage = "Saved to Photos."
+                    }
+                }
                 await MainActor.run {
                     isSaving = false
                 }

@@ -1,8 +1,10 @@
 import AVKit
 import SwiftUI
+import UIKit
 
 enum PreviewMedia {
     case image(CGImage)
+    case imageFile(URL)
     case video(URL)
 }
 
@@ -24,6 +26,15 @@ struct ResultPreviewView: View {
                         .resizable()
                         .scaledToFit()
 
+                case let .imageFile(url):
+                    if let uiImage = UIImage(contentsOfFile: url.path) {
+                        Image(uiImage: uiImage)
+                            .resizable()
+                            .scaledToFit()
+                    } else {
+                        previewUnavailableView
+                    }
+
                 case let .video(url):
                     VideoPlayer(player: player)
                         .onAppear {
@@ -43,5 +54,14 @@ struct ResultPreviewView: View {
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var previewUnavailableView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+            Text("Preview unavailable")
+                .font(.subheadline)
+        }
+        .foregroundStyle(.secondary)
     }
 }

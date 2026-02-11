@@ -1,0 +1,273 @@
+import AVFoundation
+import SwiftUI
+import UIKit
+
+struct GalleryView: View {
+    @ObservedObject var galleryLibrary: AppGalleryLibrary
+    @State private var selectedItem: GalleryItem?
+
+    private let columns = [
+        GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .top)
+    ]
+
+    var body: some View {
+        VStack(spacing: 14) {
+            header
+
+            if galleryLibrary.items.isEmpty {
+                emptyState
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 12) {
+                        ForEach(galleryLibrary.items) { item in
+                            Button {
+                                selectedItem = item
+                            } label: {
+                                GalleryGridItemView(item: item)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .refreshable {
+                    galleryLibrary.reload()
+                }
+            }
+        }
+        .sheet(item: $selectedItem) { item in
+            GalleryItemDetailView(item: item)
+        }
+        .onAppear {
+            galleryLibrary.reload()
+        }
+    }
+
+    private var header: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("App Gallery")
+                    .font(.headline)
+                Text("Saved photos and videos stay on this device.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button {
+                galleryLibrary.reload()
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.headline)
+                    .padding(10)
+            }
+            .buttonStyle(.bordered)
+        }
+        .padding(16)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 36, weight: .medium))
+                .foregroundStyle(.secondary)
+            Text("No media in App Gallery yet.")
+                .font(.headline)
+            Text("Generate a photo or video, then choose \"Save to App\".")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(24)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
+private struct GalleryGridItemView: View {
+    let item: GalleryItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            GalleryThumbnailView(item: item)
+                .frame(height: 120)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.secondary.opacity(0.2))
+                }
+
+            Text(item.type == .image ? "Photo" : "Video")
+                .font(.subheadline.bold())
+
+            Text(Self.dateFormatter.string(from: item.createdAt))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+}
+
+private struct GalleryThumbnailView: View {
+    let item: GalleryItem
+    @State private var thumbnail: UIImage?
+
+    var body: some View {
+        ZStack {
+            if let thumbnail {
+                Image(uiImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+            } else {
+                Rectangle()
+                    .fill(Color.secondary.opacity(0.15))
+                    .overlay {
+                        Image(systemName: item.type == .image ? "photo" : "video")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+            }
+        }
+        .task(id: item.id) {
+            await loadThumbnail()
+        }
+    }
+
+    private func loadThumbnail() async {
+        if item.type == .image {
+            if let loaded = UIImage(contentsOfFile: item.url.path) {
+                await MainActor.run {
+                    thumbnail = loaded
+                }
+            }
+            return
+        }
+
+        do {
+            let generated = try await Task.detached(priority: .utility) {
+                let asset = AVAsset(url: item.url)
+                let generator = AVAssetImageGenerator(asset: asset)
+                generator.appliesPreferredTrackTransform = true
+                generator.maximumSize = CGSize(width: 600, height: 600)
+                let cgImage = try generator.copyCGImage(at: .zero, actualTime: nil)
+                return UIImage(cgImage: cgImage)
+            }.value
+            await MainActor.run {
+                thumbnail = generated
+            }
+        } catch {
+            await MainActor.run {
+                thumbnail = nil
+            }
+        }
+    }
+}
+
+private struct GalleryItemDetailView: View {
+    let item: GalleryItem
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var showShareSheet = false
+    @State private var isSaving = false
+    @State private var saveMessage: String?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    ResultPreviewView(title: "Preview", media: previewMedia)
+
+                    HStack(spacing: 12) {
+                        Button {
+                            showShareSheet = true
+                        } label: {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button(action: saveToPhotos) {
+                            Label(isSaving ? "Saving…" : "Save to Photos", systemImage: "square.and.arrow.down")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isSaving)
+                    }
+
+                    if let saveMessage {
+                        Text(saveMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 20)
+            }
+            .navigationTitle(item.type == .image ? "Photo" : "Video")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .sheet(isPresented: $showShareSheet) {
+                ShareSheet(items: [item.url])
+            }
+            .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
+                Button("OK", role: .cancel) {
+                    errorMessage = nil
+                }
+            } message: {
+                Text(errorMessage ?? "Something went wrong.")
+            }
+        }
+    }
+
+    private var previewMedia: PreviewMedia {
+        switch item.type {
+        case .image:
+            return .imageFile(item.url)
+        case .video:
+            return .video(item.url)
+        }
+    }
+
+    private func saveToPhotos() {
+        isSaving = true
+        saveMessage = nil
+
+        Task {
+            do {
+                switch item.type {
+                case .image:
+                    try await PhotoLibrarySaver.saveImageFile(at: item.url)
+                case .video:
+                    try await PhotoLibrarySaver.saveVideoFile(at: item.url)
+                }
+
+                await MainActor.run {
+                    isSaving = false
+                    saveMessage = "Saved to Photos."
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+}

@@ -4,14 +4,17 @@ struct HomeView: View {
     private enum Mode: String, CaseIterable, Identifiable {
         case photo = "Photo"
         case video = "Video"
+        case gallery = "Gallery"
 
         var id: String { rawValue }
     }
 
     @StateObject private var pipeline = StereoPipeline()
+    @StateObject private var galleryLibrary = AppGalleryLibrary()
     @State private var mode: Mode = .photo
     @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
+    @State private var saveDestination: SaveDestination = .appGallery
 
     var body: some View {
         NavigationStack {
@@ -19,20 +22,28 @@ struct HomeView: View {
                 VStack(spacing: 20) {
                     headerCard
                     modePicker
-                    controlsCard
+                    if mode != .gallery {
+                        controlsCard
+                    }
 
                     if mode == .photo {
                         PhotoFlowView(
                             pipeline: pipeline,
                             strength: $strength,
-                            sbsLayoutEnabled: $sbsLayoutEnabled
+                            sbsLayoutEnabled: $sbsLayoutEnabled,
+                            saveDestination: $saveDestination,
+                            galleryLibrary: galleryLibrary
                         )
-                    } else {
+                    } else if mode == .video {
                         VideoFlowView(
                             pipeline: pipeline,
                             strength: $strength,
-                            sbsLayoutEnabled: $sbsLayoutEnabled
+                            sbsLayoutEnabled: $sbsLayoutEnabled,
+                            saveDestination: $saveDestination,
+                            galleryLibrary: galleryLibrary
                         )
+                    } else {
+                        GalleryView(galleryLibrary: galleryLibrary)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -86,6 +97,13 @@ struct HomeView: View {
 
             Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                 .disabled(true)
+
+            Picker("Save To", selection: $saveDestination) {
+                ForEach(SaveDestination.allCases) { destination in
+                    Text(destination.rawValue).tag(destination)
+                }
+            }
+            .pickerStyle(.segmented)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
