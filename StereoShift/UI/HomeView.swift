@@ -15,41 +15,51 @@ struct HomeView: View {
     @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
     @State private var saveDestination: SaveDestination = .appGallery
+    private let bottomAnchorID = "content-bottom-anchor"
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(spacing: 20) {
-                    headerCard
-                    modePicker
-                    if mode != .gallery {
-                        controlsCard
-                    }
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(spacing: 20) {
+                        headerCard
+                        modePicker
 
-                    if mode == .photo {
-                        PhotoFlowView(
-                            pipeline: pipeline,
-                            strength: $strength,
-                            sbsLayoutEnabled: $sbsLayoutEnabled,
-                            saveDestination: $saveDestination,
-                            galleryLibrary: galleryLibrary
-                        )
-                    } else if mode == .video {
-                        VideoFlowView(
-                            pipeline: pipeline,
-                            strength: $strength,
-                            sbsLayoutEnabled: $sbsLayoutEnabled,
-                            saveDestination: $saveDestination,
-                            galleryLibrary: galleryLibrary
-                        )
-                    } else {
-                        GalleryView(galleryLibrary: galleryLibrary)
+                        if mode == .photo {
+                            PhotoFlowView(
+                                pipeline: pipeline,
+                                strength: $strength,
+                                sbsLayoutEnabled: $sbsLayoutEnabled,
+                                saveDestination: $saveDestination,
+                                galleryLibrary: galleryLibrary,
+                                onGenerated: {
+                                    scrollToBottom(using: proxy)
+                                }
+                            )
+                        } else if mode == .video {
+                            VideoFlowView(
+                                pipeline: pipeline,
+                                strength: $strength,
+                                sbsLayoutEnabled: $sbsLayoutEnabled,
+                                saveDestination: $saveDestination,
+                                galleryLibrary: galleryLibrary,
+                                onGenerated: {
+                                    scrollToBottom(using: proxy)
+                                }
+                            )
+                        } else {
+                            GalleryView(galleryLibrary: galleryLibrary)
+                        }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(bottomAnchorID)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 20)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 20)
+                .navigationTitle("StereoShift")
             }
-            .navigationTitle("StereoShift")
         }
     }
 
@@ -76,47 +86,13 @@ struct HomeView: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
-    private var controlsCard: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Text("3D Strength")
-                    .font(.headline)
-                Spacer()
-                Text(strengthLabel)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+    private func scrollToBottom(using proxy: ScrollViewProxy) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 160_000_000)
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
-
-            Slider(
-                value: Binding(
-                    get: { Double(strength) },
-                    set: { strength = Float($0) }
-                ),
-                in: 0.1...1.5
-            )
-
-            Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
-                .disabled(true)
-
-            Picker("Save To", selection: $saveDestination) {
-                ForEach(SaveDestination.allCases) { destination in
-                    Text(destination.rawValue).tag(destination)
-                }
-            }
-            .pickerStyle(.segmented)
         }
-        .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-    }
-
-    private var strengthLabel: String {
-        if strength < 0.45 {
-            return "Subtle"
-        }
-        if strength < 1.0 {
-            return "Balanced"
-        }
-        return "Strong"
     }
 }
 

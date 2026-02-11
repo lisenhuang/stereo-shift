@@ -8,6 +8,7 @@ struct VideoFlowView: View {
     @Binding var sbsLayoutEnabled: Bool
     @Binding var saveDestination: SaveDestination
     @ObservedObject var galleryLibrary: AppGalleryLibrary
+    let onGenerated: () -> Void
 
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceVideoURL: URL?
@@ -41,6 +42,8 @@ struct VideoFlowView: View {
             if let sourceVideoURL {
                 ResultPreviewView(title: "Input", media: .video(sourceVideoURL))
             }
+
+            controlsCard
 
             Button(action: generateSBSVideo) {
                 Label(isProcessing ? "Generating…" : "Generate", systemImage: "sparkles.tv")
@@ -182,6 +185,7 @@ struct VideoFlowView: View {
                     outputVideoURL = outputURL
                     saveMessage = nil
                     isProcessing = false
+                    onGenerated()
                 }
             } catch {
                 if Task.isCancelled {
@@ -242,5 +246,48 @@ struct VideoFlowView: View {
         let minutes = total / 60
         let remaining = total % 60
         return String(format: "%02d:%02d", minutes, remaining)
+    }
+
+    private var strengthLabel: String {
+        if strength < 0.45 {
+            return "Subtle"
+        }
+        if strength < 1.0 {
+            return "Balanced"
+        }
+        return "Strong"
+    }
+
+    private var controlsCard: some View {
+        VStack(spacing: 14) {
+            HStack {
+                Text("3D Strength")
+                    .font(.headline)
+                Spacer()
+                Text("\(strengthLabel) • \(strength.formatted(.number.precision(.fractionLength(2))))")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            Slider(
+                value: Binding(
+                    get: { Double(strength) },
+                    set: { strength = Float($0) }
+                ),
+                in: 0.1...1.5
+            )
+
+            Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
+                .disabled(true)
+
+            Picker("Save To", selection: $saveDestination) {
+                ForEach(SaveDestination.allCases) { destination in
+                    Text(destination.rawValue).tag(destination)
+                }
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(16)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 }
