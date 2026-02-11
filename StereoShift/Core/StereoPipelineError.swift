@@ -21,6 +21,9 @@ enum StereoPipelineError: LocalizedError {
     case mediaDecodingFailed
     case photoPickerDataUnavailable
     case photoDecodingFailed
+    case spatialImagePairUnavailable
+    case spatialViewsUnavailable
+    case spatialPickerUnavailable
     case temporaryFileCreationFailed
     case photoLibraryAccessDenied
 
@@ -64,6 +67,12 @@ enum StereoPipelineError: LocalizedError {
             return "No media data was returned from the picker."
         case .photoDecodingFailed:
             return "Unable to decode photo data."
+        case .spatialImagePairUnavailable:
+            return "Unable to extract left/right images from the selected spatial photo."
+        case .spatialViewsUnavailable:
+            return "Unable to extract left/right views from the selected spatial video."
+        case .spatialPickerUnavailable:
+            return "Spatial-only picking requires iOS 18 or later."
         case .temporaryFileCreationFailed:
             return "Unable to create a temporary file."
         case .photoLibraryAccessDenied:

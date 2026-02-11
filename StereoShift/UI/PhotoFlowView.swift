@@ -2,14 +2,23 @@ import PhotosUI
 import SwiftUI
 
 struct PhotoFlowView: View {
+    private enum InputMediaMode: String, CaseIterable, Identifiable {
+        case regular2D = "2D"
+        case spatial = "Spatial"
+
+        var id: String { rawValue }
+    }
+
     let pipeline: StereoPipeline
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
 
+    @State private var inputMode: InputMediaMode = .regular2D
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceImage: CGImage?
+    @State private var sourceSpatialPair: StereoImagePair?
     @State private var outputImage: CGImage?
     @State private var outputFileURL: URL?
     @State private var isLoadingSelection = false
@@ -24,13 +33,13 @@ struct PhotoFlowView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            PhotosPicker(selection: $selectedItem, matching: .images) {
-                Label(sourceImage == nil ? "Pick Photo" : "Pick Another Photo", systemImage: "photo")
+            PhotosPicker(selection: $selectedItem, matching: photoPickerFilter) {
+                Label(pickerButtonTitle, systemImage: "photo")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(isGenerating)
+            .disabled(isGenerating || (inputMode == .spatial && !supportsSpatialPicker))
 
             if isLoadingSelection {
                 ProgressView("Loading photo…")
@@ -44,12 +53,12 @@ struct PhotoFlowView: View {
             controlsCard
 
             Button(action: generateSBSPhoto) {
-                Label(isGenerating ? "Generating…" : "Generate", systemImage: "sparkles.rectangle.stack")
+                Label(generateButtonTitle, systemImage: "sparkles.rectangle.stack")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(sourceImage == nil || isGenerating || !sbsLayoutEnabled)
+            .disabled(!canGenerate)
 
             if let outputImage {
                 ResultPreviewView(title: "SBS Output", media: .image(outputImage))
@@ -57,9 +66,9 @@ struct PhotoFlowView: View {
 
             if let outputFileURL {
                 VStack(spacing: 10) {
-                    Button(action: saveOutputToInAppGallaey) {
+                    Button(action: saveOutputToInAppGallary) {
                         Label(
-                            isSaving ? "Saving…" : "Save to In-App Gallaey",
+                            isSaving ? "Saving…" : "Save to In-App Gallary",
                             systemImage: "tray.and.arrow.down"
                         )
                         .frame(maxWidth: .infinity)
@@ -101,9 +110,9 @@ struct PhotoFlowView: View {
         .overlay {
             if isGenerating {
                 ProgressViewOverlay(
-                    title: "Generating 3D Photo",
+                    title: progressTitle,
                     progress: 0.4,
-                    detail: "Estimating depth and rendering stereo views.",
+                    detail: progressDetail,
                     onCancel: nil
                 )
             }
@@ -111,6 +120,9 @@ struct PhotoFlowView: View {
         .animation(.easeInOut(duration: 0.2), value: isGenerating)
         .onChange(of: selectedItem) { _, newValue in
             loadSelectedPhoto(newValue)
+        }
+        .onChange(of: inputMode) { _, _ in
+            resetForSourceModeChange()
         }
         .onDisappear {
             selectionTask?.cancel()
@@ -125,11 +137,76 @@ struct PhotoFlowView: View {
         }
     }
 
+    private var supportsSpatialPicker: Bool {
+        if #available(iOS 18.0, *) {
+            return true
+        }
+        return false
+    }
+
+    private var photoPickerFilter: PHPickerFilter {
+        if inputMode == .spatial {
+            if #available(iOS 18.0, *) {
+                return .all(of: [.images, .spatialMedia])
+            }
+        }
+        return .images
+    }
+
+    private var pickerButtonTitle: String {
+        if inputMode == .spatial {
+            return sourceImage == nil ? "Pick Spatial Photo" : "Pick Another Spatial Photo"
+        }
+        return sourceImage == nil ? "Pick Photo" : "Pick Another Photo"
+    }
+
+    private var generateButtonTitle: String {
+        if isGenerating {
+            return inputMode == .spatial ? "Converting…" : "Generating…"
+        }
+        return inputMode == .spatial ? "Convert Spatial to SBS" : "Generate"
+    }
+
+    private var canGenerate: Bool {
+        guard sourceImage != nil, !isGenerating else { return false }
+        if inputMode == .spatial, !supportsSpatialPicker {
+            return false
+        }
+        if inputMode == .regular2D {
+            return sbsLayoutEnabled
+        }
+        return true
+    }
+
+    private var progressTitle: String {
+        inputMode == .spatial ? "Converting Spatial Photo" : "Generating 3D Photo"
+    }
+
+    private var progressDetail: String {
+        inputMode == .spatial
+            ? "Separating stereo views and building SBS output."
+            : "Estimating depth and rendering stereo views."
+    }
+
+    private func resetForSourceModeChange() {
+        selectionTask?.cancel()
+        generateTask?.cancel()
+
+        selectedItem = nil
+        sourceImage = nil
+        sourceSpatialPair = nil
+        outputImage = nil
+        outputFileURL = nil
+        saveMessage = nil
+        isLoadingSelection = false
+    }
+
     private func loadSelectedPhoto(_ item: PhotosPickerItem?) {
         selectionTask?.cancel()
 
         guard let item else {
             sourceImage = nil
+            sourceSpatialPair = nil
             outputImage = nil
             outputFileURL = nil
             return
@@ -138,15 +215,34 @@ struct PhotoFlowView: View {
         isLoadingSelection = true
         selectionTask = Task {
             do {
-                let image = try await MediaPicker.loadPhoto(from: item)
-                if Task.isCancelled { return }
+                if inputMode == .spatial {
+                    guard supportsSpatialPicker else {
+                        throw StereoPipelineError.spatialPickerUnavailable
+                    }
 
-                await MainActor.run {
-                    sourceImage = image
-                    outputImage = nil
-                    outputFileURL = nil
-                    saveMessage = nil
-                    isLoadingSelection = false
+                    let pair = try await MediaPicker.loadSpatialPhotoPair(from: item)
+                    if Task.isCancelled { return }
+
+                    await MainActor.run {
+                        sourceImage = pair.left
+                        sourceSpatialPair = pair
+                        outputImage = nil
+                        outputFileURL = nil
+                        saveMessage = nil
+                        isLoadingSelection = false
+                    }
+                } else {
+                    let image = try await MediaPicker.loadPhoto(from: item)
+                    if Task.isCancelled { return }
+
+                    await MainActor.run {
+                        sourceImage = image
+                        sourceSpatialPair = nil
+                        outputImage = nil
+                        outputFileURL = nil
+                        saveMessage = nil
+                        isLoadingSelection = false
+                    }
                 }
             } catch {
                 if Task.isCancelled { return }
@@ -159,10 +255,48 @@ struct PhotoFlowView: View {
     }
 
     private func generateSBSPhoto() {
-        guard let sourceImage else { return }
-
         generateTask?.cancel()
         isGenerating = true
+
+        if inputMode == .spatial {
+            guard let sourceSpatialPair else {
+                isGenerating = false
+                return
+            }
+
+            generateTask = Task.detached(priority: .userInitiated) {
+                do {
+                    try Task.checkCancellation()
+                    let output = try SpatialMediaConverter.makeSBSImage(from: sourceSpatialPair)
+                    let fileURL = try TempFiles.writePNG(cgImage: output, prefix: "stereoshift-spatial-photo")
+
+                    if Task.isCancelled {
+                        TempFiles.removeItemIfExists(at: fileURL)
+                        return
+                    }
+
+                    await MainActor.run {
+                        outputImage = output
+                        outputFileURL = fileURL
+                        saveMessage = nil
+                        isGenerating = false
+                        onGenerated()
+                    }
+                } catch {
+                    if Task.isCancelled { return }
+                    await MainActor.run {
+                        isGenerating = false
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
+            return
+        }
+
+        guard let sourceImage else {
+            isGenerating = false
+            return
+        }
 
         let renderer = pipeline.stereoRenderer
         let appliedStrength = strength
@@ -195,7 +329,7 @@ struct PhotoFlowView: View {
         }
     }
 
-    private func saveOutputToInAppGallaey() {
+    private func saveOutputToInAppGallary() {
         guard let outputFileURL else { return }
         isSaving = true
         saveMessage = nil
@@ -205,7 +339,7 @@ struct PhotoFlowView: View {
                 _ = try await galleryLibrary.saveMedia(at: outputFileURL, type: .image)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to In-App Gallaey."
+                    saveMessage = "Saved to In-App Gallary."
                 }
             } catch {
                 await MainActor.run {
@@ -249,25 +383,46 @@ struct PhotoFlowView: View {
 
     private var controlsCard: some View {
         VStack(spacing: 14) {
-            HStack {
-                Text("3D Strength")
-                    .font(.headline)
-                Spacer()
-                Text("\(strengthLabel) • \(strength.formatted(.number.precision(.fractionLength(2))))")
+            Picker("Input", selection: $inputMode) {
+                ForEach(InputMediaMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if inputMode == .regular2D {
+                HStack {
+                    Text("3D Strength")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(strengthLabel) • \(strength.formatted(.number.precision(.fractionLength(2))))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { Double(strength) },
+                        set: { strength = Float($0) }
+                    ),
+                    in: 0.1...1.5
+                )
+
+                Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
+                    .disabled(true)
+            } else {
+                Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !supportsSpatialPicker {
+                    Text("Spatial-only picker requires iOS 18 or later.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-
-            Slider(
-                value: Binding(
-                    get: { Double(strength) },
-                    set: { strength = Float($0) }
-                ),
-                in: 0.1...1.5
-            )
-
-            Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
-                .disabled(true)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

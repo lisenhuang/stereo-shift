@@ -3,12 +3,20 @@ import PhotosUI
 import SwiftUI
 
 struct VideoFlowView: View {
+    private enum InputMediaMode: String, CaseIterable, Identifiable {
+        case regular2D = "2D"
+        case spatial = "Spatial"
+
+        var id: String { rawValue }
+    }
+
     let pipeline: StereoPipeline
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
 
+    @State private var inputMode: InputMediaMode = .regular2D
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceVideoURL: URL?
     @State private var outputVideoURL: URL?
@@ -25,13 +33,13 @@ struct VideoFlowView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            PhotosPicker(selection: $selectedItem, matching: .videos) {
-                Label(sourceVideoURL == nil ? "Pick Video" : "Pick Another Video", systemImage: "video")
+            PhotosPicker(selection: $selectedItem, matching: videoPickerFilter) {
+                Label(pickerButtonTitle, systemImage: "video")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(isProcessing)
+            .disabled(isProcessing || (inputMode == .spatial && !supportsSpatialPicker))
 
             if isLoadingSelection {
                 ProgressView("Loading video…")
@@ -45,20 +53,20 @@ struct VideoFlowView: View {
             controlsCard
 
             Button(action: generateSBSVideo) {
-                Label(isProcessing ? "Generating…" : "Generate", systemImage: "sparkles.tv")
+                Label(generateButtonTitle, systemImage: "sparkles.tv")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(sourceVideoURL == nil || isProcessing || !sbsLayoutEnabled)
+            .disabled(!canGenerate)
 
             if let outputVideoURL {
                 ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL))
 
                 VStack(spacing: 10) {
-                    Button(action: saveOutputToInAppGallaey) {
+                    Button(action: saveOutputToInAppGallary) {
                         Label(
-                            isSaving ? "Saving…" : "Save to In-App Gallaey",
+                            isSaving ? "Saving…" : "Save to In-App Gallary",
                             systemImage: "tray.and.arrow.down"
                         )
                         .frame(maxWidth: .infinity)
@@ -100,7 +108,7 @@ struct VideoFlowView: View {
         .overlay {
             if isProcessing {
                 ProgressViewOverlay(
-                    title: "Rendering 3D Video",
+                    title: progressTitle,
                     progress: progressValue.fractionCompleted,
                     detail: progressDetail,
                     onCancel: cancelProcessing
@@ -110,6 +118,9 @@ struct VideoFlowView: View {
         .animation(.easeInOut(duration: 0.2), value: isProcessing)
         .onChange(of: selectedItem) { _, newValue in
             loadSelectedVideo(newValue)
+        }
+        .onChange(of: inputMode) { _, _ in
+            resetForSourceModeChange()
         }
         .onDisappear {
             selectionTask?.cancel()
@@ -124,9 +135,73 @@ struct VideoFlowView: View {
         }
     }
 
+    private var supportsSpatialPicker: Bool {
+        if #available(iOS 18.0, *) {
+            return true
+        }
+        return false
+    }
+
+    private var videoPickerFilter: PHPickerFilter {
+        if inputMode == .spatial {
+            if #available(iOS 18.0, *) {
+                return .all(of: [.videos, .spatialMedia])
+            }
+        }
+        return .videos
+    }
+
+    private var pickerButtonTitle: String {
+        if inputMode == .spatial {
+            return sourceVideoURL == nil ? "Pick Spatial Video" : "Pick Another Spatial Video"
+        }
+        return sourceVideoURL == nil ? "Pick Video" : "Pick Another Video"
+    }
+
+    private var generateButtonTitle: String {
+        if isProcessing {
+            return inputMode == .spatial ? "Converting…" : "Generating…"
+        }
+        return inputMode == .spatial ? "Convert Spatial to SBS" : "Generate"
+    }
+
+    private var canGenerate: Bool {
+        guard sourceVideoURL != nil, !isProcessing else { return false }
+        if inputMode == .spatial, !supportsSpatialPicker {
+            return false
+        }
+        if inputMode == .regular2D {
+            return sbsLayoutEnabled
+        }
+        return true
+    }
+
+    private var progressTitle: String {
+        inputMode == .spatial ? "Converting Spatial Video" : "Rendering 3D Video"
+    }
+
     private var progressDetail: String {
         let percent = Int((progressValue.fractionCompleted * 100).rounded())
+        if inputMode == .spatial {
+            return "\(percent)% • Extracting stereo views"
+        }
         return "\(percent)% • \(formatTime(progressValue.processedSeconds)) / \(formatTime(progressValue.totalSeconds))"
+    }
+
+    private func resetForSourceModeChange() {
+        selectionTask?.cancel()
+        processingTask?.cancel()
+
+        sourceVideoURL = nil
+        if let oldOutput = outputVideoURL {
+            TempFiles.removeItemIfExists(at: oldOutput)
+        }
+        outputVideoURL = nil
+        selectedItem = nil
+        saveMessage = nil
+        progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
+        isLoadingSelection = false
+        isProcessing = false
     }
 
     private func loadSelectedVideo(_ item: PhotosPickerItem?) {
@@ -141,6 +216,12 @@ struct VideoFlowView: View {
         isLoadingSelection = true
         selectionTask = Task {
             do {
+                if inputMode == .spatial {
+                    guard supportsSpatialPicker else {
+                        throw StereoPipelineError.spatialPickerUnavailable
+                    }
+                }
+
                 let loadedURL = try await MediaPicker.loadVideoURL(from: item)
                 if Task.isCancelled { return }
 
@@ -172,16 +253,27 @@ struct VideoFlowView: View {
 
         let processor = pipeline.videoProcessor
         let appliedStrength = strength
+        let usingSpatialMode = inputMode == .spatial
 
         processingTask = Task.detached(priority: .userInitiated) {
             do {
                 try Task.checkCancellation()
-                let outputURL = try await processor.processVideo(
-                    inputURL: sourceVideoURL,
-                    strength: appliedStrength
-                ) { update in
-                    Task { @MainActor in
-                        progressValue = update
+
+                let outputURL: URL
+                if usingSpatialMode {
+                    outputURL = try await SpatialMediaConverter.processSpatialVideo(inputURL: sourceVideoURL) { update in
+                        Task { @MainActor in
+                            progressValue = update
+                        }
+                    }
+                } else {
+                    outputURL = try await processor.processVideo(
+                        inputURL: sourceVideoURL,
+                        strength: appliedStrength
+                    ) { update in
+                        Task { @MainActor in
+                            progressValue = update
+                        }
                     }
                 }
 
@@ -218,7 +310,7 @@ struct VideoFlowView: View {
         isProcessing = false
     }
 
-    private func saveOutputToInAppGallaey() {
+    private func saveOutputToInAppGallary() {
         guard let outputVideoURL else { return }
         isSaving = true
         saveMessage = nil
@@ -228,7 +320,7 @@ struct VideoFlowView: View {
                 _ = try await galleryLibrary.saveMedia(at: outputVideoURL, type: .video)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to In-App Gallaey."
+                    saveMessage = "Saved to In-App Gallary."
                 }
             } catch {
                 await MainActor.run {
@@ -280,25 +372,46 @@ struct VideoFlowView: View {
 
     private var controlsCard: some View {
         VStack(spacing: 14) {
-            HStack {
-                Text("3D Strength")
-                    .font(.headline)
-                Spacer()
-                Text("\(strengthLabel) • \(strength.formatted(.number.precision(.fractionLength(2))))")
+            Picker("Input", selection: $inputMode) {
+                ForEach(InputMediaMode.allCases) { mode in
+                    Text(mode.rawValue).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            if inputMode == .regular2D {
+                HStack {
+                    Text("3D Strength")
+                        .font(.headline)
+                    Spacer()
+                    Text("\(strengthLabel) • \(strength.formatted(.number.precision(.fractionLength(2))))")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Slider(
+                    value: Binding(
+                        get: { Double(strength) },
+                        set: { strength = Float($0) }
+                    ),
+                    in: 0.1...1.5
+                )
+
+                Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
+                    .disabled(true)
+            } else {
+                Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !supportsSpatialPicker {
+                    Text("Spatial-only picker requires iOS 18 or later.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             }
-
-            Slider(
-                value: Binding(
-                    get: { Double(strength) },
-                    set: { strength = Float($0) }
-                ),
-                in: 0.1...1.5
-            )
-
-            Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
-                .disabled(true)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

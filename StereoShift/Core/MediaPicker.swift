@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -16,6 +17,11 @@ struct PickedVideoFile: Transferable {
             return PickedVideoFile(url: destinationURL)
         }
     }
+}
+
+struct StereoImagePair {
+    let left: CGImage
+    let right: CGImage
 }
 
 enum MediaPicker {
@@ -44,6 +50,34 @@ enum MediaPicker {
         }
 
         throw StereoPipelineError.photoPickerDataUnavailable
+    }
+
+    static func loadSpatialPhotoPair(from item: PhotosPickerItem) async throws -> StereoImagePair {
+        guard let data = try await item.loadTransferable(type: Data.self) else {
+            throw StereoPipelineError.photoPickerDataUnavailable
+        }
+
+        return try decodeSpatialPair(from: data)
+    }
+
+    private static func decodeSpatialPair(from data: Data) throws -> StereoImagePair {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            throw StereoPipelineError.photoDecodingFailed
+        }
+
+        let imageCount = CGImageSourceGetCount(source)
+        guard imageCount >= 2 else {
+            throw StereoPipelineError.spatialImagePairUnavailable
+        }
+
+        guard
+            let left = CGImageSourceCreateImageAtIndex(source, 0, nil),
+            let right = CGImageSourceCreateImageAtIndex(source, 1, nil)
+        else {
+            throw StereoPipelineError.spatialImagePairUnavailable
+        }
+
+        return StereoImagePair(left: left, right: right)
     }
 
     private static func normalizedCGImage(from image: UIImage) -> CGImage? {

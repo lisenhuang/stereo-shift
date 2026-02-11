@@ -46,7 +46,7 @@ struct GalleryView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("In-App Gallaey")
+                Text("In-App Gallary")
                     .font(.headline)
                 Text("Saved photos and videos stay on this device.")
                     .font(.subheadline)
@@ -71,9 +71,9 @@ struct GalleryView: View {
             Image(systemName: "photo.stack")
                 .font(.system(size: 36, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text("No media in In-App Gallaey yet.")
+            Text("No media in In-App Gallary yet.")
                 .font(.headline)
-            Text("Generate a photo or video, then choose \"Save to In-App Gallaey\".")
+            Text("Generate a photo or video, then choose \"Save to In-App Gallary\".")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -246,7 +246,7 @@ private struct GalleryItemDetailView: View {
                 Text(errorMessage ?? "Something went wrong.")
             }
             .confirmationDialog(
-                "Delete this item from In-App Gallaey?",
+                "Delete this item from In-App Gallary?",
                 isPresented: $showDeleteConfirmation,
                 titleVisibility: .visible
             ) {

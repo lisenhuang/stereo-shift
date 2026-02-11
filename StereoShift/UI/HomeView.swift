@@ -4,7 +4,7 @@ struct HomeView: View {
     private enum Mode: String, CaseIterable, Identifiable {
         case photo = "Photo"
         case video = "Video"
-        case gallery = "In-App Gallaey"
+        case gallery = "In-App Gallary"
 
         var id: String { rawValue }
     }
@@ -64,7 +64,7 @@ struct HomeView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("2D to 3D Side-by-Side")
                 .font(.title2.bold())
-            Text("Create left-right stereo photos and videos offline with Depth Anything v2.")
+            Text("Create left-right stereo photos and videos offline, or split spatial media directly into SBS.")
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
