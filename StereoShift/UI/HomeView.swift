@@ -10,7 +10,7 @@ struct HomeView: View {
 
     @StateObject private var pipeline = StereoPipeline()
     @State private var mode: Mode = .photo
-    @State private var strength: Float = 0.55
+    @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
 
     var body: some View {
@@ -81,7 +81,7 @@ struct HomeView: View {
                     get: { Double(strength) },
                     set: { strength = Float($0) }
                 ),
-                in: 0.15...1.0
+                in: 0.1...1.5
             )
 
             Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
@@ -92,10 +92,10 @@ struct HomeView: View {
     }
 
     private var strengthLabel: String {
-        if strength < 0.35 {
+        if strength < 0.45 {
             return "Subtle"
         }
-        if strength < 0.7 {
+        if strength < 1.0 {
             return "Balanced"
         }
         return "Strong"

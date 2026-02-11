@@ -11,7 +11,8 @@ final class StereoRenderer {
     }
 
     static func maxDisparity(forWidth width: Int) -> Float {
-        max(6, 24 * (Float(width) / 1280))
+        let scaled = 24 * (Float(width) / 720)
+        return min(max(8, scaled), 56)
     }
 
     func makeSBS(from image: CGImage, strength: Float) async throws -> CGImage {
@@ -28,7 +29,7 @@ final class StereoRenderer {
         let sourceBytes = try bgraBytes(from: rgb)
         let depthMap = try normalizedDepthMap(from: depth, targetWidth: width, targetHeight: height)
 
-        let clampedStrength = max(0, min(1, strength))
+        let clampedStrength = max(0, min(1.5, strength))
         let disparityScale = clampedStrength * Self.maxDisparity(forWidth: width)
         let disparity = depthMap.map { $0 * disparityScale }
 

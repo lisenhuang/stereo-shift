@@ -11,11 +11,13 @@ struct StereoShiftTests {
     }
 
     @Test func disparityScalesWithResolution() async throws {
-        let reference = StereoRenderer.maxDisparity(forWidth: 1280)
-        let smaller = StereoRenderer.maxDisparity(forWidth: 720)
+        let reference = StereoRenderer.maxDisparity(forWidth: 720)
+        let larger = StereoRenderer.maxDisparity(forWidth: 1280)
+        let minimum = StereoRenderer.maxDisparity(forWidth: 120)
 
         #expect(reference == 24)
-        #expect(smaller < reference)
-        #expect(smaller > 0)
+        #expect(larger > reference)
+        #expect(larger <= 56)
+        #expect(minimum >= 8)
     }
 }
