@@ -36,7 +36,7 @@ struct GalleryView: View {
             }
         }
         .sheet(item: $selectedItem) { item in
-            GalleryItemDetailView(item: item)
+            GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
         }
         .onAppear {
             galleryLibrary.reload()
@@ -46,7 +46,7 @@ struct GalleryView: View {
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("App Gallery")
+                Text("In-App Gallaey")
                     .font(.headline)
                 Text("Saved photos and videos stay on this device.")
                     .font(.subheadline)
@@ -71,9 +71,9 @@ struct GalleryView: View {
             Image(systemName: "photo.stack")
                 .font(.system(size: 36, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text("No media in App Gallery yet.")
+            Text("No media in In-App Gallaey yet.")
                 .font(.headline)
-            Text("Generate a photo or video, then choose \"Save to App\".")
+            Text("Generate a photo or video, then choose \"Save to In-App Gallaey\".")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -174,10 +174,13 @@ private struct GalleryThumbnailView: View {
 
 private struct GalleryItemDetailView: View {
     let item: GalleryItem
+    @ObservedObject var galleryLibrary: AppGalleryLibrary
     @Environment(\.dismiss) private var dismiss
 
     @State private var showShareSheet = false
+    @State private var showDeleteConfirmation = false
     @State private var isSaving = false
+    @State private var isDeleting = false
     @State private var saveMessage: String?
     @State private var errorMessage: String?
 
@@ -195,13 +198,14 @@ private struct GalleryItemDetailView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
+                        .disabled(isDeleting)
 
                         Button(action: saveToPhotos) {
                             Label(isSaving ? "Saving…" : "Save to Photos", systemImage: "square.and.arrow.down")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(isSaving)
+                        .disabled(isSaving || isDeleting)
                     }
 
                     if let saveMessage {
@@ -217,6 +221,14 @@ private struct GalleryItemDetailView: View {
             .navigationTitle(item.type == .image ? "Photo" : "Video")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(role: .destructive) {
+                        showDeleteConfirmation = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .disabled(isDeleting || isSaving)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Done") {
                         dismiss()
@@ -232,6 +244,16 @@ private struct GalleryItemDetailView: View {
                 }
             } message: {
                 Text(errorMessage ?? "Something went wrong.")
+            }
+            .confirmationDialog(
+                "Delete this item from In-App Gallaey?",
+                isPresented: $showDeleteConfirmation,
+                titleVisibility: .visible
+            ) {
+                Button("Delete", role: .destructive) {
+                    deleteItem()
+                }
+                Button("Cancel", role: .cancel) {}
             }
         }
     }
@@ -265,6 +287,25 @@ private struct GalleryItemDetailView: View {
             } catch {
                 await MainActor.run {
                     isSaving = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func deleteItem() {
+        isDeleting = true
+
+        Task {
+            do {
+                try await galleryLibrary.delete(item)
+                await MainActor.run {
+                    isDeleting = false
+                    dismiss()
+                }
+            } catch {
+                await MainActor.run {
+                    isDeleting = false
                     errorMessage = error.localizedDescription
                 }
             }

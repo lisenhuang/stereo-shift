@@ -52,6 +52,16 @@ final class AppGalleryLibrary: ObservableObject {
         )
     }
 
+    func delete(_ item: GalleryItem) async throws {
+        try await Task.detached(priority: .utility) {
+            try Self.deleteMedia(at: item.url)
+        }.value
+
+        await MainActor.run {
+            reload()
+        }
+    }
+
     private static func loadItems() throws -> [GalleryItem] {
         let directory = try galleryDirectory()
         let files = try FileManager.default.contentsOfDirectory(
@@ -94,6 +104,13 @@ final class AppGalleryLibrary: ObservableObject {
 
         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
         return destinationURL
+    }
+
+    private static func deleteMedia(at url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        try FileManager.default.removeItem(at: url)
     }
 
     private static func galleryDirectory() throws -> URL {

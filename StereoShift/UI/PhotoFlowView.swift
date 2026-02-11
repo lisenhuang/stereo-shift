@@ -5,7 +5,6 @@ struct PhotoFlowView: View {
     let pipeline: StereoPipeline
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
-    @Binding var saveDestination: SaveDestination
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
 
@@ -57,13 +56,23 @@ struct PhotoFlowView: View {
             }
 
             if let outputFileURL {
-                HStack(spacing: 12) {
+                VStack(spacing: 10) {
+                    Button(action: saveOutputToInAppGallaey) {
+                        Label(
+                            isSaving ? "Saving…" : "Save to In-App Gallaey",
+                            systemImage: "tray.and.arrow.down"
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isSaving || isGenerating)
+
                     Button(action: saveOutputToPhotos) {
                         Label(
-                            isSaving ? "Saving…" : saveDestination.saveButtonTitle,
+                            isSaving ? "Saving…" : "Save to Photos",
                             systemImage: "square.and.arrow.down"
                         )
-                            .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isGenerating)
@@ -75,7 +84,7 @@ struct PhotoFlowView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isGenerating)
+                    .disabled(isGenerating || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputFileURL])
@@ -186,6 +195,27 @@ struct PhotoFlowView: View {
         }
     }
 
+    private func saveOutputToInAppGallaey() {
+        guard let outputFileURL else { return }
+        isSaving = true
+        saveMessage = nil
+
+        Task {
+            do {
+                _ = try await galleryLibrary.saveMedia(at: outputFileURL, type: .image)
+                await MainActor.run {
+                    isSaving = false
+                    saveMessage = "Saved to In-App Gallaey."
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func saveOutputToPhotos() {
         guard let outputFileURL else { return }
         isSaving = true
@@ -193,20 +223,10 @@ struct PhotoFlowView: View {
 
         Task {
             do {
-                switch saveDestination {
-                case .appGallery:
-                    _ = try await galleryLibrary.saveMedia(at: outputFileURL, type: .image)
-                    await MainActor.run {
-                        saveMessage = "Saved to App Gallery."
-                    }
-                case .photos:
-                    try await PhotoLibrarySaver.saveImageFile(at: outputFileURL)
-                    await MainActor.run {
-                        saveMessage = "Saved to Photos."
-                    }
-                }
+                try await PhotoLibrarySaver.saveImageFile(at: outputFileURL)
                 await MainActor.run {
                     isSaving = false
+                    saveMessage = "Saved to Photos."
                 }
             } catch {
                 await MainActor.run {
@@ -248,13 +268,6 @@ struct PhotoFlowView: View {
 
             Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                 .disabled(true)
-
-            Picker("Save To", selection: $saveDestination) {
-                ForEach(SaveDestination.allCases) { destination in
-                    Text(destination.rawValue).tag(destination)
-                }
-            }
-            .pickerStyle(.segmented)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

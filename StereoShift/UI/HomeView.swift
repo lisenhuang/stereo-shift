@@ -4,7 +4,7 @@ struct HomeView: View {
     private enum Mode: String, CaseIterable, Identifiable {
         case photo = "Photo"
         case video = "Video"
-        case gallery = "Gallery"
+        case gallery = "In-App Gallaey"
 
         var id: String { rawValue }
     }
@@ -14,7 +14,6 @@ struct HomeView: View {
     @State private var mode: Mode = .photo
     @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
-    @State private var saveDestination: SaveDestination = .appGallery
     private let bottomAnchorID = "content-bottom-anchor"
 
     var body: some View {
@@ -30,7 +29,6 @@ struct HomeView: View {
                                 pipeline: pipeline,
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
-                                saveDestination: $saveDestination,
                                 galleryLibrary: galleryLibrary,
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
@@ -41,7 +39,6 @@ struct HomeView: View {
                                 pipeline: pipeline,
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
-                                saveDestination: $saveDestination,
                                 galleryLibrary: galleryLibrary,
                                 onGenerated: {
                                     scrollToBottom(using: proxy)

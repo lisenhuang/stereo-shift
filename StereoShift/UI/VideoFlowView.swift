@@ -6,7 +6,6 @@ struct VideoFlowView: View {
     let pipeline: StereoPipeline
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
-    @Binding var saveDestination: SaveDestination
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
 
@@ -56,13 +55,23 @@ struct VideoFlowView: View {
             if let outputVideoURL {
                 ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL))
 
-                HStack(spacing: 12) {
+                VStack(spacing: 10) {
+                    Button(action: saveOutputToInAppGallaey) {
+                        Label(
+                            isSaving ? "Saving…" : "Save to In-App Gallaey",
+                            systemImage: "tray.and.arrow.down"
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isSaving || isProcessing)
+
                     Button(action: saveOutputToPhotos) {
                         Label(
-                            isSaving ? "Saving…" : saveDestination.saveButtonTitle,
+                            isSaving ? "Saving…" : "Save to Photos",
                             systemImage: "square.and.arrow.down"
                         )
-                            .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isProcessing)
@@ -74,7 +83,7 @@ struct VideoFlowView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isProcessing)
+                    .disabled(isProcessing || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputVideoURL])
@@ -209,6 +218,27 @@ struct VideoFlowView: View {
         isProcessing = false
     }
 
+    private func saveOutputToInAppGallaey() {
+        guard let outputVideoURL else { return }
+        isSaving = true
+        saveMessage = nil
+
+        Task {
+            do {
+                _ = try await galleryLibrary.saveMedia(at: outputVideoURL, type: .video)
+                await MainActor.run {
+                    isSaving = false
+                    saveMessage = "Saved to In-App Gallaey."
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
     private func saveOutputToPhotos() {
         guard let outputVideoURL else { return }
         isSaving = true
@@ -216,20 +246,10 @@ struct VideoFlowView: View {
 
         Task {
             do {
-                switch saveDestination {
-                case .appGallery:
-                    _ = try await galleryLibrary.saveMedia(at: outputVideoURL, type: .video)
-                    await MainActor.run {
-                        saveMessage = "Saved to App Gallery."
-                    }
-                case .photos:
-                    try await PhotoLibrarySaver.saveVideoFile(at: outputVideoURL)
-                    await MainActor.run {
-                        saveMessage = "Saved to Photos."
-                    }
-                }
+                try await PhotoLibrarySaver.saveVideoFile(at: outputVideoURL)
                 await MainActor.run {
                     isSaving = false
+                    saveMessage = "Saved to Photos."
                 }
             } catch {
                 await MainActor.run {
@@ -279,13 +299,6 @@ struct VideoFlowView: View {
 
             Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                 .disabled(true)
-
-            Picker("Save To", selection: $saveDestination) {
-                ForEach(SaveDestination.allCases) { destination in
-                    Text(destination.rawValue).tag(destination)
-                }
-            }
-            .pickerStyle(.segmented)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

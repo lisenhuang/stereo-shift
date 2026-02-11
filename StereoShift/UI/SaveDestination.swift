@@ -1,7 +1,7 @@
 import Foundation
 
 enum SaveDestination: String, CaseIterable, Identifiable {
-    case appGallery = "App Gallery"
+    case appGallery = "In-App Gallaey"
     case photos = "Photos"
 
     var id: String { rawValue }
@@ -9,7 +9,7 @@ enum SaveDestination: String, CaseIterable, Identifiable {
     var saveButtonTitle: String {
         switch self {
         case .appGallery:
-            return "Save to App"
+            return "Save to In-App Gallaey"
         case .photos:
             return "Save to Photos"
         }
