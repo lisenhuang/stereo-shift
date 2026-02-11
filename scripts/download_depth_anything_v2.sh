@@ -4,16 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEST_DIR="${REPO_ROOT}/StereoShift/Resources"
-DEST_MODEL="${DEST_DIR}/DepthAnythingV2BaseFP16.mlpackage"
-DEFAULT_MODEL_IDS=(
-  "apple/coreml-depth-anything-v2-base"
-)
-
-if [[ -n "${DEPTH_ANYTHING_V2_BASE_MODEL_ID:-}" ]]; then
-  MODEL_IDS=("${DEPTH_ANYTHING_V2_BASE_MODEL_ID}")
-else
-  MODEL_IDS=("${DEFAULT_MODEL_IDS[@]}")
-fi
+MODEL_ID="${DEPTH_ANYTHING_V2_MODEL_ID:-apple/coreml-depth-anything-v2-small}"
+MODEL_PACKAGE_NAME="${DEPTH_ANYTHING_V2_MODEL_PACKAGE_NAME:-DepthAnythingV2SmallF32.mlpackage}"
+DEST_MODEL="${DEST_DIR}/${MODEL_PACKAGE_NAME}"
+INCLUDE_PATTERN="${MODEL_PACKAGE_NAME}/**"
+ZIP_NAME="${MODEL_PACKAGE_NAME}.zip"
 
 mkdir -p "${DEST_DIR}"
 TMP_DIR="$(mktemp -d)"
@@ -34,12 +29,11 @@ MSG
 fi
 
 download_model() {
-  local model_id="$1"
-  local destination="$2"
+  local destination="$1"
   if [[ "${DOWNLOAD_TOOL}" == "hf" ]]; then
-    hf download "${model_id}" --repo-type model --include "*.mlpackage/**" --include "*.mlpackage.zip" --local-dir "${destination}" >/dev/null
+    hf download "${MODEL_ID}" --repo-type model --include "${INCLUDE_PATTERN}" --include "${ZIP_NAME}" --local-dir "${destination}" >/dev/null
   else
-    huggingface-cli download "${model_id}" --repo-type model --include "*.mlpackage/**" --include "*.mlpackage.zip" --local-dir "${destination}" >/dev/null
+    huggingface-cli download "${MODEL_ID}" --repo-type model --include "${INCLUDE_PATTERN}" --include "${ZIP_NAME}" --local-dir "${destination}" >/dev/null
   fi
 }
 
@@ -49,13 +43,13 @@ find_package() {
   local found_archive
   local unzip_dir
 
-  found_model="$(find "${search_dir}" -type d -name "*.mlpackage" | head -n 1 || true)"
+  found_model="$(find "${search_dir}" -type d -name "${MODEL_PACKAGE_NAME}" | head -n 1 || true)"
   if [[ -n "${found_model}" ]]; then
     echo "${found_model}"
     return 0
   fi
 
-  found_archive="$(find "${search_dir}" -type f -name "*.mlpackage.zip" | head -n 1 || true)"
+  found_archive="$(find "${search_dir}" -type f -name "${ZIP_NAME}" | head -n 1 || true)"
   if [[ -z "${found_archive}" ]]; then
     return 1
   fi
@@ -63,7 +57,7 @@ find_package() {
   unzip_dir="${search_dir}/unzipped"
   mkdir -p "${unzip_dir}"
   unzip -q -o "${found_archive}" -d "${unzip_dir}"
-  found_model="$(find "${unzip_dir}" -type d -name "*.mlpackage" | head -n 1 || true)"
+  found_model="$(find "${unzip_dir}" -type d -name "${MODEL_PACKAGE_NAME}" | head -n 1 || true)"
   if [[ -n "${found_model}" ]]; then
     echo "${found_model}"
     return 0
@@ -72,39 +66,24 @@ find_package() {
   return 1
 }
 
-for model_id in "${MODEL_IDS[@]}"; do
-  attempt_dir="${TMP_DIR}/$(echo "${model_id}" | tr '/:' '__')"
-  mkdir -p "${attempt_dir}"
-  echo "Trying ${model_id}..."
+echo "Downloading ${MODEL_PACKAGE_NAME} from ${MODEL_ID}..."
+if ! download_model "${TMP_DIR}"; then
+  echo "Failed to download from ${MODEL_ID}."
+  exit 1
+fi
 
-  if ! download_model "${model_id}" "${attempt_dir}"; then
-    echo "Failed to download from ${model_id}."
-    continue
-  fi
+FOUND_MODEL="$(find_package "${TMP_DIR}" || true)"
+if [[ -z "${FOUND_MODEL}" ]]; then
+  cat <<MSG
+Could not find ${MODEL_PACKAGE_NAME} in ${MODEL_ID}.
 
-  found_model="$(find_package "${attempt_dir}" || true)"
-  if [[ -z "${found_model}" ]]; then
-    echo "No .mlpackage asset found in ${model_id}."
-    continue
-  fi
-
-  rm -rf "${DEST_MODEL}"
-  cp -R "${found_model}" "${DEST_MODEL}"
-  echo "Model installed from ${model_id} to: ${DEST_MODEL}"
-  exit 0
-done
-
-cat <<MSG
-Unable to download a Depth Anything v2 Base Core ML package automatically.
-
-As of February 11, 2026, Apple's Core ML Depth Anything collection only lists:
-  - apple/coreml-depth-anything-v2-small
-
-To use ViT-B, provide a compatible Base Core ML package manually:
-  ${DEST_MODEL}
-
-Optional:
-  DEPTH_ANYTHING_V2_BASE_MODEL_ID=<your-model-repo-id> ${0}
+You can override defaults:
+  DEPTH_ANYTHING_V2_MODEL_ID=<repo-id>
+  DEPTH_ANYTHING_V2_MODEL_PACKAGE_NAME=<package-name>.mlpackage
 MSG
+  exit 1
+fi
 
-exit 1
+rm -rf "${DEST_MODEL}"
+cp -R "${FOUND_MODEL}" "${DEST_MODEL}"
+echo "Model installed to: ${DEST_MODEL}"
