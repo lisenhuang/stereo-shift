@@ -5,7 +5,7 @@ import Foundation
 final class StereoRenderer {
     private let depthEstimator: DepthEstimator
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
-    private var isKernelWarpEnabled = true
+    private var isKernelWarpEnabled = false
     private static let stereoWarpKernel: CIKernel? = {
         let source = """
         kernel vec4 stereoWarp(sampler colorImage, sampler depthImage, float direction, float maxShift, float minDepth, float invRange, float invertDepth) {
