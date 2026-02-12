@@ -70,7 +70,7 @@ enum StereoPipelineError: LocalizedError {
         case .spatialImagePairUnavailable:
             return "Unable to extract left/right images from the selected spatial photo."
         case .spatialViewsUnavailable:
-            return "Unable to extract left/right views from the selected spatial video."
+            return "Unable to extract left/right views from the selected spatial video. Please choose an original spatial video."
         case .spatialPickerUnavailable:
             return "Spatial-only picking requires iOS 18 or later."
         case .temporaryFileCreationFailed:

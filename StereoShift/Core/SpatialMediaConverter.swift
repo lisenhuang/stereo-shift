@@ -6,6 +6,14 @@ import VideoToolbox
 
 enum SpatialMediaConverter {
     private static let ciContext = CIContext(options: [.cacheIntermediates: false])
+    private static let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+    private static let spatialMaxDimension = 640
+
+    private struct PreparedSpatialFrame {
+        let presentationTime: CMTime
+        let sbsFrame: CVPixelBuffer
+        let processedSeconds: Double
+    }
 
     static func makeSBSImage(from pair: StereoImagePair) throws -> CGImage {
         let targetWidth = min(pair.left.width, pair.right.width)
@@ -18,6 +26,45 @@ enum SpatialMediaConverter {
     }
 
     static func processSpatialVideo(
+        inputURL: URL,
+        progress: @escaping @Sendable (VideoProcessingProgress) -> Void
+    ) async throws -> URL {
+        do {
+            return try await processSpatialVideoUsingTaggedBuffers(inputURL: inputURL, progress: progress)
+        } catch {
+            if error is CancellationError {
+                throw StereoPipelineError.processingCancelled
+            }
+
+            if let pipelineError = error as? StereoPipelineError, case .processingCancelled = pipelineError {
+                throw pipelineError
+            }
+
+            let taggedPathDescription = (error as NSError).localizedDescription
+
+            do {
+                return try await processSpatialVideoUsingLayerReaders(inputURL: inputURL, progress: progress)
+            } catch {
+                if error is CancellationError {
+                    throw StereoPipelineError.processingCancelled
+                }
+                if let pipelineError = error as? StereoPipelineError, case .processingCancelled = pipelineError {
+                    throw pipelineError
+                }
+
+                let layerPathDescription = (error as NSError).localizedDescription
+                throw NSError(
+                    domain: "SpatialMediaConverter",
+                    code: -1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Spatial conversion failed. Tagged path: \(taggedPathDescription). Layer path: \(layerPathDescription). Please choose an original spatial video."
+                    ]
+                )
+            }
+        }
+    }
+
+    private static func processSpatialVideoUsingTaggedBuffers(
         inputURL: URL,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
@@ -34,22 +81,15 @@ enum SpatialMediaConverter {
         let outputURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-spatial-video", fileExtension: "mp4")
         TempFiles.removeItemIfExists(at: outputURL)
 
-        let leftReader = try AVAssetReader(asset: asset)
-        let rightReader = try AVAssetReader(asset: asset)
-        let leftOutput = makeLayerReaderOutput(track: videoTrack, layerID: 0)
-        let rightOutput = makeLayerReaderOutput(track: videoTrack, layerID: 1)
-
-        guard leftReader.canAdd(leftOutput), rightReader.canAdd(rightOutput) else {
+        let reader = try AVAssetReader(asset: asset)
+        let readerOutput = makeLayerReaderOutput(track: videoTrack, layerIDs: [0, 1])
+        guard reader.canAdd(readerOutput) else {
             throw StereoPipelineError.readerSetupFailed
         }
-        leftReader.add(leftOutput)
-        rightReader.add(rightOutput)
+        reader.add(readerOutput)
 
-        guard leftReader.startReading() else {
-            throw leftReader.error ?? StereoPipelineError.readerSetupFailed
-        }
-        guard rightReader.startReading() else {
-            throw rightReader.error ?? StereoPipelineError.readerSetupFailed
+        guard reader.startReading() else {
+            throw reader.error ?? StereoPipelineError.readerSetupFailed
         }
 
         progress(VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: totalDurationSeconds))
@@ -59,41 +99,46 @@ enum SpatialMediaConverter {
         var adaptor: AVAssetWriterInputPixelBufferAdaptor?
         var processingSize: CGSize?
         var wroteAnyFrames = false
+        var processedFrameCount = 0
 
         do {
-            while leftReader.status == .reading, rightReader.status == .reading {
+            while reader.status == .reading {
                 try Task.checkCancellation()
 
-                guard
-                    let leftSampleBuffer = leftOutput.copyNextSampleBuffer(),
-                    let rightSampleBuffer = rightOutput.copyNextSampleBuffer()
-                else {
+                guard let sampleBuffer = readerOutput.copyNextSampleBuffer() else {
                     break
                 }
 
-                let presentationTime = CMSampleBufferGetPresentationTimeStamp(leftSampleBuffer)
-                guard
-                    let leftRawBuffer = CMSampleBufferGetImageBuffer(leftSampleBuffer),
-                    let rightRawBuffer = CMSampleBufferGetImageBuffer(rightSampleBuffer)
-                else {
-                    throw StereoPipelineError.spatialViewsUnavailable
-                }
+                let frame = try autoreleasepool { () throws -> PreparedSpatialFrame in
+                    let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                    let rawPair = try extractSpatialStereoPair(from: sampleBuffer)
 
-                if processingSize == nil {
-                    let rawSize = CGSize(width: CVPixelBufferGetWidth(leftRawBuffer), height: CVPixelBufferGetHeight(leftRawBuffer))
-                    let oriented = orientedSize(naturalSize: rawSize, preferredTransform: preferredTransform)
-                    processingSize = VideoProcessor.processingSize(for: oriented, maxDimension: 720)
-                }
+                    if processingSize == nil {
+                        let rawSize = CGSize(width: CVPixelBufferGetWidth(rawPair.left), height: CVPixelBufferGetHeight(rawPair.left))
+                        let oriented = orientedSize(naturalSize: rawSize, preferredTransform: preferredTransform)
+                        processingSize = VideoProcessor.processingSize(for: oriented, maxDimension: spatialMaxDimension)
+                    }
 
-                guard let processingSize else {
-                    throw StereoPipelineError.exportFailed
-                }
+                    guard let processingSize else {
+                        throw StereoPipelineError.exportFailed
+                    }
 
-                let left = try makeUprightAndScaledBuffer(from: leftRawBuffer, transform: preferredTransform, targetSize: processingSize)
-                let right = try makeUprightAndScaledBuffer(from: rightRawBuffer, transform: preferredTransform, targetSize: processingSize)
-                let sbsFrame = try makeSBSPixelBuffer(left: left, right: right)
+                    let left = try makeUprightAndScaledBuffer(from: rawPair.left, transform: preferredTransform, targetSize: processingSize)
+                    let right = try makeUprightAndScaledBuffer(from: rawPair.right, transform: preferredTransform, targetSize: processingSize)
+                    let sbsFrame = try makeSBSPixelBuffer(left: left, right: right)
+                    let processedSeconds = max(CMTimeGetSeconds(presentationTime), 0)
+
+                    return PreparedSpatialFrame(
+                        presentationTime: presentationTime,
+                        sbsFrame: sbsFrame,
+                        processedSeconds: processedSeconds
+                    )
+                }
 
                 if writer == nil || writerInput == nil || adaptor == nil {
+                    guard let processingSize else {
+                        throw StereoPipelineError.exportFailed
+                    }
                     let outputWidth = Int(processingSize.width) * 2
                     let outputHeight = Int(processingSize.height)
                     let created = try makeWriterContext(outputURL: outputURL, width: outputWidth, height: outputHeight)
@@ -108,24 +153,198 @@ enum SpatialMediaConverter {
                     guard writer.startWriting() else {
                         throw writer.error ?? StereoPipelineError.writerSetupFailed
                     }
-                    writer.startSession(atSourceTime: presentationTime)
+                    writer.startSession(atSourceTime: frame.presentationTime)
                 }
 
                 try await append(
-                    pixelBuffer: sbsFrame,
-                    at: presentationTime,
+                    pixelBuffer: frame.sbsFrame,
+                    at: frame.presentationTime,
                     to: adaptor!,
                     writerInput: writerInput!,
                     writer: writer!
                 )
 
                 wroteAnyFrames = true
+                processedFrameCount += 1
+                if processedFrameCount % 90 == 0 {
+                    ciContext.clearCaches()
+                    PixelBufferUtilities.sharedCIContext.clearCaches()
+                }
 
-                let processedSeconds = max(CMTimeGetSeconds(presentationTime), 0)
-                let fraction = max(0, min(1, processedSeconds / totalDurationSeconds))
+                let fraction = max(0, min(1, frame.processedSeconds / totalDurationSeconds))
                 progress(VideoProcessingProgress(
                     fractionCompleted: fraction,
-                    processedSeconds: processedSeconds,
+                    processedSeconds: frame.processedSeconds,
+                    totalSeconds: totalDurationSeconds
+                ))
+            }
+
+            if reader.status == .failed {
+                throw reader.error ?? StereoPipelineError.readerSetupFailed
+            }
+            if reader.status == .cancelled {
+                throw StereoPipelineError.processingCancelled
+            }
+            guard wroteAnyFrames, let writer, let writerInput else {
+                throw StereoPipelineError.spatialViewsUnavailable
+            }
+
+            writerInput.markAsFinished()
+            try await finishWriting(writer)
+
+            if writer.status != .completed {
+                throw writer.error ?? StereoPipelineError.exportFailed
+            }
+
+            progress(VideoProcessingProgress(
+                fractionCompleted: 1,
+                processedSeconds: totalDurationSeconds,
+                totalSeconds: totalDurationSeconds
+            ))
+
+            return outputURL
+        } catch {
+            reader.cancelReading()
+            writer?.cancelWriting()
+            TempFiles.removeItemIfExists(at: outputURL)
+
+            if error is CancellationError {
+                throw StereoPipelineError.processingCancelled
+            }
+            throw error
+        }
+    }
+
+    private static func processSpatialVideoUsingLayerReaders(
+        inputURL: URL,
+        progress: @escaping @Sendable (VideoProcessingProgress) -> Void
+    ) async throws -> URL {
+        let asset = AVAsset(url: inputURL)
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        guard let videoTrack = videoTracks.first else {
+            throw StereoPipelineError.noVideoTrack
+        }
+
+        let duration = try await asset.load(.duration)
+        let totalDurationSeconds = max(CMTimeGetSeconds(duration), 0.001)
+        let preferredTransform = try await videoTrack.load(.preferredTransform)
+
+        let outputURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-spatial-video", fileExtension: "mp4")
+        TempFiles.removeItemIfExists(at: outputURL)
+
+        guard let layerPair = try detectStereoLayerPair(asset: asset, track: videoTrack) else {
+            throw StereoPipelineError.spatialViewsUnavailable
+        }
+
+        let leftReader = try AVAssetReader(asset: asset)
+        let rightReader = try AVAssetReader(asset: asset)
+        let leftOutput = makeLayerReaderOutput(track: videoTrack, layerIDs: [layerPair.leftLayerID])
+        let rightOutput = makeLayerReaderOutput(track: videoTrack, layerIDs: [layerPair.rightLayerID])
+
+        guard leftReader.canAdd(leftOutput), rightReader.canAdd(rightOutput) else {
+            throw StereoPipelineError.readerSetupFailed
+        }
+
+        leftReader.add(leftOutput)
+        rightReader.add(rightOutput)
+        guard leftReader.startReading() else {
+            throw leftReader.error ?? StereoPipelineError.readerSetupFailed
+        }
+        guard rightReader.startReading() else {
+            throw rightReader.error ?? StereoPipelineError.readerSetupFailed
+        }
+
+        progress(VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: totalDurationSeconds))
+
+        var writer: AVAssetWriter?
+        var writerInput: AVAssetWriterInput?
+        var adaptor: AVAssetWriterInputPixelBufferAdaptor?
+        var processingSize: CGSize?
+        var wroteAnyFrames = false
+        var processedFrameCount = 0
+
+        do {
+            while leftReader.status == .reading, rightReader.status == .reading {
+                try Task.checkCancellation()
+
+                guard
+                    let leftSampleBuffer = leftOutput.copyNextSampleBuffer(),
+                    let rightSampleBuffer = rightOutput.copyNextSampleBuffer()
+                else {
+                    break
+                }
+
+                let frame = try autoreleasepool { () throws -> PreparedSpatialFrame in
+                    let presentationTime = CMSampleBufferGetPresentationTimeStamp(leftSampleBuffer)
+                    guard
+                        let leftRawBuffer = CMSampleBufferGetImageBuffer(leftSampleBuffer),
+                        let rightRawBuffer = CMSampleBufferGetImageBuffer(rightSampleBuffer)
+                    else {
+                        throw StereoPipelineError.spatialViewsUnavailable
+                    }
+
+                    if processingSize == nil {
+                        let rawSize = CGSize(width: CVPixelBufferGetWidth(leftRawBuffer), height: CVPixelBufferGetHeight(leftRawBuffer))
+                        let oriented = orientedSize(naturalSize: rawSize, preferredTransform: preferredTransform)
+                        processingSize = VideoProcessor.processingSize(for: oriented, maxDimension: spatialMaxDimension)
+                    }
+
+                    guard let processingSize else {
+                        throw StereoPipelineError.exportFailed
+                    }
+
+                    let left = try makeUprightAndScaledBuffer(from: leftRawBuffer, transform: preferredTransform, targetSize: processingSize)
+                    let right = try makeUprightAndScaledBuffer(from: rightRawBuffer, transform: preferredTransform, targetSize: processingSize)
+                    let sbsFrame = try makeSBSPixelBuffer(left: left, right: right)
+                    let processedSeconds = max(CMTimeGetSeconds(presentationTime), 0)
+
+                    return PreparedSpatialFrame(
+                        presentationTime: presentationTime,
+                        sbsFrame: sbsFrame,
+                        processedSeconds: processedSeconds
+                    )
+                }
+
+                if writer == nil || writerInput == nil || adaptor == nil {
+                    guard let processingSize else {
+                        throw StereoPipelineError.exportFailed
+                    }
+                    let outputWidth = Int(processingSize.width) * 2
+                    let outputHeight = Int(processingSize.height)
+                    let created = try makeWriterContext(outputURL: outputURL, width: outputWidth, height: outputHeight)
+                    writer = created.writer
+                    writerInput = created.input
+                    adaptor = created.adaptor
+
+                    guard let writer else {
+                        throw StereoPipelineError.writerSetupFailed
+                    }
+
+                    guard writer.startWriting() else {
+                        throw writer.error ?? StereoPipelineError.writerSetupFailed
+                    }
+                    writer.startSession(atSourceTime: frame.presentationTime)
+                }
+
+                try await append(
+                    pixelBuffer: frame.sbsFrame,
+                    at: frame.presentationTime,
+                    to: adaptor!,
+                    writerInput: writerInput!,
+                    writer: writer!
+                )
+
+                wroteAnyFrames = true
+                processedFrameCount += 1
+                if processedFrameCount % 90 == 0 {
+                    ciContext.clearCaches()
+                    PixelBufferUtilities.sharedCIContext.clearCaches()
+                }
+
+                let fraction = max(0, min(1, frame.processedSeconds / totalDurationSeconds))
+                progress(VideoProcessingProgress(
+                    fractionCompleted: fraction,
+                    processedSeconds: frame.processedSeconds,
                     totalSeconds: totalDurationSeconds
                 ))
             }
@@ -170,11 +389,83 @@ enum SpatialMediaConverter {
         }
     }
 
-    private static func makeLayerReaderOutput(track: AVAssetTrack, layerID: Int) -> AVAssetReaderTrackOutput {
+    private static func detectStereoLayerPair(
+        asset: AVAsset,
+        track: AVAssetTrack
+    ) throws -> (leftLayerID: Int, rightLayerID: Int)? {
+        let candidateLayerIDs = [0, 1, 2, 3]
+        var discovered: [Int] = []
+
+        for layerID in candidateLayerIDs {
+            let reader = try AVAssetReader(asset: asset)
+            let output = makeLayerReaderOutput(track: track, layerIDs: [layerID])
+            guard reader.canAdd(output) else {
+                continue
+            }
+
+            reader.add(output)
+            guard reader.startReading() else {
+                continue
+            }
+
+            if output.copyNextSampleBuffer() != nil {
+                discovered.append(layerID)
+                if discovered.count >= 2 {
+                    reader.cancelReading()
+                    break
+                }
+            }
+
+            reader.cancelReading()
+        }
+
+        guard discovered.count >= 2 else {
+            return nil
+        }
+
+        return (leftLayerID: discovered[0], rightLayerID: discovered[1])
+    }
+
+    private static func extractSpatialStereoPair(from sampleBuffer: CMSampleBuffer) throws -> (left: CVPixelBuffer, right: CVPixelBuffer) {
+        guard let taggedBuffers = sampleBuffer.taggedBuffers else {
+            throw StereoPipelineError.spatialViewsUnavailable
+        }
+
+        var views: [CVPixelBuffer] = []
+        views.reserveCapacity(2)
+
+        for taggedBuffer in taggedBuffers {
+            if let pixelBuffer = pixelBuffer(from: taggedBuffer) {
+                views.append(pixelBuffer)
+                if views.count >= 2 {
+                    break
+                }
+            }
+        }
+
+        guard views.count >= 2 else {
+            throw StereoPipelineError.spatialViewsUnavailable
+        }
+
+        return (left: views[0], right: views[1])
+    }
+
+    private static func pixelBuffer(from taggedBuffer: CMTaggedBuffer) -> CVPixelBuffer? {
+        switch taggedBuffer.buffer {
+        case let .pixelBuffer(pixelBuffer):
+            return pixelBuffer
+        case let .sampleBuffer(sampleBuffer):
+            return CMSampleBufferGetImageBuffer(sampleBuffer)
+        @unknown default:
+            return nil
+        }
+    }
+
+    private static func makeLayerReaderOutput(track: AVAssetTrack, layerIDs: [Int]) -> AVAssetReaderTrackOutput {
         let settings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
             AVVideoDecompressionPropertiesKey: [
-                kVTDecompressionPropertyKey_RequestedMVHEVCVideoLayerIDs as String: [layerID]
+                kVTDecompressionPropertyKey_RequestedMVHEVCVideoLayerIDs as String: layerIDs
             ]
         ]
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
@@ -188,7 +479,7 @@ enum SpatialMediaConverter {
             buffer,
             to: targetSize,
             context: ciContext,
-            colorSpace: CGColorSpaceCreateDeviceRGB()
+            colorSpace: rgbColorSpace
         )
     }
 
@@ -220,7 +511,7 @@ enum SpatialMediaConverter {
             scaled,
             to: output,
             bounds: CGRect(origin: .zero, size: targetSize),
-            colorSpace: CGColorSpaceCreateDeviceRGB()
+            colorSpace: rgbColorSpace
         )
 
         return output

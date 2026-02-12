@@ -33,7 +33,7 @@ struct VideoFlowView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            PhotosPicker(selection: $selectedItem, matching: videoPickerFilter) {
+            PhotosPicker(selection: $selectedItem, matching: videoPickerFilter, preferredItemEncoding: .current) {
                 Label(pickerButtonTitle, systemImage: "video")
                     .frame(maxWidth: .infinity)
             }

@@ -33,14 +33,6 @@ struct PhotoFlowView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            PhotosPicker(selection: $selectedItem, matching: photoPickerFilter) {
-                Label(pickerButtonTitle, systemImage: "photo")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isGenerating || (inputMode == .spatial && !supportsSpatialPicker))
-
             if isLoadingSelection {
                 ProgressView("Loading photo…")
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -49,6 +41,14 @@ struct PhotoFlowView: View {
             if let sourceImage {
                 ResultPreviewView(title: "Input", media: .image(sourceImage))
             }
+
+            PhotosPicker(selection: $selectedItem, matching: photoPickerFilter, preferredItemEncoding: .current) {
+                Label(pickerButtonTitle, systemImage: "photo")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(isGenerating || (inputMode == .spatial && !supportsSpatialPicker))
 
             controlsCard
 
@@ -113,7 +113,7 @@ struct PhotoFlowView: View {
                     title: progressTitle,
                     progress: 0.4,
                     detail: progressDetail,
-                    onCancel: nil
+                    onCancel: cancelGenerating
                 )
             }
         }
@@ -283,7 +283,12 @@ struct PhotoFlowView: View {
                         onGenerated()
                     }
                 } catch {
-                    if Task.isCancelled { return }
+                    if Task.isCancelled {
+                        await MainActor.run {
+                            isGenerating = false
+                        }
+                        return
+                    }
                     await MainActor.run {
                         isGenerating = false
                         errorMessage = error.localizedDescription
@@ -320,13 +325,24 @@ struct PhotoFlowView: View {
                     onGenerated()
                 }
             } catch {
-                if Task.isCancelled { return }
+                if Task.isCancelled {
+                    await MainActor.run {
+                        isGenerating = false
+                    }
+                    return
+                }
                 await MainActor.run {
                     isGenerating = false
                     errorMessage = error.localizedDescription
                 }
             }
         }
+    }
+
+    private func cancelGenerating() {
+        generateTask?.cancel()
+        generateTask = nil
+        isGenerating = false
     }
 
     private func saveOutputToInAppGallary() {

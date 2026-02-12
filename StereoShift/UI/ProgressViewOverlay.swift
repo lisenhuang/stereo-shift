@@ -7,25 +7,35 @@ struct ProgressViewOverlay: View {
     let onCancel: (() -> Void)?
 
     var body: some View {
-        VStack(spacing: 14) {
-            Text(title)
-                .font(.headline)
+        ZStack {
+            Color.black
+                .opacity(0.28)
+                .ignoresSafeArea()
+                .contentShape(Rectangle())
+                .onTapGesture {}
 
-            ProgressView(value: max(0, min(1, progress)))
-                .progressViewStyle(.linear)
+            VStack(spacing: 14) {
+                Text(title)
+                    .font(.headline)
 
-            Text(detail)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+                ProgressView(value: max(0, min(1, progress)))
+                    .progressViewStyle(.linear)
 
-            if let onCancel {
-                Button("Cancel", role: .destructive, action: onCancel)
-                    .buttonStyle(.bordered)
+                Text(detail)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                if let onCancel {
+                    Button("Stop", role: .destructive, action: onCancel)
+                        .buttonStyle(.borderedProminent)
+                }
             }
+            .padding(20)
+            .frame(maxWidth: 340)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .shadow(radius: 12)
         }
-        .padding(20)
-        .frame(maxWidth: 340)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .shadow(radius: 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .allowsHitTesting(true)
     }
 }
