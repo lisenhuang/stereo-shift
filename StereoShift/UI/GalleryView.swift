@@ -188,7 +188,7 @@ private struct GalleryItemDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    ResultPreviewView(title: "Preview", media: previewMedia)
+                    ResultPreviewView(title: "Preview", media: previewMedia, allowsFullscreenPreview: true)
 
                     HStack(spacing: 12) {
                         Button {

@@ -14,6 +14,7 @@ struct HomeView: View {
     @State private var mode: Mode = .photo
     @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
+    @State private var isProcessing = false
     private let bottomAnchorID = "content-bottom-anchor"
 
     var body: some View {
@@ -32,6 +33,9 @@ struct HomeView: View {
                                 galleryLibrary: galleryLibrary,
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
+                                },
+                                onProcessingStateChanged: { processing in
+                                    isProcessing = processing
                                 }
                             )
                         } else if mode == .video {
@@ -42,6 +46,9 @@ struct HomeView: View {
                                 galleryLibrary: galleryLibrary,
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
+                                },
+                                onProcessingStateChanged: { processing in
+                                    isProcessing = processing
                                 }
                             )
                         } else {
@@ -79,6 +86,7 @@ struct HomeView: View {
             }
         }
         .pickerStyle(.segmented)
+        .disabled(isProcessing)
         .padding(6)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }

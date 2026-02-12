@@ -15,6 +15,7 @@ struct VideoFlowView: View {
     @Binding var sbsLayoutEnabled: Bool
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
+    let onProcessingStateChanged: (Bool) -> Void
 
     @State private var inputMode: InputMediaMode = .regular2D
     @State private var selectedItem: PhotosPickerItem?
@@ -24,6 +25,7 @@ struct VideoFlowView: View {
     @State private var isProcessing = false
     @State private var isSaving = false
     @State private var showShareSheet = false
+    @State private var showStopConfirmation = false
     @State private var errorMessage: String?
     @State private var saveMessage: String?
     @State private var progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
@@ -61,7 +63,7 @@ struct VideoFlowView: View {
             .disabled(!canGenerate)
 
             if let outputVideoURL {
-                ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL))
+                ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL), allowsFullscreenPreview: true)
 
                 VStack(spacing: 10) {
                     Button(action: saveOutputToInAppGallary) {
@@ -105,13 +107,16 @@ struct VideoFlowView: View {
                 }
             }
         }
+        .allowsHitTesting(!isProcessing)
         .overlay {
             if isProcessing {
                 ProgressViewOverlay(
                     title: progressTitle,
                     progress: progressValue.fractionCompleted,
                     detail: progressDetail,
-                    onCancel: cancelProcessing
+                    onCancel: {
+                        showStopConfirmation = true
+                    }
                 )
             }
         }
@@ -122,9 +127,13 @@ struct VideoFlowView: View {
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()
         }
+        .onChange(of: isProcessing) { _, newValue in
+            onProcessingStateChanged(newValue)
+        }
         .onDisappear {
             selectionTask?.cancel()
             processingTask?.cancel()
+            onProcessingStateChanged(false)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {
@@ -132,6 +141,16 @@ struct VideoFlowView: View {
             }
         } message: {
             Text(errorMessage ?? "Something went wrong.")
+        }
+        .confirmationDialog(
+            "Stop current conversion?",
+            isPresented: $showStopConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop", role: .destructive) {
+                cancelProcessing()
+            }
+            Button("Continue", role: .cancel) {}
         }
     }
 

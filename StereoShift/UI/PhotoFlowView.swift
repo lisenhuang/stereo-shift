@@ -14,6 +14,7 @@ struct PhotoFlowView: View {
     @Binding var sbsLayoutEnabled: Bool
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
+    let onProcessingStateChanged: (Bool) -> Void
 
     @State private var inputMode: InputMediaMode = .regular2D
     @State private var selectedItem: PhotosPickerItem?
@@ -25,6 +26,7 @@ struct PhotoFlowView: View {
     @State private var isGenerating = false
     @State private var isSaving = false
     @State private var showShareSheet = false
+    @State private var showStopConfirmation = false
     @State private var errorMessage: String?
     @State private var saveMessage: String?
 
@@ -61,7 +63,7 @@ struct PhotoFlowView: View {
             .disabled(!canGenerate)
 
             if let outputImage {
-                ResultPreviewView(title: "SBS Output", media: .image(outputImage))
+                ResultPreviewView(title: "SBS Output", media: .image(outputImage), allowsFullscreenPreview: true)
             }
 
             if let outputFileURL {
@@ -107,13 +109,16 @@ struct PhotoFlowView: View {
                 }
             }
         }
+        .allowsHitTesting(!isGenerating)
         .overlay {
             if isGenerating {
                 ProgressViewOverlay(
                     title: progressTitle,
                     progress: 0.4,
                     detail: progressDetail,
-                    onCancel: cancelGenerating
+                    onCancel: {
+                        showStopConfirmation = true
+                    }
                 )
             }
         }
@@ -124,9 +129,13 @@ struct PhotoFlowView: View {
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()
         }
+        .onChange(of: isGenerating) { _, newValue in
+            onProcessingStateChanged(newValue)
+        }
         .onDisappear {
             selectionTask?.cancel()
             generateTask?.cancel()
+            onProcessingStateChanged(false)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {
@@ -134,6 +143,16 @@ struct PhotoFlowView: View {
             }
         } message: {
             Text(errorMessage ?? "Something went wrong.")
+        }
+        .confirmationDialog(
+            "Stop current conversion?",
+            isPresented: $showStopConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop", role: .destructive) {
+                cancelGenerating()
+            }
+            Button("Continue", role: .cancel) {}
         }
     }
 
