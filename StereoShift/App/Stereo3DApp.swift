@@ -1,9 +1,14 @@
+import AVFAudio
 import SwiftUI
 
 @main
 struct Stereo3DApp: App {
     @AppStorage("appLanguage") private var appLanguageRawValue = AppLanguage.system.rawValue
     @AppStorage("appTheme") private var appThemeRawValue = AppTheme.system.rawValue
+
+    init() {
+        configureAudioSessionForPlayback()
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -20,5 +25,19 @@ struct Stereo3DApp: App {
 
     private var selectedTheme: AppTheme {
         AppTheme(rawValue: appThemeRawValue) ?? .system
+    }
+
+    private func configureAudioSessionForPlayback() {
+#if os(iOS) && !targetEnvironment(macCatalyst)
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.playback, mode: .moviePlayback, options: [.allowAirPlay])
+            try session.setActive(true)
+        } catch {
+#if DEBUG
+            print("Failed to configure AVAudioSession for playback: \(error)")
+#endif
+        }
+#endif
     }
 }
