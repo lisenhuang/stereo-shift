@@ -1,9 +1,9 @@
 import SwiftUI
 
 struct ProgressViewOverlay: View {
-    let title: String
+    let title: Text
     let progress: Double
-    let detail: String
+    let detail: Text
     let onCancel: (() -> Void)?
 
     var body: some View {
@@ -15,13 +15,13 @@ struct ProgressViewOverlay: View {
                 .onTapGesture {}
 
             VStack(spacing: 14) {
-                Text(title)
+                title
                     .font(.headline)
 
                 ProgressView(value: max(0, min(1, progress)))
                     .progressViewStyle(.linear)
 
-                Text(detail)
+                detail
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 

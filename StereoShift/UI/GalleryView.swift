@@ -94,10 +94,15 @@ private struct GalleryGridItemView: View {
                         .strokeBorder(Color.secondary.opacity(0.2))
                 }
 
-            Text(item.type == .image ? "Photo" : "Video")
-                .font(.subheadline.bold())
+            if item.type == .image {
+                Text("Photo")
+                    .font(.subheadline.bold())
+            } else {
+                Text("Video")
+                    .font(.subheadline.bold())
+            }
 
-            Text(Self.dateFormatter.string(from: item.createdAt))
+            Text(item.createdAt, format: .dateTime.year().month(.abbreviated).day().hour().minute())
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -105,13 +110,6 @@ private struct GalleryGridItemView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter
-    }()
 }
 
 private struct GalleryThumbnailView: View {
@@ -189,7 +187,7 @@ private struct GalleryItemDetailView: View {
     @State private var showDeleteConfirmation = false
     @State private var isSaving = false
     @State private var isDeleting = false
-    @State private var saveMessage: String?
+    @State private var saveMessageKey: LocalizedStringKey?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -209,15 +207,21 @@ private struct GalleryItemDetailView: View {
                         .disabled(isDeleting)
 
                         Button(action: saveToPhotos) {
-                            Label(isSaving ? "Saving…" : "Save to Photos", systemImage: "square.and.arrow.down")
-                                .frame(maxWidth: .infinity)
+                            Group {
+                                if isSaving {
+                                    Label("Saving…", systemImage: "square.and.arrow.down")
+                                } else {
+                                    Label("Save to Photos", systemImage: "square.and.arrow.down")
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .center)
                         }
                         .buttonStyle(.bordered)
                         .disabled(isSaving || isDeleting)
                     }
 
-                    if let saveMessage {
-                        Text(saveMessage)
+                    if let saveMessageKey {
+                        Text(saveMessageKey)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -226,7 +230,7 @@ private struct GalleryItemDetailView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 20)
             }
-            .navigationTitle(item.type == .image ? "Photo" : "Video")
+            .navigationTitle(itemTypeTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
@@ -251,7 +255,11 @@ private struct GalleryItemDetailView: View {
                     errorMessage = nil
                 }
             } message: {
-                Text(errorMessage ?? "Something went wrong.")
+                if let errorMessage {
+                    Text(errorMessage)
+                } else {
+                    Text("Something went wrong.")
+                }
             }
             .confirmationDialog(
                 "Delete this item from In-App Gallery?",
@@ -275,9 +283,18 @@ private struct GalleryItemDetailView: View {
         }
     }
 
+    private var itemTypeTitle: LocalizedStringKey {
+        switch item.type {
+        case .image:
+            return "Photo"
+        case .video:
+            return "Video"
+        }
+    }
+
     private func saveToPhotos() {
         isSaving = true
-        saveMessage = nil
+        saveMessageKey = nil
 
         Task {
             do {
@@ -290,7 +307,7 @@ private struct GalleryItemDetailView: View {
 
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to Photos."
+                    saveMessageKey = "Saved to Photos."
                 }
             } catch {
                 await MainActor.run {

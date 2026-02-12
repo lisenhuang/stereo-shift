@@ -20,7 +20,7 @@ struct VideoFlowView: View {
     @State private var showShareSheet = false
     @State private var showStopConfirmation = false
     @State private var errorMessage: String?
-    @State private var saveMessage: String?
+    @State private var saveMessageKey: LocalizedStringKey?
     @State private var progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
 
     @State private var selectionTask: Task<Void, Never>?
@@ -60,21 +60,27 @@ struct VideoFlowView: View {
 
                 VStack(spacing: 10) {
                     Button(action: saveOutputToInAppGallery) {
-                        Label(
-                            isSaving ? "Saving…" : "Save to In-App Gallery",
-                            systemImage: "tray.and.arrow.down"
-                        )
-                        .frame(maxWidth: .infinity)
+                        Group {
+                            if isSaving {
+                                Label("Saving…", systemImage: "tray.and.arrow.down")
+                            } else {
+                                Label("Save to In-App Gallery", systemImage: "tray.and.arrow.down")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isProcessing)
 
                     Button(action: saveOutputToPhotos) {
-                        Label(
-                            isSaving ? "Saving…" : "Save to Photos",
-                            systemImage: "square.and.arrow.down"
-                        )
-                        .frame(maxWidth: .infinity)
+                        Group {
+                            if isSaving {
+                                Label("Saving…", systemImage: "square.and.arrow.down")
+                            } else {
+                                Label("Save to Photos", systemImage: "square.and.arrow.down")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isProcessing)
@@ -92,8 +98,8 @@ struct VideoFlowView: View {
                     ShareSheet(items: [outputVideoURL])
                 }
 
-                if let saveMessage {
-                    Text(saveMessage)
+                if let saveMessageKey {
+                    Text(saveMessageKey)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,9 +110,9 @@ struct VideoFlowView: View {
         .overlay {
             if isProcessing {
                 ProgressViewOverlay(
-                    title: progressTitle,
+                    title: progressTitleText,
                     progress: progressValue.fractionCompleted,
-                    detail: progressDetail,
+                    detail: progressDetailText,
                     onCancel: {
                         showStopConfirmation = true
                     }
@@ -133,7 +139,11 @@ struct VideoFlowView: View {
                 errorMessage = nil
             }
         } message: {
-            Text(errorMessage ?? "Something went wrong.")
+            if let errorMessage {
+                Text(errorMessage)
+            } else {
+                Text("Something went wrong.")
+            }
         }
         .confirmationDialog(
             "Stop current conversion?",
@@ -163,14 +173,14 @@ struct VideoFlowView: View {
         return .videos
     }
 
-    private var pickerButtonTitle: String {
+    private var pickerButtonTitle: LocalizedStringKey {
         if inputMode == .spatial {
             return sourceVideoURL == nil ? "Pick Spatial Video" : "Pick Another Spatial Video"
         }
         return sourceVideoURL == nil ? "Pick Video" : "Pick Another Video"
     }
 
-    private var generateButtonTitle: String {
+    private var generateButtonTitle: LocalizedStringKey {
         if isProcessing {
             return inputMode == .spatial ? "Converting…" : "Generating…"
         }
@@ -188,16 +198,16 @@ struct VideoFlowView: View {
         return true
     }
 
-    private var progressTitle: String {
-        inputMode == .spatial ? "Converting Spatial Video" : "Rendering 3D Video"
+    private var progressTitleText: Text {
+        inputMode == .spatial ? Text("Converting Spatial Video") : Text("Rendering 3D Video")
     }
 
-    private var progressDetail: String {
+    private var progressDetailText: Text {
         let percent = Int((progressValue.fractionCompleted * 100).rounded())
         if inputMode == .spatial {
-            return "\(percent)% • Extracting stereo views"
+            return Text("\(percent)%") + Text(" • ") + Text("Extracting stereo views")
         }
-        return "\(percent)% • \(formatTime(progressValue.processedSeconds)) / \(formatTime(progressValue.totalSeconds))"
+        return Text("\(percent)% • \(formatTime(progressValue.processedSeconds)) / \(formatTime(progressValue.totalSeconds))")
     }
 
     private func resetForSourceModeChange() {
@@ -210,7 +220,7 @@ struct VideoFlowView: View {
         }
         outputVideoURL = nil
         selectedItem = nil
-        saveMessage = nil
+        saveMessageKey = nil
         progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
         isLoadingSelection = false
         isProcessing = false
@@ -243,7 +253,7 @@ struct VideoFlowView: View {
                         TempFiles.removeItemIfExists(at: oldOutput)
                     }
                     outputVideoURL = nil
-                    saveMessage = nil
+                    saveMessageKey = nil
                     isLoadingSelection = false
                 }
             } catch {
@@ -296,7 +306,7 @@ struct VideoFlowView: View {
 
                 await MainActor.run {
                     outputVideoURL = outputURL
-                    saveMessage = nil
+                    saveMessageKey = nil
                     isProcessing = false
                     onGenerated()
                 }
@@ -325,14 +335,14 @@ struct VideoFlowView: View {
     private func saveOutputToInAppGallery() {
         guard let outputVideoURL else { return }
         isSaving = true
-        saveMessage = nil
+        saveMessageKey = nil
 
         Task {
             do {
                 _ = try await galleryLibrary.saveMedia(at: outputVideoURL, type: .video)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to In-App Gallery."
+                    saveMessageKey = "Saved to In-App Gallery."
                 }
             } catch {
                 await MainActor.run {
@@ -346,14 +356,14 @@ struct VideoFlowView: View {
     private func saveOutputToPhotos() {
         guard let outputVideoURL else { return }
         isSaving = true
-        saveMessage = nil
+        saveMessageKey = nil
 
         Task {
             do {
                 try await PhotoLibrarySaver.saveVideoFile(at: outputVideoURL)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to Photos."
+                    saveMessageKey = "Saved to Photos."
                 }
             } catch {
                 await MainActor.run {
@@ -372,7 +382,7 @@ struct VideoFlowView: View {
         return String(format: "%02d:%02d", minutes, remaining)
     }
 
-    private var strengthLabel: String {
+    private var strengthLabelKey: LocalizedStringKey {
         if strength < 0.45 {
             return "Subtle"
         }
@@ -386,7 +396,7 @@ struct VideoFlowView: View {
         VStack(spacing: 14) {
             Picker("Input", selection: $inputMode) {
                 ForEach(InputMediaMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Text(mode.titleKey).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
@@ -396,9 +406,13 @@ struct VideoFlowView: View {
                     Text("3D Strength")
                         .font(.headline)
                     Spacer()
-                    Text("\(strengthLabel) • \(strength.formatted(.number.precision(.fractionLength(2))))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text(strengthLabelKey)
+                        Text("•")
+                        Text(strength.formatted(.number.precision(.fractionLength(2))))
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
 
                 Slider(

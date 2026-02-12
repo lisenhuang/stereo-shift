@@ -2,12 +2,22 @@ import SwiftUI
 
 struct HomeView: View {
     private enum Mode: String, CaseIterable, Identifiable {
-        case photo = "Photo"
-        case video = "Video"
+        case photo
+        case video
 
         var id: String { rawValue }
+
+        var titleKey: LocalizedStringKey {
+            switch self {
+            case .photo:
+                return "Photo"
+            case .video:
+                return "Video"
+            }
+        }
     }
 
+    @AppStorage("appLanguage") private var appLanguageRawValue = AppLanguage.system.rawValue
     @StateObject private var pipeline = StereoPipeline()
     @StateObject private var galleryLibrary = AppGalleryLibrary()
     @State private var mode: Mode = .photo
@@ -64,7 +74,9 @@ struct HomeView: View {
                 }
                 .navigationTitle("StereoShift")
                 .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        languageMenu
+
                         NavigationLink {
                             GalleryView(galleryLibrary: galleryLibrary)
                                 .navigationTitle("In-App Gallery")
@@ -93,7 +105,7 @@ struct HomeView: View {
     private var modePicker: some View {
         Picker("Mode", selection: $mode) {
             ForEach(Mode.allCases) { mode in
-                Text(mode.rawValue).tag(mode)
+                Text(mode.titleKey).tag(mode)
             }
         }
         .pickerStyle(.segmented)
@@ -109,6 +121,27 @@ struct HomeView: View {
                 proxy.scrollTo(bottomAnchorID, anchor: .bottom)
             }
         }
+    }
+
+    private var selectedLanguageBinding: Binding<AppLanguage> {
+        Binding {
+            AppLanguage(rawValue: appLanguageRawValue) ?? .system
+        } set: { value in
+            appLanguageRawValue = value.rawValue
+        }
+    }
+
+    private var languageMenu: some View {
+        Menu {
+            Picker("Language", selection: selectedLanguageBinding) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.displayNameKey).tag(language)
+                }
+            }
+        } label: {
+            Label("Language", systemImage: "globe")
+        }
+        .disabled(isProcessing)
     }
 }
 

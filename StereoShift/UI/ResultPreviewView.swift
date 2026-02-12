@@ -9,7 +9,7 @@ enum PreviewMedia {
 }
 
 struct ResultPreviewView: View {
-    let title: String
+    let title: LocalizedStringKey
     let media: PreviewMedia
     var allowsFullscreenPreview: Bool = false
 

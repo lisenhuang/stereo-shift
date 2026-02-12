@@ -21,7 +21,7 @@ struct PhotoFlowView: View {
     @State private var showShareSheet = false
     @State private var showStopConfirmation = false
     @State private var errorMessage: String?
-    @State private var saveMessage: String?
+    @State private var saveMessageKey: LocalizedStringKey?
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var generateTask: Task<Void, Never>?
@@ -62,21 +62,27 @@ struct PhotoFlowView: View {
             if let outputFileURL {
                 VStack(spacing: 10) {
                     Button(action: saveOutputToInAppGallery) {
-                        Label(
-                            isSaving ? "Saving…" : "Save to In-App Gallery",
-                            systemImage: "tray.and.arrow.down"
-                        )
-                        .frame(maxWidth: .infinity)
+                        Group {
+                            if isSaving {
+                                Label("Saving…", systemImage: "tray.and.arrow.down")
+                            } else {
+                                Label("Save to In-App Gallery", systemImage: "tray.and.arrow.down")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isGenerating)
 
                     Button(action: saveOutputToPhotos) {
-                        Label(
-                            isSaving ? "Saving…" : "Save to Photos",
-                            systemImage: "square.and.arrow.down"
-                        )
-                        .frame(maxWidth: .infinity)
+                        Group {
+                            if isSaving {
+                                Label("Saving…", systemImage: "square.and.arrow.down")
+                            } else {
+                                Label("Save to Photos", systemImage: "square.and.arrow.down")
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isGenerating)
@@ -94,8 +100,8 @@ struct PhotoFlowView: View {
                     ShareSheet(items: [outputFileURL])
                 }
 
-                if let saveMessage {
-                    Text(saveMessage)
+                if let saveMessageKey {
+                    Text(saveMessageKey)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -106,9 +112,9 @@ struct PhotoFlowView: View {
         .overlay {
             if isGenerating {
                 ProgressViewOverlay(
-                    title: progressTitle,
+                    title: progressTitleText,
                     progress: 0.4,
-                    detail: progressDetail,
+                    detail: progressDetailText,
                     onCancel: {
                         showStopConfirmation = true
                     }
@@ -135,7 +141,11 @@ struct PhotoFlowView: View {
                 errorMessage = nil
             }
         } message: {
-            Text(errorMessage ?? "Something went wrong.")
+            if let errorMessage {
+                Text(errorMessage)
+            } else {
+                Text("Something went wrong.")
+            }
         }
         .confirmationDialog(
             "Stop current conversion?",
@@ -165,14 +175,14 @@ struct PhotoFlowView: View {
         return .images
     }
 
-    private var pickerButtonTitle: String {
+    private var pickerButtonTitle: LocalizedStringKey {
         if inputMode == .spatial {
             return sourceImage == nil ? "Pick Spatial Photo" : "Pick Another Spatial Photo"
         }
         return sourceImage == nil ? "Pick Photo" : "Pick Another Photo"
     }
 
-    private var generateButtonTitle: String {
+    private var generateButtonTitle: LocalizedStringKey {
         if isGenerating {
             return inputMode == .spatial ? "Converting…" : "Generating…"
         }
@@ -190,14 +200,14 @@ struct PhotoFlowView: View {
         return true
     }
 
-    private var progressTitle: String {
-        inputMode == .spatial ? "Converting Spatial Photo" : "Generating 3D Photo"
+    private var progressTitleText: Text {
+        inputMode == .spatial ? Text("Converting Spatial Photo") : Text("Generating 3D Photo")
     }
 
-    private var progressDetail: String {
+    private var progressDetailText: Text {
         inputMode == .spatial
-            ? "Separating stereo views and building SBS output."
-            : "Estimating depth and rendering stereo views."
+            ? Text("Separating stereo views and building SBS output.")
+            : Text("Estimating depth and rendering stereo views.")
     }
 
     private func resetForSourceModeChange() {
@@ -209,7 +219,7 @@ struct PhotoFlowView: View {
         sourceSpatialPair = nil
         outputImage = nil
         outputFileURL = nil
-        saveMessage = nil
+        saveMessageKey = nil
         isLoadingSelection = false
     }
 
@@ -240,7 +250,7 @@ struct PhotoFlowView: View {
                         sourceSpatialPair = pair
                         outputImage = nil
                         outputFileURL = nil
-                        saveMessage = nil
+                        saveMessageKey = nil
                         isLoadingSelection = false
                     }
                 } else {
@@ -252,7 +262,7 @@ struct PhotoFlowView: View {
                         sourceSpatialPair = nil
                         outputImage = nil
                         outputFileURL = nil
-                        saveMessage = nil
+                        saveMessageKey = nil
                         isLoadingSelection = false
                     }
                 }
@@ -290,7 +300,7 @@ struct PhotoFlowView: View {
                     await MainActor.run {
                         outputImage = output
                         outputFileURL = fileURL
-                        saveMessage = nil
+                        saveMessageKey = nil
                         isGenerating = false
                         onGenerated()
                     }
@@ -332,7 +342,7 @@ struct PhotoFlowView: View {
                 await MainActor.run {
                     outputImage = output
                     outputFileURL = fileURL
-                    saveMessage = nil
+                    saveMessageKey = nil
                     isGenerating = false
                     onGenerated()
                 }
@@ -360,14 +370,14 @@ struct PhotoFlowView: View {
     private func saveOutputToInAppGallery() {
         guard let outputFileURL else { return }
         isSaving = true
-        saveMessage = nil
+        saveMessageKey = nil
 
         Task {
             do {
                 _ = try await galleryLibrary.saveMedia(at: outputFileURL, type: .image)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to In-App Gallery."
+                    saveMessageKey = "Saved to In-App Gallery."
                 }
             } catch {
                 await MainActor.run {
@@ -381,14 +391,14 @@ struct PhotoFlowView: View {
     private func saveOutputToPhotos() {
         guard let outputFileURL else { return }
         isSaving = true
-        saveMessage = nil
+        saveMessageKey = nil
 
         Task {
             do {
                 try await PhotoLibrarySaver.saveImageFile(at: outputFileURL)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to Photos."
+                    saveMessageKey = "Saved to Photos."
                 }
             } catch {
                 await MainActor.run {
@@ -399,7 +409,7 @@ struct PhotoFlowView: View {
         }
     }
 
-    private var strengthLabel: String {
+    private var strengthLabelKey: LocalizedStringKey {
         if strength < 0.45 {
             return "Subtle"
         }
@@ -413,7 +423,7 @@ struct PhotoFlowView: View {
         VStack(spacing: 14) {
             Picker("Input", selection: $inputMode) {
                 ForEach(InputMediaMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
+                    Text(mode.titleKey).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
@@ -423,9 +433,13 @@ struct PhotoFlowView: View {
                     Text("3D Strength")
                         .font(.headline)
                     Spacer()
-                    Text("\(strengthLabel) • \(strength.formatted(.number.precision(.fractionLength(2))))")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 4) {
+                        Text(strengthLabelKey)
+                        Text("•")
+                        Text(strength.formatted(.number.precision(.fractionLength(2))))
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
                 }
 
                 Slider(
