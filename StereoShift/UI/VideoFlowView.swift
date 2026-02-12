@@ -25,6 +25,8 @@ struct VideoFlowView: View {
     @State private var progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
     @State private var holdsScreenAwakeLock = false
     @State private var showFileImporter = false
+    @State private var limitToFirstTenSeconds = true
+    @State private var sourceVideoDurationSeconds: Double?
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var processingTask: Task<Void, Never>?
@@ -255,6 +257,7 @@ struct VideoFlowView: View {
         processingTask?.cancel()
 
         sourceVideoURL = nil
+        sourceVideoDurationSeconds = nil
         if let oldOutput = outputVideoURL {
             TempFiles.removeItemIfExists(at: oldOutput)
         }
@@ -272,6 +275,7 @@ struct VideoFlowView: View {
 
         guard let item else {
             sourceVideoURL = nil
+            sourceVideoDurationSeconds = nil
             if let oldOutput = outputVideoURL {
                 TempFiles.removeItemIfExists(at: oldOutput)
             }
@@ -280,6 +284,7 @@ struct VideoFlowView: View {
         }
 
         sourceVideoURL = nil
+        sourceVideoDurationSeconds = nil
         if let oldOutput = outputVideoURL {
             TempFiles.removeItemIfExists(at: oldOutput)
         }
@@ -295,10 +300,12 @@ struct VideoFlowView: View {
                 }
 
                 let loadedURL = try await MediaPicker.loadVideoURL(from: item)
+                let loadedDuration = try await videoDurationSeconds(for: loadedURL)
                 if Task.isCancelled { return }
 
                 await MainActor.run {
                     sourceVideoURL = loadedURL
+                    sourceVideoDurationSeconds = loadedDuration
                     if let oldOutput = outputVideoURL {
                         TempFiles.removeItemIfExists(at: oldOutput)
                     }
@@ -329,6 +336,7 @@ struct VideoFlowView: View {
     private func loadSelectedVideoFile(_ url: URL) {
         selectionTask?.cancel()
         sourceVideoURL = nil
+        sourceVideoDurationSeconds = nil
         if let oldOutput = outputVideoURL {
             TempFiles.removeItemIfExists(at: oldOutput)
         }
@@ -347,11 +355,13 @@ struct VideoFlowView: View {
                 let loadedURL = try await Task.detached(priority: .userInitiated) {
                     try MediaPicker.loadVideoURL(fromFileURL: url)
                 }.value
+                let loadedDuration = try await videoDurationSeconds(for: loadedURL)
                 if Task.isCancelled { return }
 
                 await MainActor.run {
                     selectedItem = nil
                     sourceVideoURL = loadedURL
+                    sourceVideoDurationSeconds = loadedDuration
                     if let oldOutput = outputVideoURL {
                         TempFiles.removeItemIfExists(at: oldOutput)
                     }
@@ -379,6 +389,8 @@ struct VideoFlowView: View {
         let processor = pipeline.videoProcessor
         let appliedStrength = strength
         let usingSpatialMode = inputMode == .spatial
+        let shouldLimitDuration = !usingSpatialMode && limitToFirstTenSeconds && (sourceVideoDurationSeconds ?? .infinity) > 10.0
+        let maxDurationSeconds = shouldLimitDuration ? 10.0 : nil
 
         processingTask = Task.detached(priority: .userInitiated) {
             do {
@@ -394,7 +406,8 @@ struct VideoFlowView: View {
                 } else {
                     outputURL = try await processor.processVideo(
                         inputURL: sourceVideoURL,
-                        strength: appliedStrength
+                        strength: appliedStrength,
+                        maxDurationSeconds: maxDurationSeconds
                     ) { update in
                         Task { @MainActor in
                             progressValue = update
@@ -498,6 +511,16 @@ struct VideoFlowView: View {
         return String(format: "%02d:%02d", minutes, remaining)
     }
 
+    private func videoDurationSeconds(for url: URL) async throws -> Double {
+        let asset = AVAsset(url: url)
+        let duration = try await asset.load(.duration)
+        let seconds = CMTimeGetSeconds(duration)
+        if seconds.isFinite {
+            return max(0, seconds)
+        }
+        return 0
+    }
+
     private var strengthLabelKey: LocalizedStringKey {
         if strength < 0.45 {
             return "Subtle"
@@ -541,6 +564,10 @@ struct VideoFlowView: View {
 
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                     .disabled(true)
+
+                if (sourceVideoDurationSeconds ?? 0) > 10 {
+                    Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)
+                }
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)

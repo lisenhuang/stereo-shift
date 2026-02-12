@@ -22,6 +22,7 @@ final class VideoProcessor {
     func processVideo(
         inputURL: URL,
         strength: Float,
+        maxDurationSeconds: Double? = nil,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
         let asset = AVAsset(url: inputURL)
@@ -32,6 +33,12 @@ final class VideoProcessor {
 
         let duration = try await asset.load(.duration)
         let totalDurationSeconds = max(CMTimeGetSeconds(duration), 0.001)
+        let effectiveDurationSeconds: Double
+        if let maxDurationSeconds {
+            effectiveDurationSeconds = max(0.001, min(maxDurationSeconds, totalDurationSeconds))
+        } else {
+            effectiveDurationSeconds = totalDurationSeconds
+        }
 
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
@@ -93,7 +100,7 @@ final class VideoProcessor {
             }
             writer.startSession(atSourceTime: .zero)
 
-            progress(VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: totalDurationSeconds))
+            progress(VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: effectiveDurationSeconds))
 
             while reader.status == .reading {
                 try Task.checkCancellation()
@@ -102,11 +109,15 @@ final class VideoProcessor {
                     break
                 }
 
+                let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+                let presentationSeconds = max(CMTimeGetSeconds(presentationTime), 0)
+                if presentationSeconds > effectiveDurationSeconds {
+                    break
+                }
+
                 guard let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
                     throw StereoPipelineError.mediaDecodingFailed
                 }
-
-                let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
                 let preparedFrame = try makeUprightAndScaledBuffer(
                     from: imageBuffer,
                     transform: preferredTransform,
@@ -124,12 +135,12 @@ final class VideoProcessor {
                     writer: writer
                 )
 
-                let processedSeconds = max(CMTimeGetSeconds(presentationTime), 0)
-                let fraction = max(0, min(1, processedSeconds / totalDurationSeconds))
+                let processedSeconds = presentationSeconds
+                let fraction = max(0, min(1, processedSeconds / effectiveDurationSeconds))
                 progress(VideoProcessingProgress(
                     fractionCompleted: fraction,
                     processedSeconds: processedSeconds,
-                    totalSeconds: totalDurationSeconds
+                    totalSeconds: effectiveDurationSeconds
                 ))
             }
 
@@ -149,8 +160,8 @@ final class VideoProcessor {
 
             progress(VideoProcessingProgress(
                 fractionCompleted: 1,
-                processedSeconds: totalDurationSeconds,
-                totalSeconds: totalDurationSeconds
+                processedSeconds: effectiveDurationSeconds,
+                totalSeconds: effectiveDurationSeconds
             ))
             try Task.checkCancellation()
             return try await attachOriginalAudioIfAvailable(sourceURL: inputURL, processedVideoURL: outputURL)

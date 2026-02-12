@@ -31,6 +31,7 @@
 "Loading video…" = "正在加载视频…";
 "Mode" = "模式";
 "No media in In-App Gallery yet." = "应用内画廊中还没有媒体。";
+"Only convert first 10 seconds for testing" = "仅转换前 10 秒用于测试";
 "OK" = "确定";
 "Photo" = "照片";
 "Pick Another Photo" = "重新选择照片";
