@@ -37,7 +37,7 @@ struct PhotoFlowView: View {
             }
 
             if let sourceImage {
-                ResultPreviewView(title: "Input", media: .image(sourceImage))
+                ResultPreviewView(title: "Input", media: .image(sourceImage), allowsFullscreenPreview: true)
             }
 
             PhotosPicker(selection: $selectedItem, matching: photoPickerFilter, preferredItemEncoding: .current) {

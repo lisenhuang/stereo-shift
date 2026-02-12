@@ -57,7 +57,7 @@ struct VideoFlowView: View {
             }
 
             if let sourceVideoURL {
-                ResultPreviewView(title: "Input", media: .video(sourceVideoURL))
+                ResultPreviewView(title: "Input", media: .video(sourceVideoURL), allowsFullscreenPreview: true)
             }
 
             controlsCard
