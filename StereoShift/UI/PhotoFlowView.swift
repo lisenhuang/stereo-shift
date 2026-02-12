@@ -1,5 +1,6 @@
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct PhotoFlowView: View {
     let pipeline: StereoPipeline
@@ -23,6 +24,7 @@ struct PhotoFlowView: View {
     @State private var errorMessage: String?
     @State private var saveMessageKey: LocalizedStringKey?
     @State private var holdsScreenAwakeLock = false
+    @State private var showFileImporter = false
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var generateTask: Task<Void, Never>?
@@ -45,6 +47,18 @@ struct PhotoFlowView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(isGenerating || (inputMode == .spatial && !supportsSpatialPicker))
+
+            if supportsDesktopFileImport {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label(filePickerButtonTitle, systemImage: "folder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isGenerating || (inputMode == .spatial && !supportsSpatialPicker))
+            }
 
             controlsCard
 
@@ -160,6 +174,13 @@ struct PhotoFlowView: View {
             }
             Button("Continue", role: .cancel) {}
         }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false
+        ) { result in
+            handlePhotoFileImport(result)
+        }
     }
 
     private var supportsSpatialPicker: Bool {
@@ -167,6 +188,14 @@ struct PhotoFlowView: View {
             return true
         }
         return false
+    }
+
+    private var supportsDesktopFileImport: Bool {
+#if targetEnvironment(macCatalyst)
+        return true
+#else
+        return ProcessInfo.processInfo.isiOSAppOnMac
+#endif
     }
 
     private var photoPickerFilter: PHPickerFilter {
@@ -184,6 +213,13 @@ struct PhotoFlowView: View {
             return sourceImage == nil ? "Pick Spatial Photo" : "Pick Another Spatial Photo"
         }
         return sourceImage == nil ? "Pick Photo" : "Pick Another Photo"
+    }
+
+    private var filePickerButtonTitle: LocalizedStringKey {
+        if inputMode == .spatial {
+            return sourceImage == nil ? "Pick Spatial Photo from Files" : "Pick Another Spatial Photo from Files"
+        }
+        return sourceImage == nil ? "Pick Photo from Files" : "Pick Another Photo from Files"
     }
 
     private var generateButtonTitle: LocalizedStringKey {
@@ -225,6 +261,7 @@ struct PhotoFlowView: View {
         outputFileURL = nil
         saveMessageKey = nil
         isLoadingSelection = false
+        showFileImporter = false
     }
 
     private func loadSelectedPhoto(_ item: PhotosPickerItem?) {
@@ -262,6 +299,67 @@ struct PhotoFlowView: View {
                     if Task.isCancelled { return }
 
                     await MainActor.run {
+                        sourceImage = image
+                        sourceSpatialPair = nil
+                        outputImage = nil
+                        outputFileURL = nil
+                        saveMessageKey = nil
+                        isLoadingSelection = false
+                    }
+                }
+            } catch {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    isLoadingSelection = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func handlePhotoFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case let .success(urls):
+            guard let url = urls.first else { return }
+            loadSelectedPhotoFile(url)
+        case let .failure(error):
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadSelectedPhotoFile(_ url: URL) {
+        selectionTask?.cancel()
+        isLoadingSelection = true
+
+        selectionTask = Task {
+            do {
+                if inputMode == .spatial {
+                    guard supportsSpatialPicker else {
+                        throw StereoPipelineError.spatialPickerUnavailable
+                    }
+
+                    let pair = try await Task.detached(priority: .userInitiated) {
+                        try MediaPicker.loadSpatialPhotoPair(fromFileURL: url)
+                    }.value
+                    if Task.isCancelled { return }
+
+                    await MainActor.run {
+                        selectedItem = nil
+                        sourceImage = pair.left
+                        sourceSpatialPair = pair
+                        outputImage = nil
+                        outputFileURL = nil
+                        saveMessageKey = nil
+                        isLoadingSelection = false
+                    }
+                } else {
+                    let image = try await Task.detached(priority: .userInitiated) {
+                        try MediaPicker.loadPhoto(fromFileURL: url)
+                    }.value
+                    if Task.isCancelled { return }
+
+                    await MainActor.run {
+                        selectedItem = nil
                         sourceImage = image
                         sourceSpatialPair = nil
                         outputImage = nil

@@ -37,6 +37,18 @@ enum MediaPicker {
         return cgImage
     }
 
+    static func loadPhoto(fromFileURL url: URL) throws -> CGImage {
+        let data = try withSecurityScopedAccess(to: url) {
+            try Data(contentsOf: url)
+        }
+
+        guard let image = UIImage(data: data), let cgImage = normalizedCGImage(from: image) else {
+            throw StereoPipelineError.photoDecodingFailed
+        }
+
+        return cgImage
+    }
+
     static func loadVideoURL(from item: PhotosPickerItem) async throws -> URL {
         if let file = try await item.loadTransferable(type: PickedVideoFile.self) {
             return file.url
@@ -52,9 +64,26 @@ enum MediaPicker {
         throw StereoPipelineError.photoPickerDataUnavailable
     }
 
+    static func loadVideoURL(fromFileURL url: URL) throws -> URL {
+        try withSecurityScopedAccess(to: url) {
+            let extensionName = url.pathExtension.isEmpty ? "mov" : url.pathExtension
+            let copiedURL = try TempFiles.makeTemporaryFileURL(prefix: "picked-video", fileExtension: extensionName)
+            try FileManager.default.copyItem(at: url, to: copiedURL)
+            return copiedURL
+        }
+    }
+
     static func loadSpatialPhotoPair(from item: PhotosPickerItem) async throws -> StereoImagePair {
         guard let data = try await item.loadTransferable(type: Data.self) else {
             throw StereoPipelineError.photoPickerDataUnavailable
+        }
+
+        return try decodeSpatialPair(from: data)
+    }
+
+    static func loadSpatialPhotoPair(fromFileURL url: URL) throws -> StereoImagePair {
+        let data = try withSecurityScopedAccess(to: url) {
+            try Data(contentsOf: url)
         }
 
         return try decodeSpatialPair(from: data)
@@ -95,5 +124,15 @@ enum MediaPicker {
         }
 
         return normalized.cgImage
+    }
+
+    private static func withSecurityScopedAccess<T>(to url: URL, work: () throws -> T) throws -> T {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        return try work()
     }
 }

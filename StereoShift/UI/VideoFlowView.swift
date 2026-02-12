@@ -1,6 +1,7 @@
 import AVKit
 import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct VideoFlowView: View {
     let pipeline: StereoPipeline
@@ -23,6 +24,7 @@ struct VideoFlowView: View {
     @State private var saveMessageKey: LocalizedStringKey?
     @State private var progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
     @State private var holdsScreenAwakeLock = false
+    @State private var showFileImporter = false
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var processingTask: Task<Void, Never>?
@@ -36,6 +38,18 @@ struct VideoFlowView: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
             .disabled(isProcessing || (inputMode == .spatial && !supportsSpatialPicker))
+
+            if supportsDesktopFileImport {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label(filePickerButtonTitle, systemImage: "folder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isProcessing || (inputMode == .spatial && !supportsSpatialPicker))
+            }
 
             if isLoadingSelection {
                 ProgressView("Loading video…")
@@ -158,6 +172,13 @@ struct VideoFlowView: View {
             }
             Button("Continue", role: .cancel) {}
         }
+        .fileImporter(
+            isPresented: $showFileImporter,
+            allowedContentTypes: [.movie],
+            allowsMultipleSelection: false
+        ) { result in
+            handleVideoFileImport(result)
+        }
     }
 
     private var supportsSpatialPicker: Bool {
@@ -165,6 +186,14 @@ struct VideoFlowView: View {
             return true
         }
         return false
+    }
+
+    private var supportsDesktopFileImport: Bool {
+#if targetEnvironment(macCatalyst)
+        return true
+#else
+        return ProcessInfo.processInfo.isiOSAppOnMac
+#endif
     }
 
     private var videoPickerFilter: PHPickerFilter {
@@ -182,6 +211,13 @@ struct VideoFlowView: View {
             return sourceVideoURL == nil ? "Pick Spatial Video" : "Pick Another Spatial Video"
         }
         return sourceVideoURL == nil ? "Pick Video" : "Pick Another Video"
+    }
+
+    private var filePickerButtonTitle: LocalizedStringKey {
+        if inputMode == .spatial {
+            return sourceVideoURL == nil ? "Pick Spatial Video from Files" : "Pick Another Spatial Video from Files"
+        }
+        return sourceVideoURL == nil ? "Pick Video from Files" : "Pick Another Video from Files"
     }
 
     private var generateButtonTitle: LocalizedStringKey {
@@ -228,6 +264,7 @@ struct VideoFlowView: View {
         progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
         isLoadingSelection = false
         isProcessing = false
+        showFileImporter = false
     }
 
     private func loadSelectedVideo(_ item: PhotosPickerItem?) {
@@ -252,6 +289,53 @@ struct VideoFlowView: View {
                 if Task.isCancelled { return }
 
                 await MainActor.run {
+                    sourceVideoURL = loadedURL
+                    if let oldOutput = outputVideoURL {
+                        TempFiles.removeItemIfExists(at: oldOutput)
+                    }
+                    outputVideoURL = nil
+                    saveMessageKey = nil
+                    isLoadingSelection = false
+                }
+            } catch {
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    isLoadingSelection = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func handleVideoFileImport(_ result: Result<[URL], Error>) {
+        switch result {
+        case let .success(urls):
+            guard let url = urls.first else { return }
+            loadSelectedVideoFile(url)
+        case let .failure(error):
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func loadSelectedVideoFile(_ url: URL) {
+        selectionTask?.cancel()
+        isLoadingSelection = true
+
+        selectionTask = Task {
+            do {
+                if inputMode == .spatial {
+                    guard supportsSpatialPicker else {
+                        throw StereoPipelineError.spatialPickerUnavailable
+                    }
+                }
+
+                let loadedURL = try await Task.detached(priority: .userInitiated) {
+                    try MediaPicker.loadVideoURL(fromFileURL: url)
+                }.value
+                if Task.isCancelled { return }
+
+                await MainActor.run {
+                    selectedItem = nil
                     sourceVideoURL = loadedURL
                     if let oldOutput = outputVideoURL {
                         TempFiles.removeItemIfExists(at: oldOutput)
