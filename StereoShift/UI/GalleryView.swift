@@ -1,4 +1,5 @@
 import AVFoundation
+import ImageIO
 import SwiftUI
 import UIKit
 
@@ -8,10 +9,13 @@ struct GalleryView: View {
     @State private var isClearingAll = false
     @State private var showClearAllConfirmation = false
     @State private var errorMessage: String?
+    @State private var visibleItemCount = 0
 
     private let columns = [
         GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .top)
     ]
+    private let initialPageSize = 120
+    private let pageSize = 80
 
     var body: some View {
         VStack(spacing: 14) {
@@ -22,13 +26,16 @@ struct GalleryView: View {
             } else {
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 12) {
-                        ForEach(galleryLibrary.items) { item in
+                        ForEach(visibleItems) { item in
                             Button {
                                 selectedItem = item
                             } label: {
                                 GalleryGridItemView(item: item)
                             }
                             .buttonStyle(.plain)
+                            .onAppear {
+                                loadMoreIfNeeded(currentItem: item)
+                            }
                         }
                     }
                     .padding(.top, 4)
@@ -37,6 +44,12 @@ struct GalleryView: View {
                     galleryLibrary.reload()
                 }
             }
+        }
+        .onAppear {
+            syncVisibleItemCount()
+        }
+        .onChange(of: galleryLibrary.items.count) { _, _ in
+            syncVisibleItemCount()
         }
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
@@ -113,6 +126,36 @@ struct GalleryView: View {
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
 
+    private var visibleItems: ArraySlice<GalleryItem> {
+        galleryLibrary.items.prefix(visibleItemCount)
+    }
+
+    private func syncVisibleItemCount() {
+        let totalCount = galleryLibrary.items.count
+        if totalCount == 0 {
+            visibleItemCount = 0
+            return
+        }
+        if visibleItemCount == 0 {
+            visibleItemCount = min(initialPageSize, totalCount)
+            return
+        }
+        visibleItemCount = min(max(visibleItemCount, initialPageSize), totalCount)
+    }
+
+    private func loadMoreIfNeeded(currentItem: GalleryItem) {
+        guard currentItem.id == visibleItems.last?.id else {
+            return
+        }
+
+        let totalCount = galleryLibrary.items.count
+        guard visibleItemCount < totalCount else {
+            return
+        }
+
+        visibleItemCount = min(totalCount, visibleItemCount + pageSize)
+    }
+
     private func clearAllItems() {
         isClearingAll = true
         Task {
@@ -166,7 +209,13 @@ private struct GalleryGridItemView: View {
 private struct GalleryThumbnailView: View {
     let item: GalleryItem
     @State private var thumbnail: UIImage?
-    private static let cache = NSCache<NSString, UIImage>()
+    private static let cache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 300
+        cache.totalCostLimit = 64 * 1024 * 1024
+        return cache
+    }()
+    private static let imageThumbnailMaxPixelSize = 320
 
     var body: some View {
         ZStack {
@@ -187,6 +236,9 @@ private struct GalleryThumbnailView: View {
         .task(id: item.id) {
             await loadThumbnail()
         }
+        .onDisappear {
+            thumbnail = nil
+        }
     }
 
     private func loadThumbnail() async {
@@ -199,11 +251,15 @@ private struct GalleryThumbnailView: View {
         }
 
         if item.type == .image {
-            if let loaded = UIImage(contentsOfFile: item.url.path) {
+            let loadingTask = Task.detached(priority: .utility) {
+                Self.makeImageThumbnail(from: item.url, maxPixelSize: Self.imageThumbnailMaxPixelSize)
+            }
+            let loaded = await loadingTask.value
+            if let loaded {
                 await MainActor.run {
                     thumbnail = loaded
                 }
-                Self.cache.setObject(loaded, forKey: cacheKey)
+                Self.cache.setObject(loaded, forKey: cacheKey, cost: Self.pixelCost(for: loaded))
             }
             return
         }
@@ -220,12 +276,39 @@ private struct GalleryThumbnailView: View {
             await MainActor.run {
                 thumbnail = generated
             }
-            Self.cache.setObject(generated, forKey: cacheKey)
+            Self.cache.setObject(generated, forKey: cacheKey, cost: Self.pixelCost(for: generated))
         } catch {
             await MainActor.run {
                 thumbnail = nil
             }
         }
+    }
+
+    private static func makeImageThumbnail(from url: URL, maxPixelSize: Int) -> UIImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else {
+            return nil
+        }
+
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+        ]
+
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
+            return nil
+        }
+
+        return UIImage(cgImage: cgImage)
+    }
+
+    private static func pixelCost(for image: UIImage) -> Int {
+        let pixelWidth = Int(image.size.width * image.scale)
+        let pixelHeight = Int(image.size.height * image.scale)
+        let cost = pixelWidth * pixelHeight * 4
+        return max(cost, 1)
     }
 }
 
