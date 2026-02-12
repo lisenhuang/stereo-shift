@@ -22,6 +22,7 @@ struct VideoFlowView: View {
     @State private var errorMessage: String?
     @State private var saveMessageKey: LocalizedStringKey?
     @State private var progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
+    @State private var holdsScreenAwakeLock = false
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var processingTask: Task<Void, Never>?
@@ -127,9 +128,11 @@ struct VideoFlowView: View {
             resetForSourceModeChange()
         }
         .onChange(of: isProcessing) { _, newValue in
+            updateScreenAwakeLock(isActive: newValue)
             onProcessingStateChanged(newValue)
         }
         .onDisappear {
+            updateScreenAwakeLock(isActive: false)
             selectionTask?.cancel()
             processingTask?.cancel()
             onProcessingStateChanged(false)
@@ -165,10 +168,11 @@ struct VideoFlowView: View {
     }
 
     private var videoPickerFilter: PHPickerFilter {
-        if inputMode == .spatial {
-            if #available(iOS 18.0, *) {
+        if #available(iOS 18.0, *) {
+            if inputMode == .spatial {
                 return .all(of: [.videos, .spatialMedia])
             }
+            return .all(of: [.videos, .not(.spatialMedia)])
         }
         return .videos
     }
@@ -330,6 +334,19 @@ struct VideoFlowView: View {
         processingTask?.cancel()
         processingTask = nil
         isProcessing = false
+    }
+
+    private func updateScreenAwakeLock(isActive: Bool) {
+        if isActive, !holdsScreenAwakeLock {
+            holdsScreenAwakeLock = true
+            ScreenAwakeManager.shared.acquire()
+            return
+        }
+
+        if !isActive, holdsScreenAwakeLock {
+            holdsScreenAwakeLock = false
+            ScreenAwakeManager.shared.release()
+        }
     }
 
     private func saveOutputToInAppGallery() {

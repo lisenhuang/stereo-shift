@@ -22,6 +22,7 @@ struct PhotoFlowView: View {
     @State private var showStopConfirmation = false
     @State private var errorMessage: String?
     @State private var saveMessageKey: LocalizedStringKey?
+    @State private var holdsScreenAwakeLock = false
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var generateTask: Task<Void, Never>?
@@ -129,9 +130,11 @@ struct PhotoFlowView: View {
             resetForSourceModeChange()
         }
         .onChange(of: isGenerating) { _, newValue in
+            updateScreenAwakeLock(isActive: newValue)
             onProcessingStateChanged(newValue)
         }
         .onDisappear {
+            updateScreenAwakeLock(isActive: false)
             selectionTask?.cancel()
             generateTask?.cancel()
             onProcessingStateChanged(false)
@@ -167,10 +170,11 @@ struct PhotoFlowView: View {
     }
 
     private var photoPickerFilter: PHPickerFilter {
-        if inputMode == .spatial {
-            if #available(iOS 18.0, *) {
+        if #available(iOS 18.0, *) {
+            if inputMode == .spatial {
                 return .all(of: [.images, .spatialMedia])
             }
+            return .all(of: [.images, .not(.spatialMedia)])
         }
         return .images
     }
@@ -365,6 +369,19 @@ struct PhotoFlowView: View {
         generateTask?.cancel()
         generateTask = nil
         isGenerating = false
+    }
+
+    private func updateScreenAwakeLock(isActive: Bool) {
+        if isActive, !holdsScreenAwakeLock {
+            holdsScreenAwakeLock = true
+            ScreenAwakeManager.shared.acquire()
+            return
+        }
+
+        if !isActive, holdsScreenAwakeLock {
+            holdsScreenAwakeLock = false
+            ScreenAwakeManager.shared.release()
+        }
     }
 
     private func saveOutputToInAppGallery() {
