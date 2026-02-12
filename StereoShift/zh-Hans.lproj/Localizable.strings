@@ -12,6 +12,7 @@
 "Delete" = "删除";
 "Delete this item from In-App Gallery?" = "要从应用内画廊删除此项目吗？";
 "Done" = "完成";
+"Dark" = "深色";
 "English" = "英语";
 "Error" = "错误";
 "Estimating depth and rendering stereo views." = "正在估计深度并渲染立体视图。";
@@ -25,6 +26,7 @@
 "In-App Gallery" = "应用内画廊";
 "Input" = "输入";
 "Language" = "语言";
+"Light" = "浅色";
 "Loading photo…" = "正在加载照片…";
 "Loading video…" = "正在加载视频…";
 "Mode" = "模式";
@@ -60,6 +62,8 @@
 "Stop current conversion?" = "停止当前转换？";
 "Strong" = "强烈";
 "Subtle" = "轻微";
+"System" = "系统";
+"Theme" = "主题";
 "Video" = "视频";
 "简体中文" = "简体中文";
 "한국어" = "韩语";

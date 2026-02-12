@@ -18,6 +18,7 @@ struct HomeView: View {
     }
 
     @AppStorage("appLanguage") private var appLanguageRawValue = AppLanguage.system.rawValue
+    @AppStorage("appTheme") private var appThemeRawValue = AppTheme.system.rawValue
     @StateObject private var pipeline = StereoPipeline()
     @StateObject private var galleryLibrary = AppGalleryLibrary()
     @State private var mode: Mode = .photo
@@ -75,6 +76,7 @@ struct HomeView: View {
                 .navigationTitle("StereoShift")
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        themeMenu
                         languageMenu
 
                         NavigationLink {
@@ -129,6 +131,27 @@ struct HomeView: View {
         } set: { value in
             appLanguageRawValue = value.rawValue
         }
+    }
+
+    private var selectedThemeBinding: Binding<AppTheme> {
+        Binding {
+            AppTheme(rawValue: appThemeRawValue) ?? .system
+        } set: { value in
+            appThemeRawValue = value.rawValue
+        }
+    }
+
+    private var themeMenu: some View {
+        Menu {
+            Picker("Theme", selection: selectedThemeBinding) {
+                ForEach(AppTheme.allCases) { theme in
+                    Text(theme.displayNameKey).tag(theme)
+                }
+            }
+        } label: {
+            Label("Theme", systemImage: "circle.lefthalf.filled")
+        }
+        .disabled(isProcessing)
     }
 
     private var languageMenu: some View {
