@@ -5,6 +5,44 @@ import Foundation
 final class StereoRenderer {
     private let depthEstimator: DepthEstimator
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
+    private var isKernelWarpEnabled = true
+    private static let stereoWarpKernel: CIKernel? = {
+        let source = """
+        kernel vec4 stereoWarp(sampler colorImage, sampler depthImage, float direction, float maxShift, float minDepth, float invRange, float invertDepth) {
+            vec2 d = destCoord();
+            vec4 colorExtent = samplerExtent(colorImage);
+            float minX = colorExtent.x;
+            float maxX = colorExtent.x + colorExtent.z - 1.0;
+            float sum = 0.0;
+            sum += sample(depthImage, d + vec2(-1.0, -1.0)).r;
+            sum += sample(depthImage, d + vec2(0.0, -1.0)).r;
+            sum += sample(depthImage, d + vec2(1.0, -1.0)).r;
+            sum += sample(depthImage, d + vec2(-1.0, 0.0)).r;
+            sum += sample(depthImage, d).r;
+            sum += sample(depthImage, d + vec2(1.0, 0.0)).r;
+            sum += sample(depthImage, d + vec2(-1.0, 1.0)).r;
+            sum += sample(depthImage, d + vec2(0.0, 1.0)).r;
+            sum += sample(depthImage, d + vec2(1.0, 1.0)).r;
+
+            float depthValue = clamp(((sum / 9.0) - minDepth) * invRange, 0.0, 1.0);
+            if (invertDepth > 0.5) {
+                depthValue = 1.0 - depthValue;
+            }
+            float shiftedX = clamp(d.x + (direction * depthValue * maxShift), minX, maxX);
+            vec4 sampledColor = sample(colorImage, vec2(shiftedX, d.y));
+            vec3 opaqueColor = sampledColor.rgb;
+            if (sampledColor.a > 0.00001) {
+                opaqueColor = sampledColor.rgb / sampledColor.a;
+            }
+            return vec4(opaqueColor, 1.0);
+        }
+        """
+
+        guard let kernels = try? CIKernel.makeKernels(source: source) else {
+            return nil
+        }
+        return kernels.first
+    }()
 
     init(depthEstimator: DepthEstimator) {
         self.depthEstimator = depthEstimator
@@ -23,6 +61,14 @@ final class StereoRenderer {
     }
 
     func makeSBS(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float) throws -> CVPixelBuffer {
+        if isKernelWarpEnabled, let accelerated = try makeSBSUsingKernel(from: rgb, depth: depth, strength: strength) {
+            if isLikelyInvalidKernelOutput(accelerated, comparedTo: rgb) {
+                isKernelWarpEnabled = false
+            } else {
+                return accelerated
+            }
+        }
+
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
 
@@ -98,6 +144,218 @@ final class StereoRenderer {
         }
 
         return outputBuffer
+    }
+
+    private func makeSBSUsingKernel(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float) throws -> CVPixelBuffer? {
+        guard let kernel = Self.stereoWarpKernel else {
+            return nil
+        }
+
+        let width = CVPixelBufferGetWidth(rgb)
+        let height = CVPixelBufferGetHeight(rgb)
+        let clampedStrength = max(0, min(1.5, strength))
+        let maxShift = CGFloat(clampedStrength * Self.maxDisparity(forWidth: width) * 0.5)
+        let depthImage = try prepareDepthImageForKernel(from: depth, targetWidth: width, targetHeight: height)
+        let stats = try depthStatistics(from: depthImage, width: width, height: height)
+        let range = max(stats.max - stats.min, 0.0001)
+        let invRange = CGFloat(1 / range)
+        let invertDepth = stats.shouldInvert ? CGFloat(1) : CGFloat(0)
+
+        let colorImage = CIImage(cvPixelBuffer: rgb)
+        let extent = CGRect(x: 0, y: 0, width: width, height: height)
+        let roiInset = maxShift + 2
+
+        guard let left = kernel.apply(
+            extent: extent,
+            roiCallback: { _, rect in
+                rect.insetBy(dx: -roiInset, dy: 0)
+            },
+            arguments: [colorImage, depthImage, CGFloat(1), maxShift, CGFloat(stats.min), invRange, invertDepth]
+        ) else {
+            return nil
+        }
+
+        guard let right = kernel.apply(
+            extent: extent,
+            roiCallback: { _, rect in
+                rect.insetBy(dx: -roiInset, dy: 0)
+            },
+            arguments: [colorImage, depthImage, CGFloat(-1), maxShift, CGFloat(stats.min), invRange, invertDepth]
+        ) else {
+            return nil
+        }
+
+        let canvasExtent = CGRect(x: 0, y: 0, width: width * 2, height: height)
+        let canvas = CIImage(color: .black).cropped(to: canvasExtent)
+        let rightPlaced = right.transformed(by: CGAffineTransform(translationX: CGFloat(width), y: 0))
+        let combined = rightPlaced.composited(over: left.composited(over: canvas))
+
+        let outputBuffer = try PixelBufferUtilities.makePixelBuffer(
+            width: width * 2,
+            height: height,
+            pixelFormat: kCVPixelFormatType_32BGRA
+        )
+        ciContext.render(combined, to: outputBuffer, bounds: canvasExtent, colorSpace: CGColorSpaceCreateDeviceRGB())
+        // Force Core Image GPU work to be materialized before the writer consumes the buffer.
+        CVPixelBufferLockBaseAddress(outputBuffer, .readOnly)
+        CVPixelBufferUnlockBaseAddress(outputBuffer, .readOnly)
+        return outputBuffer
+    }
+
+    private func isLikelyInvalidKernelOutput(_ output: CVPixelBuffer, comparedTo source: CVPixelBuffer) -> Bool {
+        guard
+            let sourceLuma = approximateLuma(of: source),
+            let outputLuma = approximateLuma(of: output)
+        else {
+            return false
+        }
+
+        return sourceLuma > 0.04 && outputLuma < 0.003
+    }
+
+    private func approximateLuma(of pixelBuffer: CVPixelBuffer) -> Float? {
+        let format = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        guard format == kCVPixelFormatType_32BGRA else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
+            return nil
+        }
+
+        let width = CVPixelBufferGetWidth(pixelBuffer)
+        let height = CVPixelBufferGetHeight(pixelBuffer)
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
+        let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
+
+        let sampleColumns = 8
+        let sampleRows = 8
+        let xStep = max(1, width / sampleColumns)
+        let yStep = max(1, height / sampleRows)
+
+        var sum: Float = 0
+        var count = 0
+
+        var y = 0
+        while y < height {
+            let row = pointer.advanced(by: y * bytesPerRow)
+            var x = 0
+            while x < width {
+                let offset = x * 4
+                let b = Float(row[offset]) / 255
+                let g = Float(row[offset + 1]) / 255
+                let r = Float(row[offset + 2]) / 255
+                let luma = (0.2126 * r) + (0.7152 * g) + (0.0722 * b)
+                sum += luma
+                count += 1
+                x += xStep
+            }
+            y += yStep
+        }
+
+        guard count > 0 else {
+            return nil
+        }
+        return sum / Float(count)
+    }
+
+    private func prepareDepthImageForKernel(from depthBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> CIImage {
+        let preparedDepth: CVPixelBuffer
+
+        if CVPixelBufferGetWidth(depthBuffer) == targetWidth && CVPixelBufferGetHeight(depthBuffer) == targetHeight {
+            preparedDepth = depthBuffer
+        } else {
+            preparedDepth = try PixelBufferUtilities.resize(
+                depthBuffer,
+                to: CGSize(width: targetWidth, height: targetHeight),
+                context: ciContext
+            )
+        }
+
+        let extent = CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
+        let format = CVPixelBufferGetPixelFormatType(preparedDepth)
+        let image = CIImage(cvPixelBuffer: preparedDepth).cropped(to: extent)
+        if format == kCVPixelFormatType_OneComponent8 {
+            return image
+        }
+
+        return image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.0])
+    }
+
+    private func depthStatistics(from depthImage: CIImage, width: Int, height: Int) throws -> (min: Float, max: Float, shouldInvert: Bool) {
+        let analysisWidth = max(24, min(160, width))
+        let analysisHeight = max(24, min(160, height))
+        let sx = CGFloat(analysisWidth) / max(CGFloat(width), 1)
+        let sy = CGFloat(analysisHeight) / max(CGFloat(height), 1)
+        let sampled = depthImage
+            .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+            .cropped(to: CGRect(x: 0, y: 0, width: analysisWidth, height: analysisHeight))
+
+        let analysisBuffer = try PixelBufferUtilities.makePixelBuffer(
+            width: analysisWidth,
+            height: analysisHeight,
+            pixelFormat: kCVPixelFormatType_OneComponent8
+        )
+        ciContext.render(
+            sampled,
+            to: analysisBuffer,
+            bounds: CGRect(x: 0, y: 0, width: analysisWidth, height: analysisHeight),
+            colorSpace: CGColorSpaceCreateDeviceGray()
+        )
+
+        CVPixelBufferLockBaseAddress(analysisBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(analysisBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(analysisBuffer) else {
+            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(analysisBuffer)
+        let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * analysisHeight)
+
+        var minValue = Float.greatestFiniteMagnitude
+        var maxValue = -Float.greatestFiniteMagnitude
+
+        var borderSum: Float = 0
+        var borderCount = 0
+        var centerSum: Float = 0
+        var centerCount = 0
+
+        let centerXStart = analysisWidth / 4
+        let centerXEnd = max(centerXStart + 1, (analysisWidth * 3) / 4)
+        let centerYStart = analysisHeight / 4
+        let centerYEnd = max(centerYStart + 1, (analysisHeight * 3) / 4)
+
+        for y in 0..<analysisHeight {
+            let row = pointer.advanced(by: y * bytesPerRow)
+            for x in 0..<analysisWidth {
+                let value = Float(row[x]) / 255
+                minValue = min(minValue, value)
+                maxValue = max(maxValue, value)
+
+                if x == 0 || y == 0 || x == analysisWidth - 1 || y == analysisHeight - 1 {
+                    borderSum += value
+                    borderCount += 1
+                }
+
+                if x >= centerXStart, x < centerXEnd, y >= centerYStart, y < centerYEnd {
+                    centerSum += value
+                    centerCount += 1
+                }
+            }
+        }
+
+        if !minValue.isFinite || !maxValue.isFinite {
+            minValue = 0
+            maxValue = 1
+        }
+
+        let borderMean = borderSum / Float(max(borderCount, 1))
+        let centerMean = centerSum / Float(max(centerCount, 1))
+        return (min: minValue, max: maxValue, shouldInvert: borderMean > centerMean)
     }
 
     private func normalizedDepthMap(from depthBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> [Float] {

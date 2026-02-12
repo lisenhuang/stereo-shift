@@ -48,6 +48,14 @@ struct ResultPreviewView: View {
                             player?.pause()
                             player?.seek(to: .zero)
                         }
+                        .onChange(of: url) { _, newURL in
+                            if player?.currentItem?.asset as? AVURLAsset == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != newURL {
+                                player = AVPlayer(url: newURL)
+                            }
+                            player?.actionAtItemEnd = .pause
+                            player?.pause()
+                            player?.seek(to: .zero)
+                        }
                         .onDisappear {
                             player?.pause()
                             player?.seek(to: .zero)
@@ -140,6 +148,13 @@ private struct FullscreenPreviewView: View {
                             .onAppear {
                                 if player?.currentItem == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
                                     player = AVPlayer(url: url)
+                                }
+                                player?.actionAtItemEnd = .none
+                                player?.play()
+                            }
+                            .onChange(of: url) { _, newURL in
+                                if player?.currentItem == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != newURL {
+                                    player = AVPlayer(url: newURL)
                                 }
                                 player?.actionAtItemEnd = .none
                                 player?.play()

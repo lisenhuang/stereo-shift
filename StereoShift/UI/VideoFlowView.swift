@@ -272,10 +272,19 @@ struct VideoFlowView: View {
 
         guard let item else {
             sourceVideoURL = nil
+            if let oldOutput = outputVideoURL {
+                TempFiles.removeItemIfExists(at: oldOutput)
+            }
             outputVideoURL = nil
             return
         }
 
+        sourceVideoURL = nil
+        if let oldOutput = outputVideoURL {
+            TempFiles.removeItemIfExists(at: oldOutput)
+        }
+        outputVideoURL = nil
+        saveMessageKey = nil
         isLoadingSelection = true
         selectionTask = Task {
             do {
@@ -319,6 +328,12 @@ struct VideoFlowView: View {
 
     private func loadSelectedVideoFile(_ url: URL) {
         selectionTask?.cancel()
+        sourceVideoURL = nil
+        if let oldOutput = outputVideoURL {
+            TempFiles.removeItemIfExists(at: oldOutput)
+        }
+        outputVideoURL = nil
+        saveMessageKey = nil
         isLoadingSelection = true
 
         selectionTask = Task {

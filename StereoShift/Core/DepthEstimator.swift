@@ -48,11 +48,75 @@ actor DepthEstimator {
             throw StereoPipelineError.modelNotFound
         }
 
-        let configuration = MLModelConfiguration()
-        configuration.computeUnits = .all
-        let loadedModel = try MLModel(contentsOf: modelURL, configuration: configuration)
-        self.model = loadedModel
-        return loadedModel
+        var lastError: Error?
+
+        for computeUnits in preferredComputeUnitOrder {
+            do {
+                let configuration = MLModelConfiguration()
+                configuration.computeUnits = computeUnits
+                let loadedModel = try MLModel(contentsOf: modelURL, configuration: configuration)
+                self.model = loadedModel
+                return loadedModel
+            } catch {
+                lastError = error
+            }
+        }
+
+        if let lastError {
+            throw lastError
+        }
+        throw StereoPipelineError.modelNotFound
+    }
+
+    private var preferredComputeUnitOrder: [MLComputeUnits] {
+#if targetEnvironment(macCatalyst)
+        return computeUnitOrderForMacRuntime
+#else
+        if ProcessInfo.processInfo.isiOSAppOnMac {
+            return computeUnitOrderForMacRuntime
+        }
+        let devices = availableComputeDevices
+        var order: [MLComputeUnits] = []
+        if devices.hasNeuralEngine {
+            order.append(.cpuAndNeuralEngine)
+        }
+        if devices.hasGPU {
+            order.append(.cpuAndGPU)
+        }
+        order.append(.cpuOnly)
+        return order
+#endif
+    }
+
+    private var computeUnitOrderForMacRuntime: [MLComputeUnits] {
+        let devices = availableComputeDevices
+        if devices.hasGPU {
+            return [.cpuAndGPU, .cpuOnly]
+        }
+        return [.cpuOnly]
+    }
+
+    private var availableComputeDevices: (hasNeuralEngine: Bool, hasGPU: Bool) {
+        if #available(iOS 17.0, macOS 14.0, *) {
+            var hasNeuralEngine = false
+            var hasGPU = false
+
+            for device in MLModel.availableComputeDevices {
+                switch device {
+                case .neuralEngine:
+                    hasNeuralEngine = true
+                case .gpu:
+                    hasGPU = true
+                case .cpu:
+                    break
+                @unknown default:
+                    break
+                }
+            }
+
+            return (hasNeuralEngine, hasGPU)
+        }
+        return (false, false)
     }
 
     private func locateModelURL() throws -> URL? {
