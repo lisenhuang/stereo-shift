@@ -3,6 +3,7 @@
 "3D Strength" = "3D 强度";
 "Balanced" = "平衡";
 "Cancel" = "取消";
+"Clear All" = "清空全部";
 "Continue" = "继续";
 "Convert Spatial to SBS" = "将空间媒体转换为 SBS";
 "Converting Spatial Photo" = "正在转换空间照片";
@@ -10,6 +11,7 @@
 "Converting…" = "转换中…";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "离线生成左右立体照片和视频，或直接将空间媒体拆分为 SBS。";
 "Delete" = "删除";
+"Delete all items from In-App Gallery?" = "要清空应用内画廊的全部项目吗？";
 "Delete this item from In-App Gallery?" = "要从应用内画廊删除此项目吗？";
 "Done" = "完成";
 "Dark" = "深色";

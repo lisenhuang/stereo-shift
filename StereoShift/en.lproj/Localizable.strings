@@ -3,6 +3,7 @@
 "3D Strength" = "3D Strength";
 "Balanced" = "Balanced";
 "Cancel" = "Cancel";
+"Clear All" = "Clear All";
 "Continue" = "Continue";
 "Convert Spatial to SBS" = "Convert Spatial to SBS";
 "Converting Spatial Photo" = "Converting Spatial Photo";
@@ -10,6 +11,7 @@
 "Converting…" = "Converting…";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "Create left-right stereo photos and videos offline, or split spatial media directly into SBS.";
 "Delete" = "Delete";
+"Delete all items from In-App Gallery?" = "Delete all items from In-App Gallery?";
 "Delete this item from In-App Gallery?" = "Delete this item from In-App Gallery?";
 "Done" = "Done";
 "Dark" = "Dark";

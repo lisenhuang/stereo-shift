@@ -5,6 +5,9 @@ import UIKit
 struct GalleryView: View {
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     @State private var selectedItem: GalleryItem?
+    @State private var isClearingAll = false
+    @State private var showClearAllConfirmation = false
+    @State private var errorMessage: String?
 
     private let columns = [
         GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .top)
@@ -38,6 +41,27 @@ struct GalleryView: View {
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
         }
+        .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
+            Button("OK", role: .cancel) {
+                errorMessage = nil
+            }
+        } message: {
+            if let errorMessage {
+                Text(errorMessage)
+            } else {
+                Text("Something went wrong.")
+            }
+        }
+        .confirmationDialog(
+            "Delete all items from In-App Gallery?",
+            isPresented: $showClearAllConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                clearAllItems()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     private var header: some View {
@@ -50,14 +74,23 @@ struct GalleryView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button {
-                galleryLibrary.reload()
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.headline)
-                    .padding(10)
+            HStack(spacing: 8) {
+                Button("Clear All", role: .destructive) {
+                    showClearAllConfirmation = true
+                }
+                .buttonStyle(.bordered)
+                .disabled(galleryLibrary.items.isEmpty || isClearingAll)
+
+                Button {
+                    galleryLibrary.reload()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.headline)
+                        .padding(10)
+                }
+                .buttonStyle(.bordered)
+                .disabled(isClearingAll)
             }
-            .buttonStyle(.bordered)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
@@ -78,6 +111,24 @@ struct GalleryView: View {
         .frame(maxWidth: .infinity)
         .padding(24)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func clearAllItems() {
+        isClearingAll = true
+        Task {
+            do {
+                try await galleryLibrary.clearAll()
+                await MainActor.run {
+                    selectedItem = nil
+                    isClearingAll = false
+                }
+            } catch {
+                await MainActor.run {
+                    isClearingAll = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
 }
 

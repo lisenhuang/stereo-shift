@@ -3,6 +3,7 @@
 "3D Strength" = "3D 강도";
 "Balanced" = "균형";
 "Cancel" = "취소";
+"Clear All" = "모두 지우기";
 "Continue" = "계속";
 "Convert Spatial to SBS" = "공간 미디어를 SBS로 변환";
 "Converting Spatial Photo" = "공간 사진 변환 중";
@@ -10,6 +11,7 @@
 "Converting…" = "변환 중…";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "오프라인으로 좌우 스테레오 사진/동영상을 만들거나 공간 미디어를 바로 SBS로 분리하세요.";
 "Delete" = "삭제";
+"Delete all items from In-App Gallery?" = "앱 내 갤러리의 모든 항목을 삭제할까요?";
 "Delete this item from In-App Gallery?" = "이 항목을 앱 내 갤러리에서 삭제할까요?";
 "Done" = "완료";
 "Dark" = "다크";

@@ -80,6 +80,16 @@ final class AppGalleryLibrary: ObservableObject {
         }
     }
 
+    func clearAll() async throws {
+        try await Task.detached(priority: .utility) {
+            try Self.deleteAllMedia()
+        }.value
+
+        await MainActor.run {
+            items = []
+        }
+    }
+
     private static func loadItems() throws -> [GalleryItem] {
         let directory = try galleryDirectory()
         let files = try FileManager.default.contentsOfDirectory(
@@ -129,6 +139,19 @@ final class AppGalleryLibrary: ObservableObject {
             return
         }
         try FileManager.default.removeItem(at: url)
+    }
+
+    private static func deleteAllMedia() throws {
+        let directory = try galleryDirectory()
+        let files = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        for url in files {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
     private static func galleryDirectory() throws -> URL {

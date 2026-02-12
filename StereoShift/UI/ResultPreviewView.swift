@@ -130,20 +130,9 @@ private struct FullscreenPreviewView: View {
                 Color.black.ignoresSafeArea()
 
                 Group {
-                    switch media {
-                    case let .image(cgImage):
-                        Image(decorative: cgImage, scale: 1)
-                            .resizable()
-                            .scaledToFit()
-                    case let .imageFile(url):
-                        if let uiImage = UIImage(contentsOfFile: url.path) {
-                            Image(uiImage: uiImage)
-                                .resizable()
-                                .scaledToFit()
-                        } else {
-                            unavailable
-                        }
-                    case let .video(url):
+                    if let previewImage = previewUIImage {
+                        ZoomableImageView(image: previewImage)
+                    } else if case let .video(url) = media {
                         VideoPlayer(player: player)
                             .onAppear {
                                 if player?.currentItem == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
@@ -169,6 +158,8 @@ private struct FullscreenPreviewView: View {
                                 player?.seek(to: .zero)
                                 player?.play()
                             }
+                    } else {
+                        unavailable
                     }
                 }
                 .frame(width: geometry.size.width, alignment: .center)
@@ -196,5 +187,96 @@ private struct FullscreenPreviewView: View {
                 .font(.subheadline)
         }
         .foregroundStyle(.secondary)
+    }
+
+    private var previewUIImage: UIImage? {
+        switch media {
+        case let .image(cgImage):
+            return UIImage(cgImage: cgImage)
+        case let .imageFile(url):
+            return UIImage(contentsOfFile: url.path)
+        case .video:
+            return nil
+        }
+    }
+}
+
+private struct ZoomableImageView: UIViewRepresentable {
+    let image: UIImage
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UIScrollView {
+        let scrollView = UIScrollView()
+        scrollView.backgroundColor = .clear
+        scrollView.delegate = context.coordinator
+        scrollView.minimumZoomScale = 1.0
+        scrollView.maximumZoomScale = 6.0
+        scrollView.zoomScale = 1.0
+        scrollView.bouncesZoom = true
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.showsHorizontalScrollIndicator = false
+
+        let imageView = UIImageView(image: image)
+        imageView.contentMode = .scaleAspectFit
+        imageView.frame = scrollView.bounds
+        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        imageView.isUserInteractionEnabled = true
+        scrollView.addSubview(imageView)
+
+        let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scrollView.addGestureRecognizer(doubleTap)
+
+        context.coordinator.imageView = imageView
+        return scrollView
+    }
+
+    func updateUIView(_ scrollView: UIScrollView, context: Context) {
+        context.coordinator.imageView?.image = image
+        if scrollView.zoomScale < scrollView.minimumZoomScale || scrollView.zoomScale > scrollView.maximumZoomScale {
+            scrollView.setZoomScale(1.0, animated: false)
+        }
+        context.coordinator.centerImage(in: scrollView)
+    }
+
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        weak var imageView: UIImageView?
+
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? {
+            imageView
+        }
+
+        func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerImage(in: scrollView)
+        }
+
+        func centerImage(in scrollView: UIScrollView) {
+            let horizontalInset = max(0, (scrollView.bounds.width - scrollView.contentSize.width) * 0.5)
+            let verticalInset = max(0, (scrollView.bounds.height - scrollView.contentSize.height) * 0.5)
+            scrollView.contentInset = UIEdgeInsets(top: verticalInset, left: horizontalInset, bottom: verticalInset, right: horizontalInset)
+        }
+
+        @objc
+        func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard let scrollView = gesture.view as? UIScrollView else { return }
+            if scrollView.zoomScale > scrollView.minimumZoomScale + 0.01 {
+                scrollView.setZoomScale(scrollView.minimumZoomScale, animated: true)
+                return
+            }
+
+            let zoomScale = min(scrollView.maximumZoomScale, 2.5)
+            let point = gesture.location(in: imageView)
+            let zoomSize = CGSize(width: scrollView.bounds.width / zoomScale, height: scrollView.bounds.height / zoomScale)
+            let zoomRect = CGRect(
+                x: point.x - (zoomSize.width * 0.5),
+                y: point.y - (zoomSize.height * 0.5),
+                width: zoomSize.width,
+                height: zoomSize.height
+            )
+            scrollView.zoom(to: zoomRect, animated: true)
+        }
     }
 }
