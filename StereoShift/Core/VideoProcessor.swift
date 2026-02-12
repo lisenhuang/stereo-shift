@@ -152,7 +152,8 @@ final class VideoProcessor {
                 processedSeconds: totalDurationSeconds,
                 totalSeconds: totalDurationSeconds
             ))
-            return outputURL
+            try Task.checkCancellation()
+            return try await attachOriginalAudioIfAvailable(sourceURL: inputURL, processedVideoURL: outputURL)
         } catch {
             reader.cancelReading()
             writer.cancelWriting()
@@ -238,6 +239,86 @@ final class VideoProcessor {
 
         if writer.status == .failed {
             throw writer.error ?? StereoPipelineError.exportFailed
+        }
+    }
+
+    private func attachOriginalAudioIfAvailable(sourceURL: URL, processedVideoURL: URL) async throws -> URL {
+        let sourceAsset = AVAsset(url: sourceURL)
+        let sourceAudioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
+        guard let sourceAudioTrack = sourceAudioTracks.first else {
+            return processedVideoURL
+        }
+
+        let processedAsset = AVAsset(url: processedVideoURL)
+        let processedVideoTracks = try await processedAsset.loadTracks(withMediaType: .video)
+        guard let processedVideoTrack = processedVideoTracks.first else {
+            return processedVideoURL
+        }
+
+        let processedDuration = try await processedAsset.load(.duration)
+        guard CMTimeCompare(processedDuration, .zero) > 0 else {
+            return processedVideoURL
+        }
+
+        let composition = AVMutableComposition()
+        guard let compositionVideoTrack = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw StereoPipelineError.exportFailed
+        }
+        let videoTimeRange = CMTimeRange(start: .zero, duration: processedDuration)
+        try compositionVideoTrack.insertTimeRange(videoTimeRange, of: processedVideoTrack, at: .zero)
+        compositionVideoTrack.preferredTransform = try await processedVideoTrack.load(.preferredTransform)
+
+        let sourceAudioTimeRange = try await sourceAudioTrack.load(.timeRange)
+        let audioDuration = CMTimeMinimum(processedDuration, sourceAudioTimeRange.duration)
+        guard CMTimeCompare(audioDuration, .zero) > 0 else {
+            return processedVideoURL
+        }
+
+        guard let compositionAudioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw StereoPipelineError.exportFailed
+        }
+        let audioTimeRange = CMTimeRange(start: sourceAudioTimeRange.start, duration: audioDuration)
+        try compositionAudioTrack.insertTimeRange(audioTimeRange, of: sourceAudioTrack, at: .zero)
+
+        let muxedURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-video-with-audio", fileExtension: "mp4")
+        TempFiles.removeItemIfExists(at: muxedURL)
+
+        guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
+            throw StereoPipelineError.exportFailed
+        }
+        exportSession.outputURL = muxedURL
+        exportSession.outputFileType = .mp4
+        exportSession.shouldOptimizeForNetworkUse = false
+
+        do {
+            try await export(session: exportSession)
+        } catch {
+            TempFiles.removeItemIfExists(at: muxedURL)
+            throw error
+        }
+
+        TempFiles.removeItemIfExists(at: processedVideoURL)
+        return muxedURL
+    }
+
+    private func export(session: AVAssetExportSession) async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                session.exportAsynchronously {
+                    switch session.status {
+                    case .completed:
+                        continuation.resume()
+                    case .cancelled:
+                        continuation.resume(throwing: StereoPipelineError.processingCancelled)
+                    case .failed:
+                        continuation.resume(throwing: session.error ?? StereoPipelineError.exportFailed)
+                    default:
+                        continuation.resume(throwing: StereoPipelineError.exportFailed)
+                    }
+                }
+            }
+        } onCancel: {
+            session.cancelExport()
         }
     }
 

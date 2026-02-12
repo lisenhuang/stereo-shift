@@ -43,6 +43,17 @@ struct ResultPreviewView: View {
                             if player?.currentItem?.asset as? AVURLAsset == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
                                 player = AVPlayer(url: url)
                             }
+                            player?.actionAtItemEnd = .none
+                            player?.play()
+                        }
+                        .onDisappear {
+                            player?.pause()
+                        }
+                        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
+                            guard let currentItem = player?.currentItem else { return }
+                            guard let endedItem = notification.object as? AVPlayerItem, endedItem == currentItem else { return }
+                            player?.seek(to: .zero)
+                            player?.play()
                         }
                 }
             }
@@ -133,6 +144,17 @@ private struct FullscreenPreviewView: View {
                                 if player?.currentItem == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
                                     player = AVPlayer(url: url)
                                 }
+                                player?.actionAtItemEnd = .none
+                                player?.play()
+                            }
+                            .onDisappear {
+                                player?.pause()
+                            }
+                            .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
+                                guard let currentItem = player?.currentItem else { return }
+                                guard let endedItem = notification.object as? AVPlayerItem, endedItem == currentItem else { return }
+                                player?.seek(to: .zero)
+                                player?.play()
                             }
                     }
                 }
