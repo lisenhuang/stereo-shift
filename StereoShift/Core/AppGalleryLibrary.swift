@@ -24,13 +24,28 @@ struct GalleryItem: Identifiable, Hashable {
 
 final class AppGalleryLibrary: ObservableObject {
     @Published private(set) var items: [GalleryItem] = []
+    private var reloadTask: Task<Void, Never>?
 
     init() {
         reload()
     }
 
+    deinit {
+        reloadTask?.cancel()
+    }
+
     func reload() {
-        items = (try? Self.loadItems()) ?? []
+        reloadTask?.cancel()
+        reloadTask = Task { [weak self] in
+            let loaded = await Task.detached(priority: .utility) {
+                (try? Self.loadItems()) ?? []
+            }.value
+
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                self?.items = loaded
+            }
+        }
     }
 
     func saveMedia(at sourceURL: URL, type: GalleryMediaType) async throws -> GalleryItem {
@@ -38,18 +53,21 @@ final class AppGalleryLibrary: ObservableObject {
             try Self.copyToGallery(sourceURL: sourceURL, type: type)
         }.value
 
-        reload()
-
-        if let item = items.first(where: { $0.url == destinationURL }) {
-            return item
-        }
-
-        return GalleryItem(
+        let values = try? destinationURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        let createdAt = values?.creationDate ?? values?.contentModificationDate ?? Date()
+        let item = GalleryItem(
             id: destinationURL.lastPathComponent,
             url: destinationURL,
             type: type,
-            createdAt: Date()
+            createdAt: createdAt
         )
+
+        await MainActor.run {
+            items.removeAll { $0.url == destinationURL }
+            items.insert(item, at: 0)
+        }
+
+        return item
     }
 
     func delete(_ item: GalleryItem) async throws {
@@ -58,7 +76,7 @@ final class AppGalleryLibrary: ObservableObject {
         }.value
 
         await MainActor.run {
-            reload()
+            items.removeAll { $0.id == item.id }
         }
     }
 

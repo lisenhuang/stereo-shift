@@ -3,21 +3,14 @@ import PhotosUI
 import SwiftUI
 
 struct VideoFlowView: View {
-    private enum InputMediaMode: String, CaseIterable, Identifiable {
-        case regular2D = "2D"
-        case spatial = "Spatial"
-
-        var id: String { rawValue }
-    }
-
     let pipeline: StereoPipeline
+    @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
 
-    @State private var inputMode: InputMediaMode = .regular2D
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceVideoURL: URL?
     @State private var outputVideoURL: URL?
@@ -66,9 +59,9 @@ struct VideoFlowView: View {
                 ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL), allowsFullscreenPreview: true)
 
                 VStack(spacing: 10) {
-                    Button(action: saveOutputToInAppGallary) {
+                    Button(action: saveOutputToInAppGallery) {
                         Label(
-                            isSaving ? "Saving…" : "Save to In-App Gallary",
+                            isSaving ? "Saving…" : "Save to In-App Gallery",
                             systemImage: "tray.and.arrow.down"
                         )
                         .frame(maxWidth: .infinity)
@@ -329,7 +322,7 @@ struct VideoFlowView: View {
         isProcessing = false
     }
 
-    private func saveOutputToInAppGallary() {
+    private func saveOutputToInAppGallery() {
         guard let outputVideoURL else { return }
         isSaving = true
         saveMessage = nil
@@ -339,7 +332,7 @@ struct VideoFlowView: View {
                 _ = try await galleryLibrary.saveMedia(at: outputVideoURL, type: .video)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to In-App Gallary."
+                    saveMessage = "Saved to In-App Gallery."
                 }
             } catch {
                 await MainActor.run {

@@ -2,21 +2,14 @@ import PhotosUI
 import SwiftUI
 
 struct PhotoFlowView: View {
-    private enum InputMediaMode: String, CaseIterable, Identifiable {
-        case regular2D = "2D"
-        case spatial = "Spatial"
-
-        var id: String { rawValue }
-    }
-
     let pipeline: StereoPipeline
+    @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
 
-    @State private var inputMode: InputMediaMode = .regular2D
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceImage: CGImage?
     @State private var sourceSpatialPair: StereoImagePair?
@@ -68,9 +61,9 @@ struct PhotoFlowView: View {
 
             if let outputFileURL {
                 VStack(spacing: 10) {
-                    Button(action: saveOutputToInAppGallary) {
+                    Button(action: saveOutputToInAppGallery) {
                         Label(
-                            isSaving ? "Saving…" : "Save to In-App Gallary",
+                            isSaving ? "Saving…" : "Save to In-App Gallery",
                             systemImage: "tray.and.arrow.down"
                         )
                         .frame(maxWidth: .infinity)
@@ -364,7 +357,7 @@ struct PhotoFlowView: View {
         isGenerating = false
     }
 
-    private func saveOutputToInAppGallary() {
+    private func saveOutputToInAppGallery() {
         guard let outputFileURL else { return }
         isSaving = true
         saveMessage = nil
@@ -374,7 +367,7 @@ struct PhotoFlowView: View {
                 _ = try await galleryLibrary.saveMedia(at: outputFileURL, type: .image)
                 await MainActor.run {
                     isSaving = false
-                    saveMessage = "Saved to In-App Gallary."
+                    saveMessage = "Saved to In-App Gallery."
                 }
             } catch {
                 await MainActor.run {

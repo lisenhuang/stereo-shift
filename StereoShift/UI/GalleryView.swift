@@ -38,15 +38,12 @@ struct GalleryView: View {
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
         }
-        .onAppear {
-            galleryLibrary.reload()
-        }
     }
 
     private var header: some View {
         HStack {
             VStack(alignment: .leading, spacing: 4) {
-                Text("In-App Gallary")
+                Text("In-App Gallery")
                     .font(.headline)
                 Text("Saved photos and videos stay on this device.")
                     .font(.subheadline)
@@ -71,9 +68,9 @@ struct GalleryView: View {
             Image(systemName: "photo.stack")
                 .font(.system(size: 36, weight: .medium))
                 .foregroundStyle(.secondary)
-            Text("No media in In-App Gallary yet.")
+            Text("No media in In-App Gallery yet.")
                 .font(.headline)
-            Text("Generate a photo or video, then choose \"Save to In-App Gallary\".")
+            Text("Generate a photo or video, then choose \"Save to In-App Gallery\".")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -120,6 +117,7 @@ private struct GalleryGridItemView: View {
 private struct GalleryThumbnailView: View {
     let item: GalleryItem
     @State private var thumbnail: UIImage?
+    private static let cache = NSCache<NSString, UIImage>()
 
     var body: some View {
         ZStack {
@@ -143,11 +141,20 @@ private struct GalleryThumbnailView: View {
     }
 
     private func loadThumbnail() async {
+        let cacheKey = item.url.path as NSString
+        if let cached = Self.cache.object(forKey: cacheKey) {
+            await MainActor.run {
+                thumbnail = cached
+            }
+            return
+        }
+
         if item.type == .image {
             if let loaded = UIImage(contentsOfFile: item.url.path) {
                 await MainActor.run {
                     thumbnail = loaded
                 }
+                Self.cache.setObject(loaded, forKey: cacheKey)
             }
             return
         }
@@ -157,13 +164,14 @@ private struct GalleryThumbnailView: View {
                 let asset = AVAsset(url: item.url)
                 let generator = AVAssetImageGenerator(asset: asset)
                 generator.appliesPreferredTrackTransform = true
-                generator.maximumSize = CGSize(width: 600, height: 600)
+                generator.maximumSize = CGSize(width: 220, height: 220)
                 let cgImage = try generator.copyCGImage(at: .zero, actualTime: nil)
                 return UIImage(cgImage: cgImage)
             }.value
             await MainActor.run {
                 thumbnail = generated
             }
+            Self.cache.setObject(generated, forKey: cacheKey)
         } catch {
             await MainActor.run {
                 thumbnail = nil
@@ -246,7 +254,7 @@ private struct GalleryItemDetailView: View {
                 Text(errorMessage ?? "Something went wrong.")
             }
             .confirmationDialog(
-                "Delete this item from In-App Gallary?",
+                "Delete this item from In-App Gallery?",
                 isPresented: $showDeleteConfirmation,
                 titleVisibility: .visible
             ) {

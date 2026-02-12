@@ -4,7 +4,6 @@ struct HomeView: View {
     private enum Mode: String, CaseIterable, Identifiable {
         case photo = "Photo"
         case video = "Video"
-        case gallery = "In-App Gallary"
 
         var id: String { rawValue }
     }
@@ -12,6 +11,7 @@ struct HomeView: View {
     @StateObject private var pipeline = StereoPipeline()
     @StateObject private var galleryLibrary = AppGalleryLibrary()
     @State private var mode: Mode = .photo
+    @State private var inputMode: InputMediaMode = .regular2D
     @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
     @State private var isProcessing = false
@@ -28,6 +28,7 @@ struct HomeView: View {
                         if mode == .photo {
                             PhotoFlowView(
                                 pipeline: pipeline,
+                                inputMode: $inputMode,
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
                                 galleryLibrary: galleryLibrary,
@@ -41,6 +42,7 @@ struct HomeView: View {
                         } else if mode == .video {
                             VideoFlowView(
                                 pipeline: pipeline,
+                                inputMode: $inputMode,
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
                                 galleryLibrary: galleryLibrary,
@@ -51,8 +53,6 @@ struct HomeView: View {
                                     isProcessing = processing
                                 }
                             )
-                        } else {
-                            GalleryView(galleryLibrary: galleryLibrary)
                         }
 
                         Color.clear
@@ -63,6 +63,17 @@ struct HomeView: View {
                     .padding(.vertical, 20)
                 }
                 .navigationTitle("StereoShift")
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        NavigationLink {
+                            GalleryView(galleryLibrary: galleryLibrary)
+                                .navigationTitle("In-App Gallery")
+                        } label: {
+                            Label("Gallery", systemImage: "photo.on.rectangle.angled")
+                        }
+                        .disabled(isProcessing)
+                    }
+                }
             }
         }
     }
