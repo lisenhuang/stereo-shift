@@ -39,21 +39,18 @@ struct ResultPreviewView: View {
 
                 case let .video(url):
                     VideoPlayer(player: player)
+                        .allowsHitTesting(false)
                         .onAppear {
                             if player?.currentItem?.asset as? AVURLAsset == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
                                 player = AVPlayer(url: url)
                             }
-                            player?.actionAtItemEnd = .none
-                            player?.play()
+                            player?.actionAtItemEnd = .pause
+                            player?.pause()
+                            player?.seek(to: .zero)
                         }
                         .onDisappear {
                             player?.pause()
-                        }
-                        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
-                            guard let currentItem = player?.currentItem else { return }
-                            guard let endedItem = notification.object as? AVPlayerItem, endedItem == currentItem else { return }
                             player?.seek(to: .zero)
-                            player?.play()
                         }
                 }
             }
@@ -149,6 +146,7 @@ private struct FullscreenPreviewView: View {
                             }
                             .onDisappear {
                                 player?.pause()
+                                player?.seek(to: .zero)
                             }
                             .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
                                 guard let currentItem = player?.currentItem else { return }

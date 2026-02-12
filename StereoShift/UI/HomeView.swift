@@ -158,7 +158,7 @@ struct HomeView: View {
         Menu {
             Picker("Language", selection: selectedLanguageBinding) {
                 ForEach(AppLanguage.allCases) { language in
-                    Text(language.displayNameKey).tag(language)
+                    Text(verbatim: language.displayName).tag(language)
                 }
             }
         } label: {

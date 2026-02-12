@@ -21,7 +21,7 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
     }
 
-    var displayNameKey: LocalizedStringKey {
+    var displayName: String {
         switch self {
         case .system:
             return "Follow System"
