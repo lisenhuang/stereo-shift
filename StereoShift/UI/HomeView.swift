@@ -129,10 +129,28 @@ struct HomeView: View {
         Binding {
             mode
         } set: { newValue in
-            guard newValue == .video, !subscriptionManager.isSubscribed else {
+            guard newValue == .video else {
                 mode = newValue
                 return
             }
+
+            if subscriptionManager.canAccessVideo {
+                mode = .video
+                return
+            }
+
+            if !subscriptionManager.hasResolvedEntitlements {
+                Task { @MainActor in
+                    await subscriptionManager.refreshEntitlements()
+                    if subscriptionManager.canAccessVideo {
+                        mode = .video
+                    } else {
+                        showVideoSubscriptionSheet = true
+                    }
+                }
+                return
+            }
+
             showVideoSubscriptionSheet = true
         }
     }

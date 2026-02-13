@@ -145,7 +145,7 @@ struct VideoFlowView: View {
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()
         }
-        .onChange(of: subscriptionManager.isSubscribed) { _, newValue in
+        .onChange(of: subscriptionManager.canAccessVideo) { _, newValue in
             guard !newValue else { return }
             resetForSourceModeChange()
         }
@@ -247,7 +247,7 @@ struct VideoFlowView: View {
     }
 
     private var isVideoLocked: Bool {
-        !subscriptionManager.isSubscribed
+        !subscriptionManager.canAccessVideo
     }
 
     private var progressTitleText: Text {

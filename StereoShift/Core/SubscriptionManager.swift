@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import Network
 import StoreKit
 
 @MainActor
@@ -15,6 +16,8 @@ final class SubscriptionManager: ObservableObject {
 
     @Published private(set) var products: [Product] = []
     @Published private(set) var isSubscribed = false
+    @Published private(set) var canAccessVideo = false
+    @Published private(set) var hasResolvedEntitlements = false
     @Published private(set) var isLoadingProducts = false
     @Published private(set) var isPurchasing = false
     @Published var errorMessage: String?
@@ -22,10 +25,29 @@ final class SubscriptionManager: ObservableObject {
     private let orderedProductIDs: [String]
     private let productIDSet: Set<String>
     private var updatesTask: Task<Void, Never>?
+    private var pathMonitor: NWPathMonitor?
+    private let pathMonitorQueue = DispatchQueue(label: "com.huanglisen.stereoshift.subscription.pathmonitor")
+    private let userDefaults: UserDefaults
+    private var hasEverSubscribed = false
+    private var isNetworkReachable = true
 
-    init(productIDs: [String]) {
+    nonisolated private static let cachedSubscriptionStateKey = "cached_video_subscription_state"
+    nonisolated private static let hasCachedSubscriptionStateKey = "has_cached_video_subscription_state"
+    nonisolated private static let hasEverSubscribedKey = "has_ever_subscribed_to_video"
+
+    init(productIDs: [String], userDefaults: UserDefaults = .standard) {
         orderedProductIDs = productIDs
         productIDSet = Set(productIDs)
+        self.userDefaults = userDefaults
+
+        if userDefaults.bool(forKey: Self.hasCachedSubscriptionStateKey) {
+            isSubscribed = userDefaults.bool(forKey: Self.cachedSubscriptionStateKey)
+            hasResolvedEntitlements = true
+        }
+        hasEverSubscribed = userDefaults.bool(forKey: Self.hasEverSubscribedKey) || isSubscribed
+        recomputeVideoAccess()
+
+        startPathMonitoring()
 
         updatesTask = Task { [weak self] in
             await self?.observeTransactionUpdates()
@@ -43,6 +65,7 @@ final class SubscriptionManager: ObservableObject {
 
     deinit {
         updatesTask?.cancel()
+        pathMonitor?.cancel()
     }
 
     func refreshProducts() async {
@@ -84,6 +107,14 @@ final class SubscriptionManager: ObservableObject {
         }
 
         isSubscribed = hasActiveEntitlement
+        hasResolvedEntitlements = true
+        if hasActiveEntitlement {
+            hasEverSubscribed = true
+            userDefaults.set(true, forKey: Self.hasEverSubscribedKey)
+        }
+        userDefaults.set(hasActiveEntitlement, forKey: Self.cachedSubscriptionStateKey)
+        userDefaults.set(true, forKey: Self.hasCachedSubscriptionStateKey)
+        recomputeVideoAccess()
     }
 
     func purchase(_ product: Product) async {
@@ -121,6 +152,28 @@ final class SubscriptionManager: ObservableObject {
 
     func clearError() {
         errorMessage = nil
+    }
+
+    private func startPathMonitoring() {
+        let monitor = NWPathMonitor()
+        pathMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            let reachable = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.isNetworkReachable = reachable
+                self.recomputeVideoAccess()
+                if reachable {
+                    await self.refreshEntitlements()
+                }
+            }
+        }
+        monitor.start(queue: pathMonitorQueue)
+    }
+
+    private func recomputeVideoAccess() {
+        // Offline fallback: if user has ever paid before, allow video while offline.
+        canAccessVideo = isSubscribed || (hasEverSubscribed && !isNetworkReachable)
     }
 
     private func observeTransactionUpdates() async {
