@@ -4,6 +4,7 @@
 "Balanced" = "Balanced";
 "Cancel" = "Cancel";
 "Clear All" = "Clear All";
+"Close" = "Close";
 "Continue" = "Continue";
 "Convert Spatial to SBS" = "Convert Spatial to SBS";
 "Converting Spatial Photo" = "Converting Spatial Photo";
@@ -33,6 +34,7 @@
 "Loading video…" = "Loading video…";
 "Mode" = "Mode";
 "No media in In-App Gallery yet." = "No media in In-App Gallery yet.";
+"No subscription plans available right now." = "No subscription plans available right now.";
 "Only convert first 10 seconds for testing" = "Only convert first 10 seconds for testing";
 "OK" = "OK";
 "Photo" = "Photo";
@@ -54,6 +56,8 @@
 "Pick Video from Files" = "Pick Video from Files";
 "Preview" = "Preview";
 "Preview unavailable" = "Preview unavailable";
+"Purchase is pending approval." = "Purchase is pending approval.";
+"Purchase verification failed." = "Purchase verification failed.";
 "Rendering 3D Video" = "Rendering 3D Video";
 "SBS Output" = "SBS Output";
 "Save to In-App Gallery" = "Save to In-App Gallery";
@@ -73,8 +77,16 @@
 "Stop current conversion?" = "Stop current conversion?";
 "Strong" = "Strong";
 "Subtle" = "Subtle";
+"Restore Purchases" = "Restore Purchases";
+"Retry" = "Retry";
+"Subscription Active" = "Subscription Active";
 "System" = "System";
 "Theme" = "Theme";
 "Video" = "Video";
+"Unlock Video" = "Unlock Video";
+"Unlock Video Conversion" = "Unlock Video Conversion";
+"Video features require an active subscription." = "Video features require an active subscription.";
+"Video Subscription" = "Video Subscription";
+"Video conversion and spatial video split to SBS are available to subscribers." = "Video conversion and spatial video split to SBS are available to subscribers.";
 "简体中文" = "简体中文";
 "한국어" = "한국어";

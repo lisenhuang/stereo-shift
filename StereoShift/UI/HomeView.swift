@@ -21,11 +21,13 @@ struct HomeView: View {
     @AppStorage("appTheme") private var appThemeRawValue = AppTheme.system.rawValue
     @StateObject private var pipeline = StereoPipeline()
     @StateObject private var galleryLibrary = AppGalleryLibrary()
+    @StateObject private var subscriptionManager = SubscriptionManager()
     @State private var mode: Mode = .photo
     @State private var inputMode: InputMediaMode = .regular2D
     @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
     @State private var isProcessing = false
+    @State private var showVideoSubscriptionSheet = false
     private let bottomAnchorID = "content-bottom-anchor"
 
     var body: some View {
@@ -56,7 +58,11 @@ struct HomeView: View {
                                 inputMode: $inputMode,
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
+                                subscriptionManager: subscriptionManager,
                                 galleryLibrary: galleryLibrary,
+                                onRequireSubscription: {
+                                    showVideoSubscriptionSheet = true
+                                },
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
                                 },
@@ -88,6 +94,9 @@ struct HomeView: View {
                         .disabled(isProcessing)
                     }
                 }
+                .sheet(isPresented: $showVideoSubscriptionSheet) {
+                    VideoSubscriptionPaywallView(subscriptionManager: subscriptionManager)
+                }
             }
         }
     }
@@ -105,7 +114,7 @@ struct HomeView: View {
     }
 
     private var modePicker: some View {
-        Picker("Mode", selection: $mode) {
+        Picker("Mode", selection: modeSelection) {
             ForEach(Mode.allCases) { mode in
                 Text(mode.titleKey).tag(mode)
             }
@@ -114,6 +123,18 @@ struct HomeView: View {
         .disabled(isProcessing)
         .padding(6)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var modeSelection: Binding<Mode> {
+        Binding {
+            mode
+        } set: { newValue in
+            guard newValue == .video, !subscriptionManager.isSubscribed else {
+                mode = newValue
+                return
+            }
+            showVideoSubscriptionSheet = true
+        }
     }
 
     private func scrollToBottom(using proxy: ScrollViewProxy) {

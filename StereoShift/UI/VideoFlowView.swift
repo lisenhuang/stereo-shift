@@ -8,7 +8,9 @@ struct VideoFlowView: View {
     @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
+    @ObservedObject var subscriptionManager: SubscriptionManager
     @ObservedObject var galleryLibrary: AppGalleryLibrary
+    let onRequireSubscription: () -> Void
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
 
@@ -39,7 +41,7 @@ struct VideoFlowView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(isProcessing || (inputMode == .spatial && !supportsSpatialPicker))
+            .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
 
             if supportsDesktopFileImport {
                 Button {
@@ -50,7 +52,7 @@ struct VideoFlowView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
-                .disabled(isProcessing || (inputMode == .spatial && !supportsSpatialPicker))
+                .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
             }
 
             if isLoadingSelection {
@@ -143,6 +145,10 @@ struct VideoFlowView: View {
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()
         }
+        .onChange(of: subscriptionManager.isSubscribed) { _, newValue in
+            guard !newValue else { return }
+            resetForSourceModeChange()
+        }
         .onChange(of: isProcessing) { _, newValue in
             updateScreenAwakeLock(isActive: newValue)
             onProcessingStateChanged(newValue)
@@ -230,7 +236,7 @@ struct VideoFlowView: View {
     }
 
     private var canGenerate: Bool {
-        guard sourceVideoURL != nil, !isProcessing else { return false }
+        guard sourceVideoURL != nil, !isProcessing, !isVideoLocked else { return false }
         if inputMode == .spatial, !supportsSpatialPicker {
             return false
         }
@@ -238,6 +244,10 @@ struct VideoFlowView: View {
             return sbsLayoutEnabled
         }
         return true
+    }
+
+    private var isVideoLocked: Bool {
+        !subscriptionManager.isSubscribed
     }
 
     private var progressTitleText: Text {
@@ -280,6 +290,12 @@ struct VideoFlowView: View {
                 TempFiles.removeItemIfExists(at: oldOutput)
             }
             outputVideoURL = nil
+            return
+        }
+
+        guard !isVideoLocked else {
+            onRequireSubscription()
+            selectedItem = nil
             return
         }
 
@@ -334,6 +350,10 @@ struct VideoFlowView: View {
     }
 
     private func loadSelectedVideoFile(_ url: URL) {
+        guard !isVideoLocked else {
+            onRequireSubscription()
+            return
+        }
         selectionTask?.cancel()
         sourceVideoURL = nil
         sourceVideoDurationSeconds = nil
@@ -380,6 +400,10 @@ struct VideoFlowView: View {
     }
 
     private func generateSBSVideo() {
+        guard !isVideoLocked else {
+            onRequireSubscription()
+            return
+        }
         guard let sourceVideoURL else { return }
 
         processingTask?.cancel()
