@@ -61,9 +61,11 @@
 "Rendering 3D Video" = "正在渲染 3D 视频";
 "SBS Output" = "SBS 输出";
 "Save to In-App Gallery" = "保存到应用内画廊";
+"Save to Disk" = "保存到磁盘";
 "Save to Photos" = "保存到照片";
 "Saved photos and videos stay on this device." = "保存的照片和视频仅保存在此设备上。";
 "Saved to In-App Gallery." = "已保存到应用内画廊。";
+"Saved to Disk." = "已保存到磁盘。";
 "Saved to Photos." = "已保存到照片。";
 "Saving…" = "保存中…";
 "Separating stereo views and building SBS output." = "正在分离左右视图并生成 SBS 输出。";

@@ -61,9 +61,11 @@
 "Rendering 3D Video" = "Rendering 3D Video";
 "SBS Output" = "SBS Output";
 "Save to In-App Gallery" = "Save to In-App Gallery";
+"Save to Disk" = "Save to Disk";
 "Save to Photos" = "Save to Photos";
 "Saved photos and videos stay on this device." = "Saved photos and videos stay on this device.";
 "Saved to In-App Gallery." = "Saved to In-App Gallery.";
+"Saved to Disk." = "Saved to Disk.";
 "Saved to Photos." = "Saved to Photos.";
 "Saving…" = "Saving…";
 "Separating stereo views and building SBS output." = "Separating stereo views and building SBS output.";

@@ -27,6 +27,9 @@ struct VideoFlowView: View {
     @State private var progressValue = VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: 1)
     @State private var holdsScreenAwakeLock = false
     @State private var showFileImporter = false
+    @State private var showSaveToDiskMover = false
+    @State private var saveToDiskSourceURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("stereoshift-video-export-placeholder")
     @State private var limitToFirstTenSeconds = true
     @State private var sourceVideoDurationSeconds: Double?
 
@@ -103,6 +106,15 @@ struct VideoFlowView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isProcessing)
+
+                    if supportsDesktopFileImport {
+                        Button(action: saveOutputToDisk) {
+                            Label("Save to Disk", systemImage: "externaldrive")
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isSaving || isProcessing)
+                    }
 
                     Button {
                         showShareSheet = true
@@ -186,6 +198,21 @@ struct VideoFlowView: View {
             allowsMultipleSelection: false
         ) { result in
             handleVideoFileImport(result)
+        }
+        .fileMover(
+            isPresented: $showSaveToDiskMover,
+            file: saveToDiskSourceURL
+        ) { result in
+            switch result {
+            case .success:
+                saveMessageKey = "Saved to Disk."
+            case let .failure(error):
+                if !isUserCancelledError(error) {
+                    errorMessage = error.localizedDescription
+                }
+            }
+
+            TempFiles.removeItemIfExists(at: saveToDiskSourceURL)
         }
     }
 
@@ -525,6 +552,26 @@ struct VideoFlowView: View {
                 }
             }
         }
+    }
+
+    private func saveOutputToDisk() {
+        guard let outputVideoURL else { return }
+        saveMessageKey = nil
+
+        do {
+            let extensionName = outputVideoURL.pathExtension.isEmpty ? "mp4" : outputVideoURL.pathExtension
+            let temporaryExportURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-video-export", fileExtension: extensionName)
+            try FileManager.default.copyItem(at: outputVideoURL, to: temporaryExportURL)
+            saveToDiskSourceURL = temporaryExportURL
+            showSaveToDiskMover = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func isUserCancelledError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError
     }
 
     private func formatTime(_ seconds: Double) -> String {

@@ -61,9 +61,11 @@
 "Rendering 3D Video" = "3D 동영상 렌더링 중";
 "SBS Output" = "SBS 출력";
 "Save to In-App Gallery" = "앱 내 갤러리에 저장";
+"Save to Disk" = "디스크에 저장";
 "Save to Photos" = "사진 앱에 저장";
 "Saved photos and videos stay on this device." = "저장된 사진과 동영상은 이 기기에만 보관됩니다.";
 "Saved to In-App Gallery." = "앱 내 갤러리에 저장되었습니다.";
+"Saved to Disk." = "디스크에 저장되었습니다.";
 "Saved to Photos." = "사진 앱에 저장되었습니다.";
 "Saving…" = "저장 중…";
 "Separating stereo views and building SBS output." = "좌우 뷰를 분리해 SBS 출력을 만드는 중입니다.";

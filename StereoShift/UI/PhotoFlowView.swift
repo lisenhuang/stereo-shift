@@ -25,6 +25,9 @@ struct PhotoFlowView: View {
     @State private var saveMessageKey: LocalizedStringKey?
     @State private var holdsScreenAwakeLock = false
     @State private var showFileImporter = false
+    @State private var showSaveToDiskMover = false
+    @State private var saveToDiskSourceURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("stereoshift-photo-export-placeholder")
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var generateTask: Task<Void, Never>?
@@ -101,6 +104,15 @@ struct PhotoFlowView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(isSaving || isGenerating)
+
+                    if supportsDesktopFileImport {
+                        Button(action: saveOutputToDisk) {
+                            Label("Save to Disk", systemImage: "externaldrive")
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isSaving || isGenerating)
+                    }
 
                     Button {
                         showShareSheet = true
@@ -180,6 +192,21 @@ struct PhotoFlowView: View {
             allowsMultipleSelection: false
         ) { result in
             handlePhotoFileImport(result)
+        }
+        .fileMover(
+            isPresented: $showSaveToDiskMover,
+            file: saveToDiskSourceURL
+        ) { result in
+            switch result {
+            case .success:
+                saveMessageKey = "Saved to Disk."
+            case let .failure(error):
+                if !isUserCancelledError(error) {
+                    errorMessage = error.localizedDescription
+                }
+            }
+
+            TempFiles.removeItemIfExists(at: saveToDiskSourceURL)
         }
     }
 
@@ -522,6 +549,26 @@ struct PhotoFlowView: View {
                 }
             }
         }
+    }
+
+    private func saveOutputToDisk() {
+        guard let outputFileURL else { return }
+        saveMessageKey = nil
+
+        do {
+            let extensionName = outputFileURL.pathExtension.isEmpty ? "png" : outputFileURL.pathExtension
+            let temporaryExportURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-photo-export", fileExtension: extensionName)
+            try FileManager.default.copyItem(at: outputFileURL, to: temporaryExportURL)
+            saveToDiskSourceURL = temporaryExportURL
+            showSaveToDiskMover = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func isUserCancelledError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError
     }
 
     private var strengthLabelKey: LocalizedStringKey {
