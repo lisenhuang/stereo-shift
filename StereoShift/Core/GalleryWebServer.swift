@@ -1145,9 +1145,16 @@ final class GalleryWebServer: ObservableObject {
       program: null,
       positionBuffer: null,
       texCoordBuffer: null,
+      positionLocation: null,
+      texCoordLocation: null,
+      textureLocation: null,
+      eyeLocation: null,
+      mvpLocation: null,
+      vertexCount: 0,
       texture: null,
       mediaElement: null,
-      sourceType: null
+      sourceType: null,
+      modelMatrix: null
     };
 
     const dialogBackdrop = document.getElementById('uiDialogBackdrop');
@@ -1331,14 +1338,60 @@ final class GalleryWebServer: ObservableObject {
       return { type: 'image', element: image };
     }
 
-    function setupXRRenderer(gl) {
+    function mediaEyeAspect(source) {
+      if (!source || !source.element) {
+        return 16 / 9;
+      }
+
+      if (source.type === 'video') {
+        const width = source.element.videoWidth || 0;
+        const height = source.element.videoHeight || 0;
+        if (width > 0 && height > 0) {
+          return (width / height) / 2;
+        }
+      } else {
+        const width = source.element.naturalWidth || source.element.width || 0;
+        const height = source.element.naturalHeight || source.element.height || 0;
+        if (width > 0 && height > 0) {
+          return (width / height) / 2;
+        }
+      }
+
+      return 16 / 9;
+    }
+
+    function mat4Multiply(a, b) {
+      const out = new Float32Array(16);
+      for (let c = 0; c < 4; c += 1) {
+        for (let r = 0; r < 4; r += 1) {
+          out[c * 4 + r] =
+            a[0 * 4 + r] * b[c * 4 + 0] +
+            a[1 * 4 + r] * b[c * 4 + 1] +
+            a[2 * 4 + r] * b[c * 4 + 2] +
+            a[3 * 4 + r] * b[c * 4 + 3];
+        }
+      }
+      return out;
+    }
+
+    function mat4Translation(x, y, z) {
+      return new Float32Array([
+        1, 0, 0, 0,
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        x, y, z, 1
+      ]);
+    }
+
+    function setupXRRenderer(gl, eyeAspect) {
       const vertexShader = `
-        attribute vec2 a_position;
+        attribute vec3 a_position;
         attribute vec2 a_texCoord;
+        uniform mat4 u_mvp;
         varying vec2 v_uv;
         void main() {
           v_uv = a_texCoord;
-          gl_Position = vec4(a_position, 0.0, 1.0);
+          gl_Position = u_mvp * vec4(a_position, 1.0);
         }
       `;
 
@@ -1354,14 +1407,25 @@ final class GalleryWebServer: ObservableObject {
         }
       `;
 
+      const safeAspect = Number.isFinite(eyeAspect) && eyeAspect > 0 ? eyeAspect : (16 / 9);
+      const planeDistance = 3.0;
+      const planeHeight = 2.2;
+      const planeWidth = Math.max(1.2, Math.min(4.2, planeHeight * safeAspect));
+      const halfWidth = planeWidth * 0.5;
+      const halfHeight = planeHeight * 0.5;
+
       const program = createProgram(gl, vertexShader, fragmentShader);
       const positionBuffer = gl.createBuffer();
       const texCoordBuffer = gl.createBuffer();
       const texture = gl.createTexture();
 
       const positions = new Float32Array([
-        -1, -1,  1, -1, -1,  1,
-         1, -1,  1,  1, -1,  1
+        -halfWidth, -halfHeight, 0,
+         halfWidth, -halfHeight, 0,
+        -halfWidth,  halfHeight, 0,
+         halfWidth, -halfHeight, 0,
+         halfWidth,  halfHeight, 0,
+        -halfWidth,  halfHeight, 0
       ]);
 
       const texCoords = new Float32Array([
@@ -1382,7 +1446,25 @@ final class GalleryWebServer: ObservableObject {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
-      return { program, positionBuffer, texCoordBuffer, texture };
+      const positionLocation = gl.getAttribLocation(program, 'a_position');
+      const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+      const textureLocation = gl.getUniformLocation(program, 'u_texture');
+      const eyeLocation = gl.getUniformLocation(program, 'u_eye');
+      const mvpLocation = gl.getUniformLocation(program, 'u_mvp');
+
+      return {
+        program,
+        positionBuffer,
+        texCoordBuffer,
+        texture,
+        positionLocation,
+        texCoordLocation,
+        textureLocation,
+        eyeLocation,
+        mvpLocation,
+        vertexCount: 6,
+        modelMatrix: mat4Translation(0, 0, -planeDistance)
+      };
     }
 
     function uploadMediaTexture(gl, texture, mediaElement) {
@@ -1390,29 +1472,25 @@ final class GalleryWebServer: ObservableObject {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mediaElement);
     }
 
-    function drawEye(gl, eye) {
-      const program = xrRuntime.program;
-      gl.useProgram(program);
-
-      const positionLocation = gl.getAttribLocation(program, 'a_position');
-      const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
-      const eyeLocation = gl.getUniformLocation(program, 'u_eye');
-      const textureLocation = gl.getUniformLocation(program, 'u_texture');
+    function drawEye(gl, eye, mvpMatrix) {
+      gl.useProgram(xrRuntime.program);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, xrRuntime.positionBuffer);
-      gl.enableVertexAttribArray(positionLocation);
-      gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(xrRuntime.positionLocation);
+      gl.vertexAttribPointer(xrRuntime.positionLocation, 3, gl.FLOAT, false, 0, 0);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, xrRuntime.texCoordBuffer);
-      gl.enableVertexAttribArray(texCoordLocation);
-      gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+      gl.enableVertexAttribArray(xrRuntime.texCoordLocation);
+      gl.vertexAttribPointer(xrRuntime.texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
-      gl.uniform1f(eyeLocation, eye === 'right' ? 1.0 : 0.0);
-      gl.uniform1i(textureLocation, 0);
+      gl.uniform1f(xrRuntime.eyeLocation, eye === 'right' ? 1.0 : 0.0);
+      gl.uniform1i(xrRuntime.textureLocation, 0);
+      gl.uniformMatrix4fv(xrRuntime.mvpLocation, false, mvpMatrix);
+
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, xrRuntime.texture);
 
-      gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.drawArrays(gl.TRIANGLES, 0, xrRuntime.vertexCount);
     }
 
     function onXRFrame(_time, frame) {
@@ -1429,6 +1507,8 @@ final class GalleryWebServer: ObservableObject {
       gl.bindFramebuffer(gl.FRAMEBUFFER, baseLayer.framebuffer);
       gl.clearColor(0.02, 0.03, 0.06, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.disable(gl.DEPTH_TEST);
+      gl.disable(gl.CULL_FACE);
 
       if (xrRuntime.sourceType === 'video' && xrRuntime.mediaElement && xrRuntime.mediaElement.readyState >= 2) {
         uploadMediaTexture(gl, xrRuntime.texture, xrRuntime.mediaElement);
@@ -1440,8 +1520,14 @@ final class GalleryWebServer: ObservableObject {
           continue;
         }
 
+        const eye = view.eye === 'right' ? 'right' : 'left';
+        const viewMatrix = view.transform.inverse.matrix;
+        const projectionMatrix = view.projectionMatrix;
+        const modelViewMatrix = mat4Multiply(viewMatrix, xrRuntime.modelMatrix);
+        const mvpMatrix = mat4Multiply(projectionMatrix, modelViewMatrix);
+
         gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-        drawEye(gl, view.eye === 'right' ? 'right' : 'left');
+        drawEye(gl, eye, mvpMatrix);
       }
     }
 
@@ -1485,7 +1571,7 @@ final class GalleryWebServer: ObservableObject {
         }
 
         const source = await prepareXRMediaSource(state.activeItem);
-        const renderer = setupXRRenderer(gl);
+        const renderer = setupXRRenderer(gl, mediaEyeAspect(source));
         uploadMediaTexture(gl, renderer.texture, source.element);
 
         session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
@@ -1499,9 +1585,16 @@ final class GalleryWebServer: ObservableObject {
         xrRuntime.program = renderer.program;
         xrRuntime.positionBuffer = renderer.positionBuffer;
         xrRuntime.texCoordBuffer = renderer.texCoordBuffer;
+        xrRuntime.positionLocation = renderer.positionLocation;
+        xrRuntime.texCoordLocation = renderer.texCoordLocation;
+        xrRuntime.textureLocation = renderer.textureLocation;
+        xrRuntime.eyeLocation = renderer.eyeLocation;
+        xrRuntime.mvpLocation = renderer.mvpLocation;
+        xrRuntime.vertexCount = renderer.vertexCount;
         xrRuntime.texture = renderer.texture;
         xrRuntime.mediaElement = source.element;
         xrRuntime.sourceType = source.type;
+        xrRuntime.modelMatrix = renderer.modelMatrix;
 
         session.addEventListener('end', stopXRPlayback);
         session.requestAnimationFrame(onXRFrame);
@@ -1527,9 +1620,16 @@ final class GalleryWebServer: ObservableObject {
       xrRuntime.program = null;
       xrRuntime.positionBuffer = null;
       xrRuntime.texCoordBuffer = null;
+      xrRuntime.positionLocation = null;
+      xrRuntime.texCoordLocation = null;
+      xrRuntime.textureLocation = null;
+      xrRuntime.eyeLocation = null;
+      xrRuntime.mvpLocation = null;
+      xrRuntime.vertexCount = 0;
       xrRuntime.texture = null;
       xrRuntime.mediaElement = null;
       xrRuntime.sourceType = null;
+      xrRuntime.modelMatrix = null;
     }
 
     vrButton.addEventListener('click', () => {
