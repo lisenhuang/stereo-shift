@@ -942,6 +942,21 @@ final class GalleryWebServer: ObservableObject {
       align-items: center;
     }
 
+    .viewer-time {
+      font-size: 12px;
+      color: #b7c8ef;
+      background: rgba(8, 15, 34, 0.55);
+      border: 1px solid rgba(130, 164, 235, 0.24);
+      border-radius: 999px;
+      padding: 4px 10px;
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .viewer-time.hidden {
+      display: none;
+    }
+
     .viewer-body {
       min-height: min(70vh, 700px);
       background: #010409;
@@ -1066,6 +1081,7 @@ final class GalleryWebServer: ObservableObject {
     <div class="viewer">
       <div class="viewer-head">
         <div id="viewerTitle" class="viewer-title"></div>
+        <div id="viewerTime" class="viewer-time hidden">00:00 / 00:00</div>
         <div class="viewer-actions">
           <button id="vrButton" class="btn-primary">Enter VR</button>
           <button id="closeButton" class="btn-outline">Close</button>
@@ -1102,9 +1118,11 @@ final class GalleryWebServer: ObservableObject {
 
     const overlay = document.getElementById('overlay');
     const viewerTitle = document.getElementById('viewerTitle');
+    const viewerTime = document.getElementById('viewerTime');
     const viewerBody = document.getElementById('viewerBody');
     const closeButton = document.getElementById('closeButton');
     const vrButton = document.getElementById('vrButton');
+    let previewVideoElement = null;
 
     refreshButton.addEventListener('click', () => resetAndLoad());
     loadMoreButton.addEventListener('click', () => loadItems());
@@ -1154,7 +1172,12 @@ final class GalleryWebServer: ObservableObject {
       texture: null,
       mediaElement: null,
       sourceType: null,
-      modelMatrix: null
+      modelMatrix: null,
+      planeDistance: 3.0,
+      zoom: 1.0,
+      rightStickSeekLatch: 0,
+      rightStickButtonPressed: false,
+      lastXRFrameTimeSec: 0
     };
 
     const dialogBackdrop = document.getElementById('uiDialogBackdrop');
@@ -1383,6 +1406,183 @@ final class GalleryWebServer: ObservableObject {
       ]);
     }
 
+    function mat4Scale(x, y, z) {
+      return new Float32Array([
+        x, 0, 0, 0,
+        0, y, 0, 0,
+        0, 0, z, 0,
+        0, 0, 0, 1
+      ]);
+    }
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function formatVideoTime(seconds) {
+      if (!Number.isFinite(seconds) || seconds < 0) {
+        return '--:--';
+      }
+
+      const total = Math.floor(seconds);
+      const hours = Math.floor(total / 3600);
+      const minutes = Math.floor((total % 3600) / 60);
+      const secs = total % 60;
+
+      const mm = String(minutes).padStart(2, '0');
+      const ss = String(secs).padStart(2, '0');
+
+      if (hours > 0) {
+        return `${hours}:${mm}:${ss}`;
+      }
+
+      return `${mm}:${ss}`;
+    }
+
+    function hideVideoTimeLabel() {
+      viewerTime.classList.add('hidden');
+      viewerTime.textContent = '00:00 / 00:00';
+    }
+
+    function showVideoTimeLabel() {
+      viewerTime.classList.remove('hidden');
+    }
+
+    function updateVideoTimeLabel(video) {
+      if (!video) {
+        hideVideoTimeLabel();
+        return;
+      }
+
+      showVideoTimeLabel();
+      const current = formatVideoTime(video.currentTime || 0);
+      const total = formatVideoTime(video.duration);
+      viewerTime.textContent = `${current} / ${total}`;
+    }
+
+    function seekVideoBy(secondsDelta) {
+      if (xrRuntime.sourceType !== 'video' || !xrRuntime.mediaElement) {
+        return;
+      }
+
+      const video = xrRuntime.mediaElement;
+      if (!Number.isFinite(video.duration) || video.duration <= 0) {
+        return;
+      }
+
+      const nextTime = clamp(video.currentTime + secondsDelta, 0, video.duration);
+      video.currentTime = nextTime;
+      updateVideoTimeLabel(video);
+    }
+
+    function toggleVideoPlaybackFromController() {
+      if (xrRuntime.sourceType !== 'video' || !xrRuntime.mediaElement) {
+        return;
+      }
+
+      const video = xrRuntime.mediaElement;
+      if (video.paused) {
+        video.play().catch(() => {});
+      } else {
+        video.pause();
+      }
+
+      updateVideoTimeLabel(video);
+    }
+
+    function rightControllerGamepad(frame) {
+      const inputSources = frame.session.inputSources || [];
+      for (const source of inputSources) {
+        if (source.handedness === 'right' && source.gamepad) {
+          return source.gamepad;
+        }
+      }
+      return null;
+    }
+
+    function gamepadButtonPressed(gamepad, indices) {
+      if (!gamepad || !Array.isArray(gamepad.buttons)) {
+        return false;
+      }
+      for (const index of indices) {
+        const button = gamepad.buttons[index];
+        if (button && button.pressed) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    function updateXRControllerInputs(frameTimeSec, frame) {
+      if (!xrRuntime.session) {
+        return;
+      }
+
+      const dt = xrRuntime.lastXRFrameTimeSec > 0
+        ? Math.max(0, Math.min(0.05, frameTimeSec - xrRuntime.lastXRFrameTimeSec))
+        : (1 / 72);
+      xrRuntime.lastXRFrameTimeSec = frameTimeSec;
+
+      const gamepad = rightControllerGamepad(frame);
+      if (!gamepad) {
+        xrRuntime.rightStickSeekLatch = 0;
+        xrRuntime.rightStickButtonPressed = false;
+        return;
+      }
+
+      const axes = Array.isArray(gamepad.axes) ? gamepad.axes : [];
+      let stickX = 0;
+      let stickY = 0;
+
+      if (axes.length >= 4) {
+        stickX = axes[2] ?? 0;
+        stickY = axes[3] ?? 0;
+      } else if (axes.length >= 2) {
+        stickX = axes[0] ?? 0;
+        stickY = axes[1] ?? 0;
+      }
+
+      const absX = Math.abs(stickX);
+      const absY = Math.abs(stickY);
+
+      if (xrRuntime.sourceType === 'video' && absX > 0.18 && absX < 0.68) {
+        const video = xrRuntime.mediaElement;
+        const duration = Number.isFinite(video?.duration) && video.duration > 0 ? video.duration : 120;
+        const scrubSpeed = clamp(duration * 0.18, 10, 90);
+        seekVideoBy(stickX * scrubSpeed * dt);
+        xrRuntime.rightStickSeekLatch = 0;
+      } else {
+        const seekThreshold = 0.78;
+        const releaseThreshold = 0.32;
+        let direction = 0;
+        if (stickX >= seekThreshold) {
+          direction = 1;
+        } else if (stickX <= -seekThreshold) {
+          direction = -1;
+        }
+
+        if (direction !== 0 && xrRuntime.rightStickSeekLatch !== direction) {
+          seekVideoBy(direction * 10);
+          xrRuntime.rightStickSeekLatch = direction;
+        }
+
+        if (absX <= releaseThreshold) {
+          xrRuntime.rightStickSeekLatch = 0;
+        }
+      }
+
+      if (absY > 0.14) {
+        const zoomSpeed = 1.05;
+        xrRuntime.zoom = clamp(xrRuntime.zoom + (-stickY * zoomSpeed * dt), 0.55, 2.8);
+      }
+
+      const stickClickPressed = gamepadButtonPressed(gamepad, [3]);
+      if (stickClickPressed && !xrRuntime.rightStickButtonPressed) {
+        toggleVideoPlaybackFromController();
+      }
+      xrRuntime.rightStickButtonPressed = stickClickPressed;
+    }
+
     function setupXRRenderer(gl, eyeAspect) {
       const vertexShader = `
         attribute vec3 a_position;
@@ -1463,7 +1663,8 @@ final class GalleryWebServer: ObservableObject {
         eyeLocation,
         mvpLocation,
         vertexCount: 6,
-        modelMatrix: mat4Translation(0, 0, -planeDistance)
+        modelMatrix: mat4Translation(0, 0, -planeDistance),
+        planeDistance
       };
     }
 
@@ -1502,6 +1703,8 @@ final class GalleryWebServer: ObservableObject {
         return;
       }
 
+      updateXRControllerInputs(_time * 0.001, frame);
+
       const gl = xrRuntime.gl;
       const baseLayer = session.renderState.baseLayer;
       gl.bindFramebuffer(gl.FRAMEBUFFER, baseLayer.framebuffer);
@@ -1512,6 +1715,7 @@ final class GalleryWebServer: ObservableObject {
 
       if (xrRuntime.sourceType === 'video' && xrRuntime.mediaElement && xrRuntime.mediaElement.readyState >= 2) {
         uploadMediaTexture(gl, xrRuntime.texture, xrRuntime.mediaElement);
+        updateVideoTimeLabel(xrRuntime.mediaElement);
       }
 
       for (const view of pose.views) {
@@ -1523,7 +1727,11 @@ final class GalleryWebServer: ObservableObject {
         const eye = view.eye === 'right' ? 'right' : 'left';
         const viewMatrix = view.transform.inverse.matrix;
         const projectionMatrix = view.projectionMatrix;
-        const modelViewMatrix = mat4Multiply(viewMatrix, xrRuntime.modelMatrix);
+        const dynamicModelMatrix = mat4Multiply(
+          mat4Translation(0, 0, -xrRuntime.planeDistance),
+          mat4Scale(xrRuntime.zoom, xrRuntime.zoom, 1)
+        );
+        const modelViewMatrix = mat4Multiply(viewMatrix, dynamicModelMatrix);
         const mvpMatrix = mat4Multiply(projectionMatrix, modelViewMatrix);
 
         gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
@@ -1573,6 +1781,11 @@ final class GalleryWebServer: ObservableObject {
         const source = await prepareXRMediaSource(state.activeItem);
         const renderer = setupXRRenderer(gl, mediaEyeAspect(source));
         uploadMediaTexture(gl, renderer.texture, source.element);
+        if (source.type === 'video') {
+          updateVideoTimeLabel(source.element);
+        } else {
+          hideVideoTimeLabel();
+        }
 
         session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
         const refSpace = await session.requestReferenceSpace('local');
@@ -1595,6 +1808,11 @@ final class GalleryWebServer: ObservableObject {
         xrRuntime.mediaElement = source.element;
         xrRuntime.sourceType = source.type;
         xrRuntime.modelMatrix = renderer.modelMatrix;
+        xrRuntime.planeDistance = renderer.planeDistance;
+        xrRuntime.zoom = 1.0;
+        xrRuntime.rightStickSeekLatch = 0;
+        xrRuntime.rightStickButtonPressed = false;
+        xrRuntime.lastXRFrameTimeSec = 0;
 
         session.addEventListener('end', stopXRPlayback);
         session.requestAnimationFrame(onXRFrame);
@@ -1630,6 +1848,17 @@ final class GalleryWebServer: ObservableObject {
       xrRuntime.mediaElement = null;
       xrRuntime.sourceType = null;
       xrRuntime.modelMatrix = null;
+      xrRuntime.planeDistance = 3.0;
+      xrRuntime.zoom = 1.0;
+      xrRuntime.rightStickSeekLatch = 0;
+      xrRuntime.rightStickButtonPressed = false;
+      xrRuntime.lastXRFrameTimeSec = 0;
+
+      if (previewVideoElement) {
+        updateVideoTimeLabel(previewVideoElement);
+      } else {
+        hideVideoTimeLabel();
+      }
     }
 
     vrButton.addEventListener('click', () => {
@@ -1711,14 +1940,22 @@ final class GalleryWebServer: ObservableObject {
       state.activeItem = item;
       viewerTitle.textContent = item.id || '';
       viewerBody.innerHTML = '';
+      previewVideoElement = null;
+      hideVideoTimeLabel();
 
       if (item.type === 'video') {
         const video = document.createElement('video');
         video.src = item.mediaPath;
         video.controls = true;
-        video.autoplay = true;
+        video.autoplay = false;
         video.loop = true;
         video.playsInline = true;
+        video.addEventListener('loadedmetadata', () => updateVideoTimeLabel(video));
+        video.addEventListener('durationchange', () => updateVideoTimeLabel(video));
+        video.addEventListener('timeupdate', () => updateVideoTimeLabel(video));
+        video.addEventListener('seeked', () => updateVideoTimeLabel(video));
+        previewVideoElement = video;
+        updateVideoTimeLabel(video);
         viewerBody.appendChild(video);
       } else {
         const image = document.createElement('img');
@@ -1743,6 +1980,8 @@ final class GalleryWebServer: ObservableObject {
       overlay.classList.remove('show');
       overlay.setAttribute('aria-hidden', 'true');
       viewerBody.innerHTML = '';
+      previewVideoElement = null;
+      hideVideoTimeLabel();
       state.activeItem = null;
     }
 
