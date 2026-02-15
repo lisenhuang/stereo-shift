@@ -4,6 +4,10 @@ enum AppLanguage: String, CaseIterable, Identifiable {
     case system
     case english
     case spanish
+    case arabic
+    case hindi
+    case french
+    case brazilianPortuguese
     case simplifiedChinese
     case japanese
     case korean
@@ -18,6 +22,14 @@ enum AppLanguage: String, CaseIterable, Identifiable {
             return Locale(identifier: "en")
         case .spanish:
             return Locale(identifier: "es")
+        case .arabic:
+            return Locale(identifier: "ar")
+        case .hindi:
+            return Locale(identifier: "hi")
+        case .french:
+            return Locale(identifier: "fr")
+        case .brazilianPortuguese:
+            return Locale(identifier: "pt-BR")
         case .simplifiedChinese:
             return Locale(identifier: "zh-Hans")
         case .japanese:
@@ -35,6 +47,14 @@ enum AppLanguage: String, CaseIterable, Identifiable {
             return "English"
         case .spanish:
             return "Español"
+        case .arabic:
+            return "العربية"
+        case .hindi:
+            return "हिन्दी"
+        case .french:
+            return "Français"
+        case .brazilianPortuguese:
+            return "Português (Brasil)"
         case .simplifiedChinese:
             return "简体中文"
         case .japanese:
@@ -54,6 +74,18 @@ enum AppLanguage: String, CaseIterable, Identifiable {
         }
         if preferred.hasPrefix("es") {
             return Locale(identifier: "es")
+        }
+        if preferred.hasPrefix("ar") {
+            return Locale(identifier: "ar")
+        }
+        if preferred.hasPrefix("hi") {
+            return Locale(identifier: "hi")
+        }
+        if preferred.hasPrefix("fr") {
+            return Locale(identifier: "fr")
+        }
+        if preferred.hasPrefix("pt") {
+            return Locale(identifier: "pt-BR")
         }
         if preferred.hasPrefix("ja") {
             return Locale(identifier: "ja")

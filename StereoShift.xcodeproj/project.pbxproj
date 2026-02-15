@@ -195,10 +195,14 @@
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
+				ar,
 				en,
 				es,
+				fr,
+				hi,
 				ja,
 				ko,
+				"pt-BR",
 				"zh-Hans",
 				Base,
 			);
