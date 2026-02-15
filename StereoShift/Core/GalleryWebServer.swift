@@ -987,6 +987,51 @@ final class GalleryWebServer: ObservableObject {
       display: none;
     }
 
+    .ui-dialog-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(3, 7, 18, 0.74);
+      z-index: 90;
+    }
+
+    .ui-dialog-backdrop.show {
+      display: flex;
+    }
+
+    .ui-dialog {
+      width: min(560px, 100%);
+      background: rgba(17, 24, 43, 0.96);
+      border: 1px solid rgba(152, 182, 255, 0.35);
+      border-radius: 16px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .ui-dialog-title {
+      margin: 0;
+      font-size: 18px;
+      font-weight: 700;
+    }
+
+    .ui-dialog-message {
+      font-size: 14px;
+      color: #dce8ff;
+      line-height: 1.45;
+      white-space: pre-line;
+    }
+
+    .ui-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
     @media (max-width: 620px) {
       .shell { padding: 18px 12px 28px; }
       .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1030,6 +1075,16 @@ final class GalleryWebServer: ObservableObject {
     </div>
   </div>
 
+  <div id="uiDialogBackdrop" class="ui-dialog-backdrop" aria-hidden="true">
+    <div class="ui-dialog" role="dialog" aria-modal="true" aria-labelledby="uiDialogTitle" aria-describedby="uiDialogMessage">
+      <h2 id="uiDialogTitle" class="ui-dialog-title">Notice</h2>
+      <div id="uiDialogMessage" class="ui-dialog-message"></div>
+      <div class="ui-dialog-actions">
+        <button id="uiDialogClose" class="btn-primary">Close</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     const state = {
       offset: 0,
@@ -1060,24 +1115,425 @@ final class GalleryWebServer: ObservableObject {
       }
     });
 
-    vrButton.addEventListener('click', async () => {
-      const inVRBrowser = /oculusbrowser|quest|vive|vr/i.test(navigator.userAgent);
-      let supportsImmersiveVR = false;
+    const xrHeadsetSignatures = [
+      'oculusbrowser',
+      'meta quest',
+      'quest 3',
+      'quest 2',
+      'quest pro',
+      'quest',
+      'vision pro',
+      'apple vision',
+      'visionos',
+      'xros',
+      'pico browser',
+      'pico',
+      'vive browser',
+      'htcvive',
+      'windows mixed reality',
+      'hololens',
+      'samsungbrowservr',
+      'openxr'
+    ];
 
-      if (navigator.xr && navigator.xr.isSessionSupported) {
+    const xrRuntime = {
+      session: null,
+      mode: null,
+      refSpace: null,
+      canvas: null,
+      gl: null,
+      program: null,
+      positionBuffer: null,
+      texCoordBuffer: null,
+      texture: null,
+      mediaElement: null,
+      sourceType: null
+    };
+
+    const dialogBackdrop = document.getElementById('uiDialogBackdrop');
+    const dialogTitle = document.getElementById('uiDialogTitle');
+    const dialogMessage = document.getElementById('uiDialogMessage');
+    const dialogCloseButton = document.getElementById('uiDialogClose');
+
+    dialogCloseButton.addEventListener('click', hideDialog);
+    dialogBackdrop.addEventListener('click', (event) => {
+      if (event.target === dialogBackdrop) {
+        hideDialog();
+      }
+    });
+
+    function showDialog(message, title = 'Notice') {
+      dialogTitle.textContent = title;
+      dialogMessage.textContent = message;
+      dialogBackdrop.classList.add('show');
+      dialogBackdrop.setAttribute('aria-hidden', 'false');
+    }
+
+    function hideDialog() {
+      dialogBackdrop.classList.remove('show');
+      dialogBackdrop.setAttribute('aria-hidden', 'true');
+    }
+
+    function normalizedClientSignature() {
+      const ua = (navigator.userAgent || '');
+      const brands = Array.isArray(navigator.userAgentData?.brands)
+        ? navigator.userAgentData.brands.map((item) => item.brand).join(' ')
+        : '';
+      const platform = navigator.userAgentData?.platform || navigator.platform || '';
+      const vendor = navigator.vendor || '';
+      return `${ua} ${brands} ${platform} ${vendor}`.toLowerCase();
+    }
+
+    function isLikelyXRHeadsetBrowser() {
+      const signature = normalizedClientSignature();
+      return xrHeadsetSignatures.some((token) => signature.includes(token));
+    }
+
+    async function immersiveModeSupported(mode) {
+      if (!navigator.xr || !navigator.xr.isSessionSupported) {
+        return false;
+      }
+
+      try {
+        return await navigator.xr.isSessionSupported(mode);
+      } catch (_) {
+        return false;
+      }
+    }
+
+    async function detectXRContext() {
+      const headsetBrowser = isLikelyXRHeadsetBrowser();
+      const immersiveVR = await immersiveModeSupported('immersive-vr');
+      const immersiveAR = await immersiveModeSupported('immersive-ar');
+      const immersiveSupported = immersiveVR || immersiveAR;
+      const secureContext = window.isSecureContext === true;
+      return {
+        headsetBrowser,
+        immersiveSupported,
+        immersiveVR,
+        immersiveAR,
+        secureContext
+      };
+    }
+
+    function ensureActiveItemForXR() {
+      if (!state.activeItem) {
+        showDialog('Open an SBS image or video first, then tap Enter VR.', 'No Media Selected');
+        return false;
+      }
+      return true;
+    }
+
+    async function requestXRSession(xrContext) {
+      if (!navigator.xr || !navigator.xr.requestSession) {
+        throw new Error('This browser does not expose WebXR session APIs.');
+      }
+
+      if (!xrContext.secureContext) {
+        throw new Error('WebXR requires HTTPS secure context. Accept the certificate warning, then reload.');
+      }
+
+      const preferredModes = [];
+      if (xrContext.immersiveVR) preferredModes.push('immersive-vr');
+      if (xrContext.immersiveAR) preferredModes.push('immersive-ar');
+      if (preferredModes.length === 0) preferredModes.push('immersive-vr', 'immersive-ar');
+
+      let lastError;
+      for (const mode of preferredModes) {
         try {
-          supportsImmersiveVR = await navigator.xr.isSessionSupported('immersive-vr');
-        } catch (_) {
-          supportsImmersiveVR = false;
+          const session = await navigator.xr.requestSession(mode, { requiredFeatures: ['local'] });
+          return { session, mode };
+        } catch (error) {
+          lastError = error;
         }
       }
 
-      if (!inVRBrowser && !supportsImmersiveVR) {
-        alert('Open this page on a VR headset browser to use VR mode.');
+      throw lastError || new Error('Unable to start immersive XR session.');
+    }
+
+    function createShader(gl, type, source) {
+      const shader = gl.createShader(type);
+      gl.shaderSource(shader, source);
+      gl.compileShader(shader);
+
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+        const info = gl.getShaderInfoLog(shader) || 'Unknown shader compile failure.';
+        gl.deleteShader(shader);
+        throw new Error(info);
+      }
+
+      return shader;
+    }
+
+    function createProgram(gl, vertexSource, fragmentSource) {
+      const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexSource);
+      const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentSource);
+      const program = gl.createProgram();
+      gl.attachShader(program, vertexShader);
+      gl.attachShader(program, fragmentShader);
+      gl.linkProgram(program);
+
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        const info = gl.getProgramInfoLog(program) || 'Unknown program link failure.';
+        gl.deleteProgram(program);
+        throw new Error(info);
+      }
+
+      gl.deleteShader(vertexShader);
+      gl.deleteShader(fragmentShader);
+      return program;
+    }
+
+    async function prepareXRMediaSource(item) {
+      if (item.type === 'video') {
+        const video = document.createElement('video');
+        video.src = item.mediaPath;
+        video.loop = true;
+        video.controls = false;
+        video.muted = true;
+        video.playsInline = true;
+        video.crossOrigin = 'anonymous';
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.preload = 'auto';
+
+        await new Promise((resolve, reject) => {
+          const onLoaded = () => {
+            cleanup();
+            resolve();
+          };
+          const onError = () => {
+            cleanup();
+            reject(new Error('Unable to load video for XR session.'));
+          };
+          const cleanup = () => {
+            video.removeEventListener('loadeddata', onLoaded);
+            video.removeEventListener('error', onError);
+          };
+
+          video.addEventListener('loadeddata', onLoaded);
+          video.addEventListener('error', onError);
+        });
+
+        try {
+          await video.play();
+        } catch (_) {
+          throw new Error('Unable to autoplay video texture in XR. Interact with the page and try again.');
+        }
+
+        return { type: 'video', element: video };
+      }
+
+      const image = new Image();
+      image.crossOrigin = 'anonymous';
+      image.src = item.mediaPath;
+      await image.decode();
+      return { type: 'image', element: image };
+    }
+
+    function setupXRRenderer(gl) {
+      const vertexShader = `
+        attribute vec2 a_position;
+        attribute vec2 a_texCoord;
+        varying vec2 v_uv;
+        void main() {
+          v_uv = a_texCoord;
+          gl_Position = vec4(a_position, 0.0, 1.0);
+        }
+      `;
+
+      const fragmentShader = `
+        precision mediump float;
+        varying vec2 v_uv;
+        uniform sampler2D u_texture;
+        uniform float u_eye;
+        void main() {
+          float x = (u_eye < 0.5) ? (v_uv.x * 0.5) : (0.5 + v_uv.x * 0.5);
+          vec2 uv = vec2(x, v_uv.y);
+          gl_FragColor = texture2D(u_texture, uv);
+        }
+      `;
+
+      const program = createProgram(gl, vertexShader, fragmentShader);
+      const positionBuffer = gl.createBuffer();
+      const texCoordBuffer = gl.createBuffer();
+      const texture = gl.createTexture();
+
+      const positions = new Float32Array([
+        -1, -1,  1, -1, -1,  1,
+         1, -1,  1,  1, -1,  1
+      ]);
+
+      const texCoords = new Float32Array([
+        0, 0, 1, 0, 0, 1,
+        1, 0, 1, 1, 0, 1
+      ]);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+
+      return { program, positionBuffer, texCoordBuffer, texture };
+    }
+
+    function uploadMediaTexture(gl, texture, mediaElement) {
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mediaElement);
+    }
+
+    function drawEye(gl, eye) {
+      const program = xrRuntime.program;
+      gl.useProgram(program);
+
+      const positionLocation = gl.getAttribLocation(program, 'a_position');
+      const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
+      const eyeLocation = gl.getUniformLocation(program, 'u_eye');
+      const textureLocation = gl.getUniformLocation(program, 'u_texture');
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, xrRuntime.positionBuffer);
+      gl.enableVertexAttribArray(positionLocation);
+      gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, xrRuntime.texCoordBuffer);
+      gl.enableVertexAttribArray(texCoordLocation);
+      gl.vertexAttribPointer(texCoordLocation, 2, gl.FLOAT, false, 0, 0);
+
+      gl.uniform1f(eyeLocation, eye === 'right' ? 1.0 : 0.0);
+      gl.uniform1i(textureLocation, 0);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, xrRuntime.texture);
+
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+    }
+
+    function onXRFrame(_time, frame) {
+      const session = frame.session;
+      session.requestAnimationFrame(onXRFrame);
+
+      const pose = frame.getViewerPose(xrRuntime.refSpace);
+      if (!pose || !xrRuntime.gl) {
         return;
       }
 
-      alert('VR mode is available only on VR headset browsers.');
+      const gl = xrRuntime.gl;
+      const baseLayer = session.renderState.baseLayer;
+      gl.bindFramebuffer(gl.FRAMEBUFFER, baseLayer.framebuffer);
+      gl.clearColor(0.02, 0.03, 0.06, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      if (xrRuntime.sourceType === 'video' && xrRuntime.mediaElement && xrRuntime.mediaElement.readyState >= 2) {
+        uploadMediaTexture(gl, xrRuntime.texture, xrRuntime.mediaElement);
+      }
+
+      for (const view of pose.views) {
+        const viewport = baseLayer.getViewport(view);
+        if (!viewport) {
+          continue;
+        }
+
+        gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+        drawEye(gl, view.eye === 'right' ? 'right' : 'left');
+      }
+    }
+
+    async function startXRPlayback() {
+      if (!ensureActiveItemForXR()) {
+        return;
+      }
+
+      if (xrRuntime.session) {
+        showDialog('XR session is already active.', 'XR Running');
+        return;
+      }
+
+      const xrContext = await detectXRContext();
+      if (!xrContext.headsetBrowser && !xrContext.immersiveSupported) {
+        showDialog('Open this page in an XR headset browser (Quest, Vision Pro, PICO, VIVE) to use VR mode.', 'XR Unsupported');
+        return;
+      }
+
+      let sessionBundle;
+      try {
+        sessionBundle = await requestXRSession(xrContext);
+      } catch (error) {
+        showDialog(error?.message || 'Unable to start XR session.', 'XR Error');
+        return;
+      }
+
+      const { session, mode } = sessionBundle;
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl', { xrCompatible: true, alpha: false, antialias: true });
+
+      if (!gl) {
+        session.end();
+        showDialog('WebGL context creation failed for XR session.', 'XR Error');
+        return;
+      }
+
+      try {
+        if (gl.makeXRCompatible) {
+          await gl.makeXRCompatible();
+        }
+
+        const source = await prepareXRMediaSource(state.activeItem);
+        const renderer = setupXRRenderer(gl);
+        uploadMediaTexture(gl, renderer.texture, source.element);
+
+        session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
+        const refSpace = await session.requestReferenceSpace('local');
+
+        xrRuntime.session = session;
+        xrRuntime.mode = mode;
+        xrRuntime.refSpace = refSpace;
+        xrRuntime.canvas = canvas;
+        xrRuntime.gl = gl;
+        xrRuntime.program = renderer.program;
+        xrRuntime.positionBuffer = renderer.positionBuffer;
+        xrRuntime.texCoordBuffer = renderer.texCoordBuffer;
+        xrRuntime.texture = renderer.texture;
+        xrRuntime.mediaElement = source.element;
+        xrRuntime.sourceType = source.type;
+
+        session.addEventListener('end', stopXRPlayback);
+        session.requestAnimationFrame(onXRFrame);
+      } catch (error) {
+        try { session.end(); } catch (_) {}
+        stopXRPlayback();
+        showDialog(error?.message || 'Failed to initialize XR playback.', 'XR Error');
+      }
+    }
+
+    function stopXRPlayback() {
+      if (xrRuntime.mediaElement && xrRuntime.sourceType === 'video') {
+        try {
+          xrRuntime.mediaElement.pause();
+        } catch (_) {}
+      }
+
+      xrRuntime.session = null;
+      xrRuntime.mode = null;
+      xrRuntime.refSpace = null;
+      xrRuntime.canvas = null;
+      xrRuntime.gl = null;
+      xrRuntime.program = null;
+      xrRuntime.positionBuffer = null;
+      xrRuntime.texCoordBuffer = null;
+      xrRuntime.texture = null;
+      xrRuntime.mediaElement = null;
+      xrRuntime.sourceType = null;
+    }
+
+    vrButton.addEventListener('click', () => {
+      startXRPlayback();
     });
 
     async function resetAndLoad() {
@@ -1144,6 +1600,14 @@ final class GalleryWebServer: ObservableObject {
     }
 
     function openViewer(item) {
+      if (xrRuntime.session) {
+        try {
+          xrRuntime.session.end();
+        } catch (_) {
+          stopXRPlayback();
+        }
+      }
+
       state.activeItem = item;
       viewerTitle.textContent = item.id || '';
       viewerBody.innerHTML = '';
@@ -1168,6 +1632,14 @@ final class GalleryWebServer: ObservableObject {
     }
 
     function closeViewer() {
+      if (xrRuntime.session) {
+        try {
+          xrRuntime.session.end();
+        } catch (_) {
+          stopXRPlayback();
+        }
+      }
+
       overlay.classList.remove('show');
       overlay.setAttribute('aria-hidden', 'true');
       viewerBody.innerHTML = '';
