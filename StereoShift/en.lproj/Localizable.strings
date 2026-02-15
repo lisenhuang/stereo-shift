@@ -94,6 +94,7 @@
 "Web Share requires Wi-Fi connection." = "Web Share requires Wi-Fi connection.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Start Web Share, then open it in a VR/AR browser to view SBS photos and videos in 3D.";
 "Restore Purchases" = "Restore Purchases";
+"Reset PIN" = "Reset PIN";
 "Retry" = "Retry";
 "Subscription Active" = "Subscription Active";
 "System" = "System";
@@ -104,5 +105,6 @@
 "Video features require an active subscription." = "Video features require an active subscription.";
 "Video Subscription" = "Video Subscription";
 "Video conversion and spatial video split to SBS are available to subscribers." = "Video conversion and spatial video split to SBS are available to subscribers.";
+"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops.";
 "简体中文" = "简体中文";
 "한국어" = "한국어";

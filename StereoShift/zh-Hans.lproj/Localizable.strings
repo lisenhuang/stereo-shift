@@ -94,6 +94,7 @@
 "Web Share requires Wi-Fi connection." = "网页共享需要连接 Wi-Fi。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "启动网页共享后，可在 VR/AR 浏览器中访问图片和视频，并以 3D 模式观看 SBS。";
 "Restore Purchases" = "恢复购买";
+"Reset PIN" = "重置 PIN";
 "Retry" = "重试";
 "Subscription Active" = "订阅已激活";
 "System" = "系统";
@@ -104,5 +105,6 @@
 "Video features require an active subscription." = "视频功能需要有效订阅。";
 "Video Subscription" = "视频订阅";
 "Video conversion and spatial video split to SBS are available to subscribers." = "视频转换和空间视频拆分为 SBS 仅对订阅用户开放。";
+"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "网页共享运行时，请保持 StereoShift 在前台；若应用切到后台，共享会停止。";
 "简体中文" = "简体中文";
 "한국어" = "韩语";
