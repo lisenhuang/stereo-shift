@@ -4,6 +4,7 @@
 "Add from Disk" = "디스크에서 추가";
 "Add from Photos" = "사진 앱에서 추가";
 "Added to In-App Gallery." = "앱 내 갤러리에 추가되었습니다.";
+"Before Selecting" = "선택 전 안내";
 "Balanced" = "균형";
 "Cancel" = "취소";
 "Clear All" = "모두 지우기";
@@ -13,6 +14,7 @@
 "Converting Spatial Photo" = "공간 사진 변환 중";
 "Converting Spatial Video" = "공간 동영상 변환 중";
 "Converting…" = "변환 중…";
+"Confirm" = "확인";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "오프라인으로 좌우 스테레오 사진/동영상을 만들거나 공간 미디어를 바로 SBS로 분리하세요.";
 "Delete" = "삭제";
 "Delete all items from In-App Gallery?" = "앱 내 갤러리의 모든 항목을 삭제할까요?";
@@ -42,6 +44,7 @@
 "No subscription plans available right now." = "현재 이용 가능한 구독 상품이 없습니다.";
 "Only convert first 10 seconds for testing" = "테스트용으로 처음 10초만 변환";
 "OK" = "확인";
+"Please choose left-right side-by-side 3D images or videos." = "좌우 병렬 3D 이미지 또는 동영상을 선택해 주세요.";
 "Photo" = "사진";
 "Pick Another Photo" = "다른 사진 선택";
 "Pick Another Photo from Files" = "파일에서 다른 사진 선택";

@@ -4,6 +4,7 @@
 "Add from Disk" = "Add from Disk";
 "Add from Photos" = "Add from Photos";
 "Added to In-App Gallery." = "Added to In-App Gallery.";
+"Before Selecting" = "Before Selecting";
 "Balanced" = "Balanced";
 "Cancel" = "Cancel";
 "Clear All" = "Clear All";
@@ -13,6 +14,7 @@
 "Converting Spatial Photo" = "Converting Spatial Photo";
 "Converting Spatial Video" = "Converting Spatial Video";
 "Converting…" = "Converting…";
+"Confirm" = "Confirm";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "Create left-right stereo photos and videos offline, or split spatial media directly into SBS.";
 "Delete" = "Delete";
 "Delete all items from In-App Gallery?" = "Delete all items from In-App Gallery?";
@@ -42,6 +44,7 @@
 "No subscription plans available right now." = "No subscription plans available right now.";
 "Only convert first 10 seconds for testing" = "Only convert first 10 seconds for testing";
 "OK" = "OK";
+"Please choose left-right side-by-side 3D images or videos." = "Please choose left-right side-by-side 3D images or videos.";
 "Photo" = "Photo";
 "Pick Another Photo" = "Pick Another Photo";
 "Pick Another Photo from Files" = "Pick Another Photo from Files";

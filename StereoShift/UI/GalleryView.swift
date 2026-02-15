@@ -10,6 +10,8 @@ struct GalleryView: View {
     @StateObject private var webServer: GalleryWebServer
     @State private var selectedItem: GalleryItem?
     @State private var importPickerItem: PhotosPickerItem?
+    @State private var showAddFromPhotosPrompt = false
+    @State private var isShowingPhotoImportPicker = false
     @State private var isShowingDiskImporter = false
     @State private var isImporting = false
     @State private var importMessageKey: LocalizedStringKey?
@@ -80,6 +82,12 @@ struct GalleryView: View {
         ) { result in
             importFromDisk(result)
         }
+        .photosPicker(
+            isPresented: $isShowingPhotoImportPicker,
+            selection: $importPickerItem,
+            matching: galleryImportPickerFilter,
+            preferredItemEncoding: .current
+        )
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
         }
@@ -93,6 +101,18 @@ struct GalleryView: View {
             } else {
                 Text("Something went wrong.")
             }
+        }
+        .confirmationDialog(
+            "Before Selecting",
+            isPresented: $showAddFromPhotosPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("Confirm") {
+                isShowingPhotoImportPicker = true
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Please choose left-right side-by-side 3D images or videos.")
         }
         .confirmationDialog(
             "Delete all items from In-App Gallery?",
@@ -137,11 +157,9 @@ struct GalleryView: View {
             }
 
             HStack(spacing: 8) {
-                PhotosPicker(
-                    selection: $importPickerItem,
-                    matching: .any(of: [.images, .videos]),
-                    preferredItemEncoding: .current
-                ) {
+                Button {
+                    showAddFromPhotosPrompt = true
+                } label: {
                     Label("Add from Photos", systemImage: "photo.badge.plus")
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
@@ -282,6 +300,13 @@ struct GalleryView: View {
 #else
         ProcessInfo.processInfo.isiOSAppOnMac
 #endif
+    }
+
+    private var galleryImportPickerFilter: PHPickerFilter {
+        if #available(iOS 18.0, *) {
+            return .all(of: [.any(of: [.images, .videos]), .not(.spatialMedia)])
+        }
+        return .any(of: [.images, .videos])
     }
 
     private func importFromPhotos(_ item: PhotosPickerItem?) {

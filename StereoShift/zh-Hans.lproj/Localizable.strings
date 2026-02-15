@@ -4,6 +4,7 @@
 "Add from Disk" = "从磁盘添加";
 "Add from Photos" = "从照片添加";
 "Added to In-App Gallery." = "已添加到应用内画廊。";
+"Before Selecting" = "选择前提示";
 "Balanced" = "平衡";
 "Cancel" = "取消";
 "Clear All" = "清空全部";
@@ -13,6 +14,7 @@
 "Converting Spatial Photo" = "正在转换空间照片";
 "Converting Spatial Video" = "正在转换空间视频";
 "Converting…" = "转换中…";
+"Confirm" = "确认";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "离线生成左右立体照片和视频，或直接将空间媒体拆分为 SBS。";
 "Delete" = "删除";
 "Delete all items from In-App Gallery?" = "要清空应用内画廊的全部项目吗？";
@@ -42,6 +44,7 @@
 "No subscription plans available right now." = "当前没有可用的订阅方案。";
 "Only convert first 10 seconds for testing" = "仅转换前 10 秒用于测试";
 "OK" = "确定";
+"Please choose left-right side-by-side 3D images or videos." = "请选择左右并排 3D 图片或视频。";
 "Photo" = "照片";
 "Pick Another Photo" = "重新选择照片";
 "Pick Another Photo from Files" = "重新从文件选择照片";
