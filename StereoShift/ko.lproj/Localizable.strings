@@ -1,6 +1,9 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D를 3D 나란히(SBS)로 변환";
 "3D Strength" = "3D 강도";
+"Add from Disk" = "디스크에서 추가";
+"Add from Photos" = "사진 앱에서 추가";
+"Added to In-App Gallery." = "앱 내 갤러리에 추가되었습니다.";
 "Balanced" = "균형";
 "Cancel" = "취소";
 "Clear All" = "모두 지우기";
@@ -29,6 +32,7 @@
 "Generating…" = "생성 중…";
 "In-App Gallery" = "앱 내 갤러리";
 "Input" = "입력";
+"Importing…" = "가져오는 중…";
 "Language" = "언어";
 "Light" = "라이트";
 "Loading photo…" = "사진 불러오는 중…";
@@ -64,6 +68,7 @@
 "Save to In-App Gallery" = "앱 내 갤러리에 저장";
 "Save to Disk" = "디스크에 저장";
 "Save to Photos" = "사진 앱에 저장";
+"Selected files are not supported." = "선택한 파일은 지원되지 않습니다.";
 "Saved photos and videos stay on this device." = "저장된 사진과 동영상은 이 기기에만 보관됩니다.";
 "Saved to In-App Gallery." = "앱 내 갤러리에 저장되었습니다.";
 "Saved to Disk." = "디스크에 저장되었습니다.";

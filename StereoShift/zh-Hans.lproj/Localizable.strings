@@ -1,6 +1,9 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D 转 3D 并排（SBS）";
 "3D Strength" = "3D 强度";
+"Add from Disk" = "从磁盘添加";
+"Add from Photos" = "从照片添加";
+"Added to In-App Gallery." = "已添加到应用内画廊。";
 "Balanced" = "平衡";
 "Cancel" = "取消";
 "Clear All" = "清空全部";
@@ -29,6 +32,7 @@
 "Generating…" = "生成中…";
 "In-App Gallery" = "应用内画廊";
 "Input" = "输入";
+"Importing…" = "导入中…";
 "Language" = "语言";
 "Light" = "浅色";
 "Loading photo…" = "正在加载照片…";
@@ -64,6 +68,7 @@
 "Save to In-App Gallery" = "保存到应用内画廊";
 "Save to Disk" = "保存到磁盘";
 "Save to Photos" = "保存到照片";
+"Selected files are not supported." = "所选文件不受支持。";
 "Saved photos and videos stay on this device." = "保存的照片和视频仅保存在此设备上。";
 "Saved to In-App Gallery." = "已保存到应用内画廊。";
 "Saved to Disk." = "已保存到磁盘。";

@@ -1,12 +1,18 @@
 import AVFoundation
 import ImageIO
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 import UIKit
 
 struct GalleryView: View {
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     @StateObject private var webServer: GalleryWebServer
     @State private var selectedItem: GalleryItem?
+    @State private var importPickerItem: PhotosPickerItem?
+    @State private var isShowingDiskImporter = false
+    @State private var isImporting = false
+    @State private var importMessageKey: LocalizedStringKey?
     @State private var isClearingAll = false
     @State private var showClearAllConfirmation = false
     @State private var errorMessage: String?
@@ -57,12 +63,22 @@ struct GalleryView: View {
         .onChange(of: galleryLibrary.items.count) { _, _ in
             syncVisibleItemCount()
         }
+        .onChange(of: importPickerItem) { _, newValue in
+            importFromPhotos(newValue)
+        }
         .onChange(of: webServer.errorMessage) { _, newValue in
             guard let newValue else { return }
             errorMessage = newValue
         }
         .onDisappear {
             webServer.stop()
+        }
+        .fileImporter(
+            isPresented: $isShowingDiskImporter,
+            allowedContentTypes: [.image, .movie],
+            allowsMultipleSelection: true
+        ) { result in
+            importFromDisk(result)
         }
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
@@ -106,7 +122,7 @@ struct GalleryView: View {
                         showClearAllConfirmation = true
                     }
                     .buttonStyle(.bordered)
-                    .disabled(galleryLibrary.items.isEmpty || isClearingAll)
+                    .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting)
 
                     Button {
                         galleryLibrary.reload()
@@ -116,8 +132,42 @@ struct GalleryView: View {
                             .padding(10)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isClearingAll)
+                    .disabled(isClearingAll || isImporting)
                 }
+            }
+
+            HStack(spacing: 8) {
+                PhotosPicker(
+                    selection: $importPickerItem,
+                    matching: .any(of: [.images, .videos]),
+                    preferredItemEncoding: .current
+                ) {
+                    Label("Add from Photos", systemImage: "photo.badge.plus")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isClearingAll || isImporting)
+
+                if supportsDiskImport {
+                    Button {
+                        isShowingDiskImporter = true
+                    } label: {
+                        Label("Add from Disk", systemImage: "externaldrive.badge.plus")
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isClearingAll || isImporting)
+                }
+            }
+
+            if isImporting {
+                Text("Importing…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let importMessageKey {
+                Text(importMessageKey)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 8) {
@@ -130,16 +180,17 @@ struct GalleryView: View {
                 .buttonStyle(.bordered)
                 .disabled(
                     isClearingAll ||
+                    isImporting ||
                     (galleryLibrary.items.isEmpty && !webServer.isRunning) ||
                     (!webServer.isWiFiConnected && !webServer.isRunning)
                 )
 
-                if let browseURL = webServer.browseURL, webServer.isRunning {
+                if let hostAddress = webServer.hostAddress, webServer.isRunning {
                     HStack(spacing: 4) {
                         Text("Web share URL:")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                        Text(verbatim: browseURL)
+                        Text(verbatim: hostAddress)
                             .font(.subheadline.monospaced())
                             .foregroundStyle(.secondary)
                     }
@@ -207,6 +258,7 @@ struct GalleryView: View {
     }
 
     private func clearAllItems() {
+        importMessageKey = nil
         isClearingAll = true
         Task {
             do {
@@ -222,6 +274,140 @@ struct GalleryView: View {
                 }
             }
         }
+    }
+
+    private var supportsDiskImport: Bool {
+#if targetEnvironment(macCatalyst)
+        true
+#else
+        ProcessInfo.processInfo.isiOSAppOnMac
+#endif
+    }
+
+    private func importFromPhotos(_ item: PhotosPickerItem?) {
+        guard let item else { return }
+        isImporting = true
+        importMessageKey = nil
+
+        Task {
+            do {
+                guard let mediaType = mediaType(for: item) else {
+                    throw StereoPipelineError.photoPickerDataUnavailable
+                }
+
+                let importURL = try await temporaryImportURL(from: item, type: mediaType)
+                defer { try? FileManager.default.removeItem(at: importURL) }
+                _ = try await galleryLibrary.saveMedia(at: importURL, type: mediaType)
+
+                await MainActor.run {
+                    importPickerItem = nil
+                    isImporting = false
+                    importMessageKey = "Added to In-App Gallery."
+                }
+            } catch {
+                await MainActor.run {
+                    importPickerItem = nil
+                    isImporting = false
+                    importMessageKey = nil
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func importFromDisk(_ result: Result<[URL], any Error>) {
+        switch result {
+        case .success(let urls):
+            guard !urls.isEmpty else { return }
+            isImporting = true
+            importMessageKey = nil
+
+            Task {
+                do {
+                    var importedCount = 0
+                    for url in urls {
+                        guard let mediaType = mediaType(forFileURL: url) else {
+                            continue
+                        }
+                        _ = try await galleryLibrary.saveMedia(at: url, type: mediaType)
+                        importedCount += 1
+                    }
+
+                    await MainActor.run {
+                        isImporting = false
+                        if importedCount > 0 {
+                            importMessageKey = "Added to In-App Gallery."
+                        } else {
+                            errorMessage = String(localized: "Selected files are not supported.")
+                        }
+                    }
+                } catch {
+                    await MainActor.run {
+                        isImporting = false
+                        importMessageKey = nil
+                        errorMessage = error.localizedDescription
+                    }
+                }
+            }
+        case .failure(let error):
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func mediaType(for item: PhotosPickerItem) -> GalleryMediaType? {
+        for contentType in item.supportedContentTypes {
+            if contentType.conforms(to: .image) {
+                return .image
+            }
+            if contentType.conforms(to: .movie) || contentType.conforms(to: .video) {
+                return .video
+            }
+        }
+        return nil
+    }
+
+    private func mediaType(forFileURL url: URL) -> GalleryMediaType? {
+        let pathExtension = url.pathExtension.lowercased()
+        if let detectedType = UTType(filenameExtension: pathExtension) {
+            if detectedType.conforms(to: .movie) || detectedType.conforms(to: .video) {
+                return .video
+            }
+            if detectedType.conforms(to: .image) {
+                return .image
+            }
+        }
+        if ["mp4", "mov", "m4v"].contains(pathExtension) {
+            return .video
+        }
+        if ["png", "jpg", "jpeg", "heic", "heif"].contains(pathExtension) {
+            return .image
+        }
+        return nil
+    }
+
+    private func temporaryImportURL(from item: PhotosPickerItem, type: GalleryMediaType) async throws -> URL {
+        switch type {
+        case .video:
+            return try await MediaPicker.loadVideoURL(from: item)
+        case .image:
+            guard let data = try await item.loadTransferable(type: Data.self) else {
+                throw StereoPipelineError.photoPickerDataUnavailable
+            }
+
+            let fileExtension = preferredImageFileExtension(from: item.supportedContentTypes)
+            let importURL = try TempFiles.makeTemporaryFileURL(prefix: "gallery-import-photo", fileExtension: fileExtension)
+            try data.write(to: importURL, options: [.atomic])
+            return importURL
+        }
+    }
+
+    private func preferredImageFileExtension(from contentTypes: [UTType]) -> String {
+        for contentType in contentTypes where contentType.conforms(to: .image) {
+            if let fileExtension = contentType.preferredFilenameExtension, !fileExtension.isEmpty {
+                return fileExtension.lowercased()
+            }
+        }
+        return "jpg"
     }
 }
 

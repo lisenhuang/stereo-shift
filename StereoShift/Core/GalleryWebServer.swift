@@ -1133,27 +1133,6 @@ final class GalleryWebServer: ObservableObject {
       }
     });
 
-    const xrHeadsetSignatures = [
-      'oculusbrowser',
-      'meta quest',
-      'quest 3',
-      'quest 2',
-      'quest pro',
-      'quest',
-      'vision pro',
-      'apple vision',
-      'visionos',
-      'xros',
-      'pico browser',
-      'pico',
-      'vive browser',
-      'htcvive',
-      'windows mixed reality',
-      'hololens',
-      'samsungbrowservr',
-      'openxr'
-    ];
-
     const xrRuntime = {
       session: null,
       mode: null,
@@ -1204,21 +1183,6 @@ final class GalleryWebServer: ObservableObject {
       dialogBackdrop.setAttribute('aria-hidden', 'true');
     }
 
-    function normalizedClientSignature() {
-      const ua = (navigator.userAgent || '');
-      const brands = Array.isArray(navigator.userAgentData?.brands)
-        ? navigator.userAgentData.brands.map((item) => item.brand).join(' ')
-        : '';
-      const platform = navigator.userAgentData?.platform || navigator.platform || '';
-      const vendor = navigator.vendor || '';
-      return `${ua} ${brands} ${platform} ${vendor}`.toLowerCase();
-    }
-
-    function isLikelyXRHeadsetBrowser() {
-      const signature = normalizedClientSignature();
-      return xrHeadsetSignatures.some((token) => signature.includes(token));
-    }
-
     async function immersiveModeSupported(mode) {
       if (!navigator.xr || !navigator.xr.isSessionSupported) {
         return false;
@@ -1232,13 +1196,15 @@ final class GalleryWebServer: ObservableObject {
     }
 
     async function detectXRContext() {
-      const headsetBrowser = isLikelyXRHeadsetBrowser();
+      const hasXR = Boolean(navigator.xr);
+      const hasSessionSupportCheck = hasXR && typeof navigator.xr.isSessionSupported === 'function';
       const immersiveVR = await immersiveModeSupported('immersive-vr');
       const immersiveAR = await immersiveModeSupported('immersive-ar');
       const immersiveSupported = immersiveVR || immersiveAR;
       const secureContext = window.isSecureContext === true;
       return {
-        headsetBrowser,
+        hasXR,
+        hasSessionSupportCheck,
         immersiveSupported,
         immersiveVR,
         immersiveAR,
@@ -1320,7 +1286,9 @@ final class GalleryWebServer: ObservableObject {
         video.src = item.mediaPath;
         video.loop = true;
         video.controls = false;
-        video.muted = true;
+        video.muted = false;
+        video.defaultMuted = false;
+        video.volume = 1.0;
         video.playsInline = true;
         video.crossOrigin = 'anonymous';
         video.setAttribute('playsinline', 'true');
@@ -1348,7 +1316,14 @@ final class GalleryWebServer: ObservableObject {
         try {
           await video.play();
         } catch (_) {
-          throw new Error('Unable to autoplay video texture in XR. Interact with the page and try again.');
+          video.muted = true;
+          try {
+            await video.play();
+            video.muted = false;
+            video.defaultMuted = false;
+          } catch (_) {
+            throw new Error('Unable to autoplay video texture in XR. Interact with the page and try again.');
+          }
         }
 
         return { type: 'video', element: video };
@@ -1750,8 +1725,18 @@ final class GalleryWebServer: ObservableObject {
       }
 
       const xrContext = await detectXRContext();
-      if (!xrContext.headsetBrowser && !xrContext.immersiveSupported) {
-        showDialog('Open this page in an XR headset browser (Quest, Vision Pro, PICO, VIVE) to use VR mode.', 'XR Unsupported');
+      if (!xrContext.secureContext) {
+        showDialog('WebXR requires HTTPS secure context. Accept the certificate warning, then reload.', 'XR Unsupported');
+        return;
+      }
+
+      if (!xrContext.hasXR || !xrContext.hasSessionSupportCheck) {
+        showDialog('This browser does not provide WebXR immersive session support. Open this page in a WebXR-enabled VR browser.', 'XR Unsupported');
+        return;
+      }
+
+      if (!xrContext.immersiveSupported) {
+        showDialog('This browser reports no immersive VR/AR support for this page.', 'XR Unsupported');
         return;
       }
 

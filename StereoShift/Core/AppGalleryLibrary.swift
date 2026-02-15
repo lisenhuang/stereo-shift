@@ -136,6 +136,13 @@ final class AppGalleryLibrary: ObservableObject {
             isDirectory: false
         )
 
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed {
+                sourceURL.stopAccessingSecurityScopedResource()
+            }
+        }
+
         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
         return destinationURL
     }
