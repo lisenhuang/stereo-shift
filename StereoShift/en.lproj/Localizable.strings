@@ -14,6 +14,7 @@
 "Delete" = "Delete";
 "Delete all items from In-App Gallery?" = "Delete all items from In-App Gallery?";
 "Delete this item from In-App Gallery?" = "Delete this item from In-App Gallery?";
+"Connect to Wi-Fi to start Web Share." = "Connect to Wi-Fi to start Web Share.";
 "Done" = "Done";
 "Dark" = "Dark";
 "English" = "English";
@@ -77,8 +78,13 @@
 "Spatial-only picker requires iOS 18 or later." = "Spatial-only picker requires iOS 18 or later.";
 "Stop" = "Stop";
 "Stop current conversion?" = "Stop current conversion?";
+"Start Web Share" = "Start Web Share";
+"Stop Web Share" = "Stop Web Share";
 "Strong" = "Strong";
 "Subtle" = "Subtle";
+"Web share URL:" = "Web share URL:";
+"Web Share requires Wi-Fi connection." = "Web Share requires Wi-Fi connection.";
+"Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Web share uses local ports 80/443 and redirects HTTP to HTTPS.";
 "Restore Purchases" = "Restore Purchases";
 "Retry" = "Retry";
 "Subscription Active" = "Subscription Active";

@@ -1,5 +1,8 @@
 import Combine
+import AVFoundation
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 
 enum GalleryMediaType: String {
     case image
@@ -18,6 +21,7 @@ enum GalleryMediaType: String {
 struct GalleryItem: Identifiable, Hashable {
     let id: String
     let url: URL
+    let thumbnailURL: URL?
     let type: GalleryMediaType
     let createdAt: Date
 }
@@ -38,7 +42,7 @@ final class AppGalleryLibrary: ObservableObject {
         reloadTask?.cancel()
         reloadTask = Task { [weak self] in
             let loaded = await Task.detached(priority: .utility) {
-                (try? Self.loadItems()) ?? []
+                (try? Self.loadItemsForWeb()) ?? []
             }.value
 
             guard !Task.isCancelled else { return }
@@ -49,21 +53,22 @@ final class AppGalleryLibrary: ObservableObject {
     }
 
     func saveMedia(at sourceURL: URL, type: GalleryMediaType) async throws -> GalleryItem {
-        let destinationURL = try await Task.detached(priority: .utility) {
-            try Self.copyToGallery(sourceURL: sourceURL, type: type)
+        let savedMedia = try await Task.detached(priority: .utility) {
+            try Self.copyToGalleryAndCreateThumbnail(sourceURL: sourceURL, type: type)
         }.value
 
-        let values = try? destinationURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
+        let values = try? savedMedia.mediaURL.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
         let createdAt = values?.creationDate ?? values?.contentModificationDate ?? Date()
         let item = GalleryItem(
-            id: destinationURL.lastPathComponent,
-            url: destinationURL,
+            id: savedMedia.mediaURL.lastPathComponent,
+            url: savedMedia.mediaURL,
+            thumbnailURL: savedMedia.thumbnailURL,
             type: type,
             createdAt: createdAt
         )
 
         await MainActor.run {
-            items.removeAll { $0.url == destinationURL }
+            items.removeAll { $0.url == savedMedia.mediaURL }
             items.insert(item, at: 0)
         }
 
@@ -90,7 +95,7 @@ final class AppGalleryLibrary: ObservableObject {
         }
     }
 
-    private static func loadItems() throws -> [GalleryItem] {
+    static func loadItemsForWeb() throws -> [GalleryItem] {
         let directory = try galleryDirectory()
         let files = try FileManager.default.contentsOfDirectory(
             at: directory,
@@ -113,6 +118,7 @@ final class AppGalleryLibrary: ObservableObject {
                 GalleryItem(
                     id: url.lastPathComponent,
                     url: url,
+                    thumbnailURL: existingThumbnailURL(for: url),
                     type: mediaType,
                     createdAt: createdAt
                 )
@@ -122,7 +128,7 @@ final class AppGalleryLibrary: ObservableObject {
         return results.sorted { $0.createdAt > $1.createdAt }
     }
 
-    private static func copyToGallery(sourceURL: URL, type: GalleryMediaType) throws -> URL {
+    private static func copyMediaFileToGallery(sourceURL: URL, type: GalleryMediaType) throws -> URL {
         let directory = try galleryDirectory()
         let fileExtension = normalizedFileExtension(for: sourceURL, type: type)
         let destinationURL = directory.appendingPathComponent(
@@ -138,6 +144,7 @@ final class AppGalleryLibrary: ObservableObject {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return
         }
+        removeThumbnailIfExists(for: url)
         try FileManager.default.removeItem(at: url)
     }
 
@@ -152,9 +159,20 @@ final class AppGalleryLibrary: ObservableObject {
         for url in files {
             try FileManager.default.removeItem(at: url)
         }
+
+        let thumbnailDirectory = try thumbnailsDirectory()
+        let thumbnailFiles = try FileManager.default.contentsOfDirectory(
+            at: thumbnailDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        for url in thumbnailFiles {
+            try FileManager.default.removeItem(at: url)
+        }
     }
 
-    private static func galleryDirectory() throws -> URL {
+    static func galleryDirectory() throws -> URL {
         let baseDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         guard let baseDirectory else {
             throw StereoPipelineError.temporaryFileCreationFailed
@@ -169,6 +187,127 @@ final class AppGalleryLibrary: ObservableObject {
         }
 
         return directory
+    }
+
+    static func thumbnailsDirectory() throws -> URL {
+        let baseDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        guard let baseDirectory else {
+            throw StereoPipelineError.temporaryFileCreationFailed
+        }
+
+        let directory = baseDirectory
+            .appendingPathComponent("StereoShift", isDirectory: true)
+            .appendingPathComponent("GalleryThumbnails", isDirectory: true)
+
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        return directory
+    }
+
+    static func thumbnailURL(forMediaFilename mediaFilename: String) throws -> URL {
+        let thumbnailDirectory = try thumbnailsDirectory()
+        let basename = (mediaFilename as NSString).deletingPathExtension
+        return thumbnailDirectory.appendingPathComponent("\(basename).jpg", isDirectory: false)
+    }
+
+    static func existingThumbnailURL(for mediaURL: URL) -> URL? {
+        guard let thumbnailURL = try? thumbnailURL(forMediaFilename: mediaURL.lastPathComponent) else {
+            return nil
+        }
+        return FileManager.default.fileExists(atPath: thumbnailURL.path) ? thumbnailURL : nil
+    }
+
+    static func ensureThumbnailExists(for item: GalleryItem) -> URL? {
+        if let existing = existingThumbnailURL(for: item.url) {
+            return existing
+        }
+
+        return try? generateThumbnail(for: item.url, type: item.type)
+    }
+
+    private static func copyToGalleryAndCreateThumbnail(sourceURL: URL, type: GalleryMediaType) throws -> (mediaURL: URL, thumbnailURL: URL?) {
+        let destinationURL = try copyMediaFileToGallery(sourceURL: sourceURL, type: type)
+        let thumbnailURL = try? generateThumbnail(for: destinationURL, type: type)
+        return (mediaURL: destinationURL, thumbnailURL: thumbnailURL)
+    }
+
+    private static func generateThumbnail(for mediaURL: URL, type: GalleryMediaType) throws -> URL {
+        let thumbnailURL = try thumbnailURL(forMediaFilename: mediaURL.lastPathComponent)
+
+        switch type {
+        case .image:
+            try generateImageThumbnail(from: mediaURL, destinationURL: thumbnailURL)
+        case .video:
+            try generateVideoThumbnail(from: mediaURL, destinationURL: thumbnailURL)
+        }
+
+        return thumbnailURL
+    }
+
+    private static func generateImageThumbnail(from sourceURL: URL, destinationURL: URL) throws {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let imageSource = CGImageSourceCreateWithURL(sourceURL as CFURL, sourceOptions) else {
+            throw StereoPipelineError.mediaDecodingFailed
+        }
+
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: 320
+        ]
+
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbnailOptions as CFDictionary) else {
+            throw StereoPipelineError.mediaDecodingFailed
+        }
+
+        try writeJPEG(image: thumbnail, to: destinationURL)
+    }
+
+    private static func generateVideoThumbnail(from sourceURL: URL, destinationURL: URL) throws {
+        let asset = AVAsset(url: sourceURL)
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.maximumSize = CGSize(width: 320, height: 320)
+
+        let cgImage = try imageGenerator.copyCGImage(at: .zero, actualTime: nil)
+        try writeJPEG(image: cgImage, to: destinationURL)
+    }
+
+    private static func writeJPEG(image: CGImage, to destinationURL: URL) throws {
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            try FileManager.default.removeItem(at: destinationURL)
+        }
+
+        guard let imageDestination = CGImageDestinationCreateWithURL(
+            destinationURL as CFURL,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw StereoPipelineError.temporaryFileCreationFailed
+        }
+
+        let options: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.82
+        ]
+        CGImageDestinationAddImage(imageDestination, image, options as CFDictionary)
+
+        guard CGImageDestinationFinalize(imageDestination) else {
+            throw StereoPipelineError.temporaryFileCreationFailed
+        }
+    }
+
+    private static func removeThumbnailIfExists(for mediaURL: URL) {
+        guard let thumbnailURL = try? thumbnailURL(forMediaFilename: mediaURL.lastPathComponent) else {
+            return
+        }
+        guard FileManager.default.fileExists(atPath: thumbnailURL.path) else {
+            return
+        }
+        try? FileManager.default.removeItem(at: thumbnailURL)
     }
 
     private static func normalizedFileExtension(for url: URL, type: GalleryMediaType) -> String {

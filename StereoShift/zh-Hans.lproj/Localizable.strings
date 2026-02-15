@@ -14,6 +14,7 @@
 "Delete" = "删除";
 "Delete all items from In-App Gallery?" = "要清空应用内画廊的全部项目吗？";
 "Delete this item from In-App Gallery?" = "要从应用内画廊删除此项目吗？";
+"Connect to Wi-Fi to start Web Share." = "请先连接 Wi-Fi 后再启动网页共享。";
 "Done" = "完成";
 "Dark" = "深色";
 "English" = "英语";
@@ -77,8 +78,13 @@
 "Spatial-only picker requires iOS 18 or later." = "仅空间媒体选择器需要 iOS 18 或更高版本。";
 "Stop" = "停止";
 "Stop current conversion?" = "停止当前转换？";
+"Start Web Share" = "启动网页共享";
+"Stop Web Share" = "停止网页共享";
 "Strong" = "强烈";
 "Subtle" = "轻微";
+"Web share URL:" = "网页共享地址：";
+"Web Share requires Wi-Fi connection." = "网页共享需要连接 Wi-Fi。";
+"Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "网页共享使用本地 80/443 端口，并将 HTTP 重定向到 HTTPS。";
 "Restore Purchases" = "恢复购买";
 "Retry" = "重试";
 "Subscription Active" = "订阅已激活";

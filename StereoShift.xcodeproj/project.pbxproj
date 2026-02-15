@@ -407,6 +407,7 @@
 				DEVELOPMENT_TEAM = HPL74FCW8E;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "StereoShift shares your In-App Gallery on your local network when Web Share is enabled.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "StereoShift saves generated 3D photos and videos to your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -439,6 +440,7 @@
 				DEVELOPMENT_TEAM = HPL74FCW8E;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "StereoShift shares your In-App Gallery on your local network when Web Share is enabled.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "StereoShift saves generated 3D photos and videos to your library.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

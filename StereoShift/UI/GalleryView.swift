@@ -5,6 +5,7 @@ import UIKit
 
 struct GalleryView: View {
     @ObservedObject var galleryLibrary: AppGalleryLibrary
+    @StateObject private var webServer: GalleryWebServer
     @State private var selectedItem: GalleryItem?
     @State private var isClearingAll = false
     @State private var showClearAllConfirmation = false
@@ -16,6 +17,11 @@ struct GalleryView: View {
     ]
     private let initialPageSize = 120
     private let pageSize = 80
+
+    init(galleryLibrary: AppGalleryLibrary) {
+        self.galleryLibrary = galleryLibrary
+        _webServer = StateObject(wrappedValue: GalleryWebServer())
+    }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -51,6 +57,13 @@ struct GalleryView: View {
         .onChange(of: galleryLibrary.items.count) { _, _ in
             syncVisibleItemCount()
         }
+        .onChange(of: webServer.errorMessage) { _, newValue in
+            guard let newValue else { return }
+            errorMessage = newValue
+        }
+        .onDisappear {
+            webServer.stop()
+        }
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
         }
@@ -78,31 +91,68 @@ struct GalleryView: View {
     }
 
     private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("In-App Gallery")
-                    .font(.headline)
-                Text("Saved photos and videos stay on this device.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            HStack(spacing: 8) {
-                Button("Clear All", role: .destructive) {
-                    showClearAllConfirmation = true
-                }
-                .buttonStyle(.bordered)
-                .disabled(galleryLibrary.items.isEmpty || isClearingAll)
-
-                Button {
-                    galleryLibrary.reload()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("In-App Gallery")
                         .font(.headline)
-                        .padding(10)
+                    Text("Saved photos and videos stay on this device.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                HStack(spacing: 8) {
+                    Button("Clear All", role: .destructive) {
+                        showClearAllConfirmation = true
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(galleryLibrary.items.isEmpty || isClearingAll)
+
+                    Button {
+                        galleryLibrary.reload()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.headline)
+                            .padding(10)
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isClearingAll)
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 8) {
+                Button {
+                    webServer.toggle()
+                } label: {
+                    Label(webServer.isRunning ? "Stop Web Share" : "Start Web Share", systemImage: webServer.isRunning ? "wifi.slash" : "wifi")
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .buttonStyle(.bordered)
-                .disabled(isClearingAll)
+                .disabled(
+                    isClearingAll ||
+                    (galleryLibrary.items.isEmpty && !webServer.isRunning) ||
+                    (!webServer.isWiFiConnected && !webServer.isRunning)
+                )
+
+                if let browseURL = webServer.browseURL, webServer.isRunning {
+                    HStack(spacing: 4) {
+                        Text("Web share URL:")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        Text(verbatim: browseURL)
+                            .font(.subheadline.monospaced())
+                            .foregroundStyle(.secondary)
+                    }
+                    .textSelection(.enabled)
+                } else if !webServer.isWiFiConnected {
+                    Text("Connect to Wi-Fi to start Web Share.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Web share uses local ports 80/443 and redirects HTTP to HTTPS.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .padding(16)
@@ -242,12 +292,26 @@ private struct GalleryThumbnailView: View {
     }
 
     private func loadThumbnail() async {
-        let cacheKey = item.url.path as NSString
+        let cacheKey = (item.thumbnailURL?.path ?? item.url.path) as NSString
         if let cached = Self.cache.object(forKey: cacheKey) {
             await MainActor.run {
                 thumbnail = cached
             }
             return
+        }
+
+        if let thumbnailURL = item.thumbnailURL {
+            let loadedFromDisk = await Task.detached(priority: .utility) {
+                UIImage(contentsOfFile: thumbnailURL.path)
+            }.value
+
+            if let loadedFromDisk {
+                await MainActor.run {
+                    thumbnail = loadedFromDisk
+                }
+                Self.cache.setObject(loadedFromDisk, forKey: cacheKey, cost: Self.pixelCost(for: loadedFromDisk))
+                return
+            }
         }
 
         if item.type == .image {

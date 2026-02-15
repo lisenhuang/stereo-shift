@@ -14,6 +14,7 @@
 "Delete" = "삭제";
 "Delete all items from In-App Gallery?" = "앱 내 갤러리의 모든 항목을 삭제할까요?";
 "Delete this item from In-App Gallery?" = "이 항목을 앱 내 갤러리에서 삭제할까요?";
+"Connect to Wi-Fi to start Web Share." = "웹 공유를 시작하려면 Wi-Fi에 연결하세요.";
 "Done" = "완료";
 "Dark" = "다크";
 "English" = "영어";
@@ -77,8 +78,13 @@
 "Spatial-only picker requires iOS 18 or later." = "공간 전용 선택기는 iOS 18 이상에서 지원됩니다.";
 "Stop" = "중지";
 "Stop current conversion?" = "현재 변환을 중지할까요?";
+"Start Web Share" = "웹 공유 시작";
+"Stop Web Share" = "웹 공유 중지";
 "Strong" = "강함";
 "Subtle" = "약함";
+"Web share URL:" = "웹 공유 주소:";
+"Web Share requires Wi-Fi connection." = "웹 공유를 사용하려면 Wi-Fi 연결이 필요합니다.";
+"Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "웹 공유는 로컬 80/443 포트를 사용하며 HTTP를 HTTPS로 리디렉션합니다.";
 "Restore Purchases" = "구매 복원";
 "Retry" = "다시 시도";
 "Subscription Active" = "구독 활성화됨";
