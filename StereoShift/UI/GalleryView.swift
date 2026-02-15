@@ -40,13 +40,13 @@ struct GalleryView: View {
     private let pageSize = 80
 
     var body: some View {
-        VStack(spacing: 14) {
-            header
+        ScrollView {
+            VStack(spacing: 14) {
+                header
 
-            if galleryLibrary.items.isEmpty {
-                emptyState
-            } else {
-                ScrollView {
+                if galleryLibrary.items.isEmpty {
+                    emptyState
+                } else {
                     LazyVGrid(columns: columns, spacing: Self.gridSpacing) {
                         ForEach(visibleItems) { item in
                             Button {
@@ -66,10 +66,10 @@ struct GalleryView: View {
                     }
                     .padding(.top, 4)
                 }
-                .refreshable {
-                    galleryLibrary.reload()
-                }
             }
+        }
+        .refreshable {
+            galleryLibrary.reload()
         }
         .onAppear {
             syncVisibleItemCount()
@@ -658,8 +658,10 @@ private struct GalleryItemDetailView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var showShareSheet = false
+    @State private var showDiskExportPicker = false
     @State private var showDeleteConfirmation = false
     @State private var isSaving = false
+    @State private var isSavingToDisk = false
     @State private var isDeleting = false
     @State private var saveMessageKey: LocalizedStringKey?
     @State private var errorMessage: String?
@@ -678,7 +680,7 @@ private struct GalleryItemDetailView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
-                        .disabled(isDeleting)
+                        .disabled(isSaving || isSavingToDisk || isDeleting)
 
                         Button(action: saveToPhotos) {
                             Group {
@@ -691,7 +693,24 @@ private struct GalleryItemDetailView: View {
                             .frame(maxWidth: .infinity, alignment: .center)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(isSaving || isDeleting)
+                        .disabled(isSaving || isSavingToDisk || isDeleting)
+
+                        if supportsDiskSave {
+                            Button {
+                                showDiskExportPicker = true
+                            } label: {
+                                Group {
+                                    if isSavingToDisk {
+                                        Label("Saving…", systemImage: "internaldrive")
+                                    } else {
+                                        Label("Save to Disk", systemImage: "internaldrive")
+                                    }
+                                }
+                                .frame(maxWidth: .infinity, alignment: .center)
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(isSaving || isSavingToDisk || isDeleting)
+                        }
                     }
 
                     if let saveMessageKey {
@@ -723,6 +742,23 @@ private struct GalleryItemDetailView: View {
             }
             .sheet(isPresented: $showShareSheet) {
                 ShareSheet(items: [item.url])
+            }
+            .sheet(isPresented: $showDiskExportPicker) {
+                DiskExportPicker(sourceURL: item.url) { didSave in
+                    Task { @MainActor in
+                        isSavingToDisk = false
+                        showDiskExportPicker = false
+                        if didSave {
+                            saveMessageKey = "Saved to Disk."
+                        }
+                    }
+                }
+            }
+            .onChange(of: showDiskExportPicker) { _, isPresented in
+                if isPresented {
+                    isSavingToDisk = true
+                    saveMessageKey = nil
+                }
             }
             .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
                 Button("OK", role: .cancel) {
@@ -764,6 +800,14 @@ private struct GalleryItemDetailView: View {
         case .video:
             return "Video"
         }
+    }
+
+    private var supportsDiskSave: Bool {
+#if targetEnvironment(macCatalyst)
+        true
+#else
+        ProcessInfo.processInfo.isiOSAppOnMac
+#endif
     }
 
     private func saveToPhotos() {
@@ -808,6 +852,40 @@ private struct GalleryItemDetailView: View {
                     errorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+}
+
+private struct DiskExportPicker: UIViewControllerRepresentable {
+    let sourceURL: URL
+    let onComplete: (Bool) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forExporting: [sourceURL], asCopy: true)
+        picker.delegate = context.coordinator
+        picker.shouldShowFileExtensions = true
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onComplete: onComplete)
+    }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        private let onComplete: (Bool) -> Void
+
+        init(onComplete: @escaping (Bool) -> Void) {
+            self.onComplete = onComplete
+        }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            onComplete(!urls.isEmpty)
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            onComplete(false)
         }
     }
 }
