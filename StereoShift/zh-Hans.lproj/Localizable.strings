@@ -86,7 +86,7 @@
 "Spatial-only picker requires iOS 18 or later." = "仅空间媒体选择器需要 iOS 18 或更高版本。";
 "Stop" = "停止";
 "Stop current conversion?" = "停止当前转换？";
-"Start Web Share" = "启动网页共享";
+"Start Web Share" = "启动局域网共享";
 "Stop Web Share" = "停止网页共享";
 "Strong" = "强烈";
 "Subtle" = "轻微";

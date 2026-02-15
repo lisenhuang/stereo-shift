@@ -86,7 +86,7 @@
 "Spatial-only picker requires iOS 18 or later." = "Spatial-only picker requires iOS 18 or later.";
 "Stop" = "Stop";
 "Stop current conversion?" = "Stop current conversion?";
-"Start Web Share" = "Start Web Share";
+"Start Web Share" = "Start Local Network Share";
 "Stop Web Share" = "Stop Web Share";
 "Strong" = "Strong";
 "Subtle" = "Subtle";

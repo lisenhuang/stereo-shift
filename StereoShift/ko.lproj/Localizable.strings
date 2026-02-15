@@ -86,7 +86,7 @@
 "Spatial-only picker requires iOS 18 or later." = "공간 전용 선택기는 iOS 18 이상에서 지원됩니다.";
 "Stop" = "중지";
 "Stop current conversion?" = "현재 변환을 중지할까요?";
-"Start Web Share" = "웹 공유 시작";
+"Start Web Share" = "로컬 네트워크 공유 시작";
 "Stop Web Share" = "웹 공유 중지";
 "Strong" = "강함";
 "Subtle" = "약함";
