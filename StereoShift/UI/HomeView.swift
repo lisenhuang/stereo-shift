@@ -21,6 +21,7 @@ struct HomeView: View {
     @AppStorage("appTheme") private var appThemeRawValue = AppTheme.system.rawValue
     @StateObject private var pipeline = StereoPipeline()
     @StateObject private var galleryLibrary = AppGalleryLibrary()
+    @StateObject private var galleryWebServer = GalleryWebServer()
     @StateObject private var subscriptionManager = SubscriptionManager()
     @State private var mode: Mode = .photo
     @State private var inputMode: InputMediaMode = .regular2D
@@ -87,7 +88,7 @@ struct HomeView: View {
                         languageMenu
 
                         NavigationLink {
-                            GalleryView(galleryLibrary: galleryLibrary)
+                            GalleryView(galleryLibrary: galleryLibrary, webServer: galleryWebServer)
                                 .navigationTitle("In-App Gallery")
                         } label: {
                             Label("Gallery", systemImage: "photo.on.rectangle.angled")

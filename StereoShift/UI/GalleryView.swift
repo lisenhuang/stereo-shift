@@ -7,7 +7,7 @@ import UIKit
 
 struct GalleryView: View {
     @ObservedObject var galleryLibrary: AppGalleryLibrary
-    @StateObject private var webServer: GalleryWebServer
+    @ObservedObject var webServer: GalleryWebServer
     @State private var selectedItem: GalleryItem?
     @State private var importPickerItem: PhotosPickerItem?
     @State private var showAddFromPhotosPrompt = false
@@ -25,11 +25,6 @@ struct GalleryView: View {
     ]
     private let initialPageSize = 120
     private let pageSize = 80
-
-    init(galleryLibrary: AppGalleryLibrary) {
-        self.galleryLibrary = galleryLibrary
-        _webServer = StateObject(wrappedValue: GalleryWebServer())
-    }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -71,9 +66,6 @@ struct GalleryView: View {
         .onChange(of: webServer.errorMessage) { _, newValue in
             guard let newValue else { return }
             errorMessage = newValue
-        }
-        .onDisappear {
-            webServer.stop()
         }
         .fileImporter(
             isPresented: $isShowingDiskImporter,
@@ -204,15 +196,37 @@ struct GalleryView: View {
                 )
 
                 if let hostAddress = webServer.hostAddress, webServer.isRunning {
-                    HStack(spacing: 4) {
-                        Text("Web share URL:")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(verbatim: hostAddress)
-                            .font(.subheadline.monospaced())
-                            .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 4) {
+                            Text("Web share URL:")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(verbatim: hostAddress)
+                                .font(.subheadline.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                        .textSelection(.enabled)
+
+                        HStack(spacing: 8) {
+                            HStack(spacing: 4) {
+                                Text("PIN:")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Text(verbatim: webServer.accessPIN)
+                                    .font(.subheadline.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+
+                            Spacer()
+
+                            Button("Reset PIN") {
+                                webServer.resetAccessPIN()
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(isClearingAll || isImporting)
+                        }
                     }
-                    .textSelection(.enabled)
                 } else if !webServer.isWiFiConnected {
                     Text("Connect to Wi-Fi to start Web Share.")
                         .font(.caption)

@@ -12,6 +12,7 @@ final class GalleryWebServer: ObservableObject {
     @Published private(set) var isWiFiConnected = false
     @Published private(set) var hostAddress: String?
     @Published private(set) var browseURL: String?
+    @Published private(set) var accessPIN: String = GalleryWebServer.loadOrCreateAccessPIN()
     @Published var errorMessage: String?
 
     private var httpListener: NWListener?
@@ -19,10 +20,15 @@ final class GalleryWebServer: ObservableObject {
     private let queue = DispatchQueue(label: "com.stereoshift.gallery-web-server", qos: .utility)
     private let pathMonitor = NWPathMonitor()
     private var holdsScreenAwakeLock = false
+    private var failedAuthAttempts = 0
+    private var authorizedSessionTokens: Set<String> = []
 
     private static let identityFilename = "WebShareIdentity"
     private static let identityExtension = "p12"
     private static let identityPassword = "StereoShiftLocalWebShare"
+    private static let accessPINDefaultsKey = "galleryWebShareAccessPIN"
+    private static let authCookieName = "stereoshift_session"
+    private static let maxFailedAuthAttempts = 10
 
     init() {
         configureNetworkMonitor()
@@ -42,10 +48,20 @@ final class GalleryWebServer: ObservableObject {
         }
     }
 
+    func resetAccessPIN() {
+        let newPIN = Self.generateAccessPIN()
+        Self.saveAccessPIN(newPIN)
+        accessPIN = newPIN
+        failedAuthAttempts = 0
+        authorizedSessionTokens.removeAll()
+    }
+
     func start() {
         guard !isRunning else { return }
 
         errorMessage = nil
+        failedAuthAttempts = 0
+        authorizedSessionTokens.removeAll()
 
         guard let hostAddress = Self.localWiFiIPv4Address() else {
             isWiFiConnected = false
@@ -83,6 +99,8 @@ final class GalleryWebServer: ObservableObject {
         httpsListener?.cancel()
         httpListener = nil
         httpsListener = nil
+        failedAuthAttempts = 0
+        authorizedSessionTokens.removeAll()
         isRunning = false
         hostAddress = nil
         browseURL = nil
@@ -194,6 +212,20 @@ final class GalleryWebServer: ObservableObject {
     }
 
     private func route(request: HTTPRequest, on connection: NWConnection) {
+        if request.path == "/auth" {
+            handleAuthenticationRequest(request: request, on: connection)
+            return
+        }
+
+        guard isAuthorized(request: request) else {
+            if request.path == "/" {
+                sendAccessPINPage(message: nil, method: request.method, on: connection)
+            } else {
+                sendRedirectResponse(to: "/", method: request.method, on: connection)
+            }
+            return
+        }
+
         switch request.path {
         case "/":
             sendDataResponse(
@@ -222,6 +254,94 @@ final class GalleryWebServer: ObservableObject {
 
             sendTextResponse(statusCode: 404, reasonPhrase: "Not Found", text: "Not found.", method: request.method, on: connection)
         }
+    }
+
+    private func handleAuthenticationRequest(request: HTTPRequest, on connection: NWConnection) {
+        let rawPIN = request.queryItems["pin"] ?? ""
+        let candidatePIN = rawPIN.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard candidatePIN.count == 4, candidatePIN.allSatisfy(\.isNumber) else {
+            sendAccessPINPage(
+                message: "Enter a valid 4-digit PIN.",
+                method: request.method,
+                on: connection
+            )
+            return
+        }
+
+        guard candidatePIN == accessPIN else {
+            failedAuthAttempts += 1
+            let remainingAttempts = max(0, Self.maxFailedAuthAttempts - failedAuthAttempts)
+
+            if remainingAttempts == 0 {
+                sendTextResponse(
+                    statusCode: 403,
+                    reasonPhrase: "Forbidden",
+                    text: "Too many incorrect PIN attempts. Web Share has stopped.",
+                    method: request.method,
+                    on: connection
+                )
+
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.stop()
+                    self.errorMessage = NSLocalizedString("Web Share stopped after 10 incorrect PIN attempts.", comment: "")
+                }
+                return
+            }
+
+            sendAccessPINPage(
+                message: "Incorrect PIN. \(remainingAttempts) attempts remaining.",
+                method: request.method,
+                on: connection
+            )
+            return
+        }
+
+        failedAuthAttempts = 0
+        let sessionToken = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        authorizedSessionTokens.insert(sessionToken)
+
+        sendRedirectResponse(
+            to: "/",
+            method: request.method,
+            headers: ["Set-Cookie": Self.authenticationCookieHeader(for: sessionToken)],
+            on: connection
+        )
+    }
+
+    private func isAuthorized(request: HTTPRequest) -> Bool {
+        guard let cookieHeader = request.headers["cookie"] else {
+            return false
+        }
+
+        for cookie in cookieHeader.split(separator: ";") {
+            let trimmedCookie = cookie.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let separator = trimmedCookie.firstIndex(of: "=") else { continue }
+
+            let name = trimmedCookie[..<separator]
+            let value = trimmedCookie[trimmedCookie.index(after: separator)...]
+            if name == Self.authCookieName {
+                return authorizedSessionTokens.contains(String(value))
+            }
+        }
+
+        return false
+    }
+
+    private func sendAccessPINPage(message: String?, method: String, on connection: NWConnection) {
+        let body = Data(Self.accessPINHTML(message: message, remainingAttempts: Self.maxFailedAuthAttempts - failedAuthAttempts).utf8)
+        sendDataResponse(
+            statusCode: 200,
+            reasonPhrase: "OK",
+            headers: [
+                "Content-Type": "text/html; charset=utf-8",
+                "Cache-Control": "no-store"
+            ],
+            body: body,
+            method: method,
+            on: connection
+        )
     }
 
     private func sendItemsJSON(request: HTTPRequest, on connection: NWConnection) {
@@ -405,11 +525,19 @@ final class GalleryWebServer: ObservableObject {
         return chunk
     }
 
-    private func sendRedirectResponse(to location: String, method: String, on connection: NWConnection) {
+    private func sendRedirectResponse(
+        to location: String,
+        method: String,
+        headers: [String: String] = [:],
+        on connection: NWConnection
+    ) {
+        var redirectHeaders = headers
+        redirectHeaders["Location"] = location
+
         sendDataResponse(
             statusCode: 301,
             reasonPhrase: "Moved Permanently",
-            headers: ["Location": location],
+            headers: redirectHeaders,
             body: Data(),
             method: method,
             on: connection
@@ -478,6 +606,31 @@ final class GalleryWebServer: ObservableObject {
         guard holdsScreenAwakeLock else { return }
         holdsScreenAwakeLock = false
         ScreenAwakeManager.shared.release()
+    }
+
+    private static func loadOrCreateAccessPIN() -> String {
+        let defaults = UserDefaults.standard
+        if let existingPIN = defaults.string(forKey: accessPINDefaultsKey),
+           existingPIN.count == 4,
+           existingPIN.allSatisfy(\.isNumber) {
+            return existingPIN
+        }
+
+        let generatedPIN = generateAccessPIN()
+        defaults.set(generatedPIN, forKey: accessPINDefaultsKey)
+        return generatedPIN
+    }
+
+    private static func saveAccessPIN(_ pin: String) {
+        UserDefaults.standard.set(pin, forKey: accessPINDefaultsKey)
+    }
+
+    private static func generateAccessPIN() -> String {
+        String(format: "%04d", Int.random(in: 0...9999))
+    }
+
+    private static func authenticationCookieHeader(for token: String) -> String {
+        "\(authCookieName)=\(token); Path=/; HttpOnly; Secure; SameSite=Lax"
     }
 
     private static func makeHTTPSParameters() throws -> NWParameters {
@@ -720,6 +873,163 @@ final class GalleryWebServer: ObservableObject {
         }
 
         return false
+    }
+
+    private static func accessPINHTML(message: String?, remainingAttempts: Int) -> String {
+        let sanitizedMessage = escapeHTML(message ?? "")
+        let messageHTML: String
+        if sanitizedMessage.isEmpty {
+            messageHTML = ""
+        } else {
+            messageHTML = "<p class=\"message\">\(sanitizedMessage)</p>"
+        }
+
+        return """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>StereoShift Web Share</title>
+  <style>
+    :root {
+      --bg: #060b1a;
+      --bg2: #0c1630;
+      --card: rgba(16, 26, 52, 0.86);
+      --card-border: rgba(130, 165, 255, 0.26);
+      --text: #eef3ff;
+      --muted: #a9bbe7;
+      --accent: #43d0ff;
+      --accent2: #8d6bff;
+      --danger: #ff8297;
+      --shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      color: var(--text);
+      font-family: "SF Pro Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: radial-gradient(circle at 18% 10%, #1a2a56 0%, transparent 36%),
+                  radial-gradient(circle at 80% 0%, #1c1742 0%, transparent 34%),
+                  linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
+    }
+
+    .card {
+      width: min(460px, 100%);
+      padding: 24px;
+      border-radius: 18px;
+      border: 1px solid var(--card-border);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: clamp(22px, 3vw, 30px);
+      font-weight: 760;
+      letter-spacing: 0.2px;
+    }
+
+    p {
+      margin: 0;
+      line-height: 1.45;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 16px;
+      font-size: 14px;
+    }
+
+    form {
+      display: grid;
+      gap: 10px;
+    }
+
+    label {
+      font-size: 13px;
+      color: #dce7ff;
+    }
+
+    input {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(146, 175, 247, 0.34);
+      background: rgba(11, 17, 35, 0.72);
+      color: var(--text);
+      font-size: 22px;
+      letter-spacing: 0.28em;
+      text-align: center;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: rgba(108, 202, 255, 0.72);
+      box-shadow: 0 0 0 3px rgba(67, 208, 255, 0.2);
+    }
+
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 16px;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 650;
+      cursor: pointer;
+      background: linear-gradient(130deg, #1fb5ff 0%, #7664ff 100%);
+      box-shadow: 0 8px 24px rgba(31, 181, 255, 0.34);
+    }
+
+    .hint {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .message {
+      margin-top: 14px;
+      color: var(--danger);
+      background: rgba(159, 19, 51, 0.28);
+      border: 1px solid rgba(255, 115, 140, 0.44);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>StereoShift Web Share</h1>
+    <p class="subtitle">Enter the 4-digit PIN shown in the app to continue.</p>
+    <form method="get" action="/auth" autocomplete="off">
+      <label for="pin">Access PIN</label>
+      <input id="pin" name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" placeholder="0000" autofocus required />
+      <button type="submit">Unlock</button>
+    </form>
+    <p class="hint">\(remainingAttempts) attempts remaining before Web Share stops.</p>
+    \(messageHTML)
+  </section>
+</body>
+</html>
+"""
+    }
+
+    private static func escapeHTML(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
     }
 
     private static let galleryHTML = """
