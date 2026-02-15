@@ -10,7 +10,7 @@ struct GalleryView: View {
     @ObservedObject var webServer: GalleryWebServer
     @ObservedObject var subscriptionManager: SubscriptionManager
     @State private var selectedItem: GalleryItem?
-    @State private var importPickerItem: PhotosPickerItem?
+    @State private var importPickerItems: [PhotosPickerItem] = []
     @State private var showAddFromPhotosPrompt = false
     @State private var isShowingPhotoImportPicker = false
     @State private var isShowingDiskImporter = false
@@ -77,7 +77,7 @@ struct GalleryView: View {
         .onChange(of: galleryLibrary.items.count) { _, _ in
             syncVisibleItemCount()
         }
-        .onChange(of: importPickerItem) { _, newValue in
+        .onChange(of: importPickerItems) { _, newValue in
             importFromPhotos(newValue)
         }
         .onChange(of: webServer.errorMessage) { _, newValue in
@@ -93,7 +93,8 @@ struct GalleryView: View {
         }
         .photosPicker(
             isPresented: $isShowingPhotoImportPicker,
-            selection: $importPickerItem,
+            selection: $importPickerItems,
+            maxSelectionCount: 0,
             matching: galleryImportPickerFilter,
             preferredItemEncoding: .current
         )
@@ -368,32 +369,37 @@ struct GalleryView: View {
         return .any(of: [.images, .videos])
     }
 
-    private func importFromPhotos(_ item: PhotosPickerItem?) {
-        guard let item else { return }
+    private func importFromPhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
         isImporting = true
         importMessageKey = nil
 
         Task {
-            do {
-                guard let mediaType = mediaType(for: item) else {
-                    throw StereoPipelineError.photoPickerDataUnavailable
+            var importedCount = 0
+
+            for item in items {
+                do {
+                    guard let mediaType = mediaType(for: item) else {
+                        continue
+                    }
+
+                    let importURL = try await temporaryImportURL(from: item, type: mediaType)
+                    defer { try? FileManager.default.removeItem(at: importURL) }
+                    _ = try await galleryLibrary.saveMedia(at: importURL, type: mediaType)
+                    importedCount += 1
+                } catch {
+                    continue
                 }
+            }
 
-                let importURL = try await temporaryImportURL(from: item, type: mediaType)
-                defer { try? FileManager.default.removeItem(at: importURL) }
-                _ = try await galleryLibrary.saveMedia(at: importURL, type: mediaType)
-
-                await MainActor.run {
-                    importPickerItem = nil
-                    isImporting = false
+            await MainActor.run {
+                importPickerItems = []
+                isImporting = false
+                if importedCount > 0 {
                     importMessageKey = "Added to In-App Gallery."
-                }
-            } catch {
-                await MainActor.run {
-                    importPickerItem = nil
-                    isImporting = false
+                } else {
                     importMessageKey = nil
-                    errorMessage = error.localizedDescription
+                    errorMessage = String(localized: "Selected files are not supported.")
                 }
             }
         }
@@ -493,6 +499,7 @@ struct GalleryView: View {
         }
         return "jpg"
     }
+
 }
 
 private struct GalleryGridItemView: View {
