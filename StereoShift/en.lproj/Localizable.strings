@@ -89,7 +89,7 @@
 "Subtle" = "Subtle";
 "Web share URL:" = "Web share URL:";
 "Web Share requires Wi-Fi connection." = "Web Share requires Wi-Fi connection.";
-"Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Web share uses local ports 80/443 and redirects HTTP to HTTPS.";
+"Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Start Web Share, then open it in a VR/AR browser to view SBS photos and videos in 3D.";
 "Restore Purchases" = "Restore Purchases";
 "Retry" = "Retry";
 "Subscription Active" = "Subscription Active";

@@ -89,7 +89,7 @@
 "Subtle" = "轻微";
 "Web share URL:" = "网页共享地址：";
 "Web Share requires Wi-Fi connection." = "网页共享需要连接 Wi-Fi。";
-"Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "网页共享使用本地 80/443 端口，并将 HTTP 重定向到 HTTPS。";
+"Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "启动网页共享后，可在 VR/AR 浏览器中访问图片和视频，并以 3D 模式观看 SBS。";
 "Restore Purchases" = "恢复购买";
 "Retry" = "重试";
 "Subscription Active" = "订阅已激活";
