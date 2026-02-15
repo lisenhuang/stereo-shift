@@ -8,6 +8,7 @@ import UIKit
 struct GalleryView: View {
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     @ObservedObject var webServer: GalleryWebServer
+    @ObservedObject var subscriptionManager: SubscriptionManager
     @State private var selectedItem: GalleryItem?
     @State private var importPickerItem: PhotosPickerItem?
     @State private var showAddFromPhotosPrompt = false
@@ -17,6 +18,7 @@ struct GalleryView: View {
     @State private var importMessageKey: LocalizedStringKey?
     @State private var isClearingAll = false
     @State private var showClearAllConfirmation = false
+    @State private var showVideoSubscriptionSheet = false
     @State private var errorMessage: String?
     @State private var visibleItemCount = 0
 
@@ -82,6 +84,9 @@ struct GalleryView: View {
         )
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
+        }
+        .sheet(isPresented: $showVideoSubscriptionSheet) {
+            VideoSubscriptionPaywallView(subscriptionManager: subscriptionManager)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
             Button("OK", role: .cancel) {
@@ -150,7 +155,7 @@ struct GalleryView: View {
 
             HStack(spacing: 8) {
                 Button {
-                    showAddFromPhotosPrompt = true
+                    requestPhotosImportAccess()
                 } label: {
                     Label("Add from Photos", systemImage: "photo.badge.plus")
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -226,6 +231,10 @@ struct GalleryView: View {
                             .controlSize(.small)
                             .disabled(isClearingAll || isImporting)
                         }
+
+                        Text("Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 } else if !webServer.isWiFiConnected {
                     Text("Connect to Wi-Fi to start Web Share.")
@@ -287,6 +296,27 @@ struct GalleryView: View {
         }
 
         visibleItemCount = min(totalCount, visibleItemCount + pageSize)
+    }
+
+    private func requestPhotosImportAccess() {
+        if subscriptionManager.canAccessVideo {
+            showAddFromPhotosPrompt = true
+            return
+        }
+
+        if !subscriptionManager.hasResolvedEntitlements {
+            Task { @MainActor in
+                await subscriptionManager.refreshEntitlements()
+                if subscriptionManager.canAccessVideo {
+                    showAddFromPhotosPrompt = true
+                } else {
+                    showVideoSubscriptionSheet = true
+                }
+            }
+            return
+        }
+
+        showVideoSubscriptionSheet = true
     }
 
     private func clearAllItems() {

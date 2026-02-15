@@ -1225,7 +1225,7 @@ final class GalleryWebServer: ObservableObject {
       border: 1px solid rgba(143, 178, 255, 0.25);
       background: rgba(14, 20, 38, 0.92);
       display: grid;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto 1fr auto;
       overflow: hidden;
       box-shadow: var(--shadow);
     }
@@ -1253,14 +1253,12 @@ final class GalleryWebServer: ObservableObject {
     }
 
     .viewer-time {
-      font-size: 12px;
-      color: #b7c8ef;
-      background: rgba(8, 15, 34, 0.55);
-      border: 1px solid rgba(130, 164, 235, 0.24);
-      border-radius: 999px;
-      padding: 4px 10px;
+      font-size: 13px;
+      color: #c7d7fb;
+      padding: 8px 12px 10px;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
+      text-align: center;
     }
 
     .viewer-time.hidden {
@@ -1284,6 +1282,10 @@ final class GalleryWebServer: ObservableObject {
       height: auto;
       display: block;
       border-radius: 10px;
+    }
+
+    .viewer-foot {
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
 
     .empty {
@@ -1391,13 +1393,15 @@ final class GalleryWebServer: ObservableObject {
     <div class="viewer">
       <div class="viewer-head">
         <div id="viewerTitle" class="viewer-title"></div>
-        <div id="viewerTime" class="viewer-time hidden">00:00 / 00:00</div>
         <div class="viewer-actions">
           <button id="vrButton" class="btn-primary">Enter VR</button>
           <button id="closeButton" class="btn-outline">Close</button>
         </div>
       </div>
       <div id="viewerBody" class="viewer-body"></div>
+      <div class="viewer-foot">
+        <div id="viewerTime" class="viewer-time hidden">00:00 / 00:00</div>
+      </div>
     </div>
   </div>
 
@@ -1466,9 +1470,7 @@ final class GalleryWebServer: ObservableObject {
       zoom: 1.0,
       rightStickSeekLatch: 0,
       rightStickButtonPressed: false,
-      lastXRFrameTimeSec: 0,
-      videoOverlayCanvas: null,
-      videoOverlayContext: null
+      lastXRFrameTimeSec: 0
     };
 
     const dialogBackdrop = document.getElementById('uiDialogBackdrop');
@@ -1977,90 +1979,6 @@ final class GalleryWebServer: ObservableObject {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mediaElement);
     }
 
-    function roundedRectPath(ctx, x, y, width, height, radius) {
-      const safeRadius = Math.max(0, Math.min(radius, Math.min(width, height) * 0.5));
-      ctx.beginPath();
-      ctx.moveTo(x + safeRadius, y);
-      ctx.lineTo(x + width - safeRadius, y);
-      ctx.arcTo(x + width, y, x + width, y + safeRadius, safeRadius);
-      ctx.lineTo(x + width, y + height - safeRadius);
-      ctx.arcTo(x + width, y + height, x + width - safeRadius, y + height, safeRadius);
-      ctx.lineTo(x + safeRadius, y + height);
-      ctx.arcTo(x, y + height, x, y + height - safeRadius, safeRadius);
-      ctx.lineTo(x, y + safeRadius);
-      ctx.arcTo(x, y, x + safeRadius, y, safeRadius);
-      ctx.closePath();
-    }
-
-    function drawXRVideoTimeForEye(ctx, label, eyeOffsetX, fullWidth, fullHeight) {
-      const eyeWidth = fullWidth * 0.5;
-      const fontSize = clamp(Math.round(fullHeight * 0.046), 20, 58);
-      const verticalPad = Math.round(fontSize * 0.44);
-      const horizontalPad = Math.round(fontSize * 0.68);
-      const cornerRadius = Math.round(fontSize * 0.55);
-
-      ctx.save();
-      ctx.font = `600 ${fontSize}px -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-
-      const textWidth = Math.ceil(ctx.measureText(label).width);
-      const badgeWidth = Math.min(eyeWidth * 0.88, textWidth + horizontalPad * 2);
-      const badgeHeight = fontSize + verticalPad * 2;
-      const badgeX = eyeOffsetX + ((eyeWidth - badgeWidth) * 0.5);
-      const badgeY = fullHeight - badgeHeight - Math.max(16, Math.round(fullHeight * 0.028));
-
-      roundedRectPath(ctx, badgeX, badgeY, badgeWidth, badgeHeight, cornerRadius);
-      ctx.fillStyle = 'rgba(7, 12, 24, 0.66)';
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.26)';
-      ctx.lineWidth = Math.max(1, Math.round(fontSize * 0.07));
-      ctx.stroke();
-
-      const textX = eyeOffsetX + (eyeWidth * 0.5);
-      const textY = badgeY + (badgeHeight * 0.5);
-      ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-      ctx.shadowBlur = Math.max(2, Math.round(fontSize * 0.24));
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.98)';
-      ctx.fillText(label, textX, textY);
-      ctx.restore();
-    }
-
-    function xrVideoTextureSourceWithTime(video) {
-      const width = video.videoWidth || 0;
-      const height = video.videoHeight || 0;
-      if (width <= 0 || height <= 0) {
-        return video;
-      }
-
-      if (
-        !xrRuntime.videoOverlayCanvas ||
-        xrRuntime.videoOverlayCanvas.width !== width ||
-        xrRuntime.videoOverlayCanvas.height !== height
-      ) {
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        xrRuntime.videoOverlayCanvas = canvas;
-        xrRuntime.videoOverlayContext = canvas.getContext('2d', { alpha: false, desynchronized: true });
-      }
-
-      const canvas = xrRuntime.videoOverlayCanvas;
-      const ctx = xrRuntime.videoOverlayContext;
-      if (!canvas || !ctx) {
-        return video;
-      }
-
-      ctx.clearRect(0, 0, width, height);
-      ctx.drawImage(video, 0, 0, width, height);
-
-      const timeLabel = `${formatVideoTime(video.currentTime || 0)} / ${formatVideoTime(video.duration)}`;
-      drawXRVideoTimeForEye(ctx, timeLabel, 0, width, height);
-      drawXRVideoTimeForEye(ctx, timeLabel, width * 0.5, width, height);
-
-      return canvas;
-    }
-
     function drawEye(gl, eye, mvpMatrix) {
       gl.useProgram(xrRuntime.program);
 
@@ -2102,8 +2020,7 @@ final class GalleryWebServer: ObservableObject {
       gl.disable(gl.CULL_FACE);
 
       if (xrRuntime.sourceType === 'video' && xrRuntime.mediaElement && xrRuntime.mediaElement.readyState >= 2) {
-        const videoTextureSource = xrVideoTextureSourceWithTime(xrRuntime.mediaElement);
-        uploadMediaTexture(gl, xrRuntime.texture, videoTextureSource);
+        uploadMediaTexture(gl, xrRuntime.texture, xrRuntime.mediaElement);
         updateVideoTimeLabel(xrRuntime.mediaElement);
       }
 
@@ -2212,8 +2129,6 @@ final class GalleryWebServer: ObservableObject {
         xrRuntime.rightStickSeekLatch = 0;
         xrRuntime.rightStickButtonPressed = false;
         xrRuntime.lastXRFrameTimeSec = 0;
-        xrRuntime.videoOverlayCanvas = null;
-        xrRuntime.videoOverlayContext = null;
 
         session.addEventListener('end', stopXRPlayback);
         session.requestAnimationFrame(onXRFrame);
@@ -2254,8 +2169,6 @@ final class GalleryWebServer: ObservableObject {
       xrRuntime.rightStickSeekLatch = 0;
       xrRuntime.rightStickButtonPressed = false;
       xrRuntime.lastXRFrameTimeSec = 0;
-      xrRuntime.videoOverlayCanvas = null;
-      xrRuntime.videoOverlayContext = null;
 
       if (previewVideoElement) {
         updateVideoTimeLabel(previewVideoElement);

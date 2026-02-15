@@ -88,7 +88,11 @@ struct HomeView: View {
                         languageMenu
 
                         NavigationLink {
-                            GalleryView(galleryLibrary: galleryLibrary, webServer: galleryWebServer)
+                            GalleryView(
+                                galleryLibrary: galleryLibrary,
+                                webServer: galleryWebServer,
+                                subscriptionManager: subscriptionManager
+                            )
                                 .navigationTitle("In-App Gallery")
                         } label: {
                             Label("Gallery", systemImage: "photo.on.rectangle.angled")
