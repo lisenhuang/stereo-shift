@@ -38,24 +38,8 @@ struct VideoFlowView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            PhotosPicker(selection: $selectedItem, matching: videoPickerFilter, preferredItemEncoding: .current) {
-                Label(pickerButtonTitle, systemImage: "video")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
-
-            if supportsDesktopFileImport {
-                Button {
-                    showFileImporter = true
-                } label: {
-                    Label(filePickerButtonTitle, systemImage: "folder")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.large)
-                .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
+            if sourceVideoURL == nil {
+                pickerControls
             }
 
             if isLoadingSelection {
@@ -65,6 +49,7 @@ struct VideoFlowView: View {
 
             if let sourceVideoURL {
                 ResultPreviewView(title: "Input", media: .video(sourceVideoURL), allowsFullscreenPreview: true)
+                pickerControls
             }
 
             controlsCard
@@ -602,15 +587,32 @@ struct VideoFlowView: View {
         return "Strong"
     }
 
+    private var pickerControls: some View {
+        VStack(spacing: 10) {
+            PhotosPicker(selection: $selectedItem, matching: videoPickerFilter, preferredItemEncoding: .current) {
+                Label(pickerButtonTitle, systemImage: "video")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
+
+            if supportsDesktopFileImport {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label(filePickerButtonTitle, systemImage: "folder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
+            }
+        }
+    }
+
     private var controlsCard: some View {
         VStack(spacing: 14) {
-            Picker("Input", selection: $inputMode) {
-                ForEach(InputMediaMode.allCases) { mode in
-                    Text(mode.titleKey).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
             if inputMode == .regular2D {
                 HStack {
                     Text("3D Strength")

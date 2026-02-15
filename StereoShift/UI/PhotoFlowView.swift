@@ -583,13 +583,6 @@ struct PhotoFlowView: View {
 
     private var controlsCard: some View {
         VStack(spacing: 14) {
-            Picker("Input", selection: $inputMode) {
-                ForEach(InputMediaMode.allCases) { mode in
-                    Text(mode.titleKey).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-
             if inputMode == .regular2D {
                 HStack {
                     Text("3D Strength")

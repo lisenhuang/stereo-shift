@@ -37,6 +37,7 @@ struct HomeView: View {
                     VStack(spacing: 20) {
                         headerCard
                         modePicker
+                        inputModePicker
 
                         if mode == .photo {
                             PhotoFlowView(
@@ -117,6 +118,18 @@ struct HomeView: View {
         Picker("Mode", selection: modeSelection) {
             ForEach(Mode.allCases) { mode in
                 Text(mode.titleKey).tag(mode)
+            }
+        }
+        .pickerStyle(.segmented)
+        .disabled(isProcessing)
+        .padding(6)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var inputModePicker: some View {
+        Picker("Input", selection: $inputMode) {
+            ForEach(InputMediaMode.allCases) { inputMode in
+                Text(inputMode.titleKey).tag(inputMode)
             }
         }
         .pickerStyle(.segmented)
