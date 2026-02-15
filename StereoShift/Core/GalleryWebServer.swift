@@ -1463,6 +1463,14 @@ final class GalleryWebServer: ObservableObject {
       mvpLocation: null,
       vertexCount: 0,
       texture: null,
+      overlayPositionBuffer: null,
+      overlayTexCoordBuffer: null,
+      overlayVertexCount: 0,
+      overlayTexture: null,
+      overlayCanvas: null,
+      overlayContext: null,
+      overlayNeedsUpload: false,
+      overlayLastText: '',
       mediaElement: null,
       sourceType: null,
       modelMatrix: null,
@@ -1717,6 +1725,83 @@ final class GalleryWebServer: ObservableObject {
       return Math.sign(value) * normalized;
     }
 
+    function quadPositions(halfWidth, halfHeight, centerY = 0) {
+      const top = centerY + halfHeight;
+      const bottom = centerY - halfHeight;
+      return new Float32Array([
+        -halfWidth, bottom, 0,
+         halfWidth, bottom, 0,
+        -halfWidth, top, 0,
+         halfWidth, bottom, 0,
+         halfWidth, top, 0,
+        -halfWidth, top, 0
+      ]);
+    }
+
+    function drawRoundedRectPath(context, x, y, width, height, radius) {
+      const r = Math.max(0, Math.min(radius, width * 0.5, height * 0.5));
+      context.beginPath();
+      context.moveTo(x + r, y);
+      context.lineTo(x + width - r, y);
+      context.arcTo(x + width, y, x + width, y + r, r);
+      context.lineTo(x + width, y + height - r);
+      context.arcTo(x + width, y + height, x + width - r, y + height, r);
+      context.lineTo(x + r, y + height);
+      context.arcTo(x, y + height, x, y + height - r, r);
+      context.lineTo(x, y + r);
+      context.arcTo(x, y, x + r, y, r);
+      context.closePath();
+    }
+
+    function renderStereoTimeOverlay(canvas, context, labelText) {
+      const width = canvas.width;
+      const height = canvas.height;
+      const half = width * 0.5;
+      context.clearRect(0, 0, width, height);
+
+      const insetX = Math.round(half * 0.075);
+      const insetY = Math.round(height * 0.13);
+      const panelWidth = Math.round(half - (insetX * 2));
+      const panelHeight = Math.round(height - (insetY * 2));
+      const radius = Math.round(Math.min(panelHeight * 0.44, 30));
+      const text = labelText && labelText.trim().length > 0 ? labelText : '00:00 / 00:00';
+
+      for (let panel = 0; panel < 2; panel += 1) {
+        const x = panel * half + insetX;
+        const y = insetY;
+
+        drawRoundedRectPath(context, x, y, panelWidth, panelHeight, radius);
+        context.fillStyle = 'rgba(4, 10, 22, 0.66)';
+        context.fill();
+
+        drawRoundedRectPath(context, x, y, panelWidth, panelHeight, radius);
+        context.strokeStyle = 'rgba(188, 211, 255, 0.7)';
+        context.lineWidth = 3;
+        context.stroke();
+
+        context.font = '700 48px "SF Pro Text", "Segoe UI", sans-serif';
+        context.textAlign = 'center';
+        context.textBaseline = 'middle';
+        context.fillStyle = '#eaf2ff';
+        context.fillText(text, x + (panelWidth * 0.5), y + (panelHeight * 0.5));
+      }
+    }
+
+    function updateXRVideoTimeOverlay(labelText) {
+      if (!xrRuntime.overlayCanvas || !xrRuntime.overlayContext) {
+        return;
+      }
+
+      const nextText = labelText && labelText.trim().length > 0 ? labelText : '00:00 / 00:00';
+      if (xrRuntime.overlayLastText === nextText) {
+        return;
+      }
+
+      renderStereoTimeOverlay(xrRuntime.overlayCanvas, xrRuntime.overlayContext, nextText);
+      xrRuntime.overlayLastText = nextText;
+      xrRuntime.overlayNeedsUpload = true;
+    }
+
     function formatVideoTime(seconds) {
       if (!Number.isFinite(seconds) || seconds < 0) {
         return '--:--';
@@ -1755,7 +1840,9 @@ final class GalleryWebServer: ObservableObject {
       showVideoTimeLabel();
       const current = formatVideoTime(video.currentTime || 0);
       const total = formatVideoTime(video.duration);
-      viewerTime.textContent = `${current} / ${total}`;
+      const labelText = `${current} / ${total}`;
+      viewerTime.textContent = labelText;
+      updateXRVideoTimeOverlay(labelText);
     }
 
     function seekVideoBy(secondsDelta) {
@@ -1919,20 +2006,28 @@ final class GalleryWebServer: ObservableObject {
       const planeWidth = Math.max(1.2, Math.min(4.2, planeHeight * safeAspect));
       const halfWidth = planeWidth * 0.5;
       const halfHeight = planeHeight * 0.5;
+      const overlayWidth = Math.max(1.24, Math.min(3.3, planeWidth * 0.68));
+      const overlayHeight = Math.max(0.22, Math.min(0.36, planeHeight * 0.13));
+      const overlayCenterY = -halfHeight - 0.18 - (overlayHeight * 0.5);
 
       const program = createProgram(gl, vertexShader, fragmentShader);
       const positionBuffer = gl.createBuffer();
       const texCoordBuffer = gl.createBuffer();
       const texture = gl.createTexture();
+      const overlayPositionBuffer = gl.createBuffer();
+      const overlayTexCoordBuffer = gl.createBuffer();
+      const overlayTexture = gl.createTexture();
+      const overlayCanvas = document.createElement('canvas');
+      overlayCanvas.width = 1024;
+      overlayCanvas.height = 160;
+      const overlayContext = overlayCanvas.getContext('2d');
 
-      const positions = new Float32Array([
-        -halfWidth, -halfHeight, 0,
-         halfWidth, -halfHeight, 0,
-        -halfWidth,  halfHeight, 0,
-         halfWidth, -halfHeight, 0,
-         halfWidth,  halfHeight, 0,
-        -halfWidth,  halfHeight, 0
-      ]);
+      if (!positionBuffer || !texCoordBuffer || !texture || !overlayPositionBuffer || !overlayTexCoordBuffer || !overlayTexture || !overlayContext) {
+        throw new Error('Unable to allocate XR renderer resources.');
+      }
+
+      const positions = quadPositions(halfWidth, halfHeight, 0);
+      const overlayPositions = quadPositions(overlayWidth * 0.5, overlayHeight * 0.5, overlayCenterY);
 
       const texCoords = new Float32Array([
         0, 0, 1, 0, 0, 1,
@@ -1952,17 +2047,38 @@ final class GalleryWebServer: ObservableObject {
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
       gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
 
+      gl.bindBuffer(gl.ARRAY_BUFFER, overlayPositionBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, overlayPositions, gl.STATIC_DRAW);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, overlayTexCoordBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, texCoords, gl.STATIC_DRAW);
+
+      gl.bindTexture(gl.TEXTURE_2D, overlayTexture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+
       const positionLocation = gl.getAttribLocation(program, 'a_position');
       const texCoordLocation = gl.getAttribLocation(program, 'a_texCoord');
       const textureLocation = gl.getUniformLocation(program, 'u_texture');
       const eyeLocation = gl.getUniformLocation(program, 'u_eye');
       const mvpLocation = gl.getUniformLocation(program, 'u_mvp');
 
+      renderStereoTimeOverlay(overlayCanvas, overlayContext, '00:00 / 00:00');
+
       return {
         program,
         positionBuffer,
         texCoordBuffer,
         texture,
+        overlayPositionBuffer,
+        overlayTexCoordBuffer,
+        overlayVertexCount: 6,
+        overlayTexture,
+        overlayCanvas,
+        overlayContext,
+        overlayNeedsUpload: true,
         positionLocation,
         texCoordLocation,
         textureLocation,
@@ -1979,14 +2095,14 @@ final class GalleryWebServer: ObservableObject {
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, mediaElement);
     }
 
-    function drawEye(gl, eye, mvpMatrix) {
+    function drawTexturedPlane(gl, eye, mvpMatrix, positionBuffer, texCoordBuffer, texture, vertexCount) {
       gl.useProgram(xrRuntime.program);
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, xrRuntime.positionBuffer);
+      gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
       gl.enableVertexAttribArray(xrRuntime.positionLocation);
       gl.vertexAttribPointer(xrRuntime.positionLocation, 3, gl.FLOAT, false, 0, 0);
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, xrRuntime.texCoordBuffer);
+      gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
       gl.enableVertexAttribArray(xrRuntime.texCoordLocation);
       gl.vertexAttribPointer(xrRuntime.texCoordLocation, 2, gl.FLOAT, false, 0, 0);
 
@@ -1995,9 +2111,9 @@ final class GalleryWebServer: ObservableObject {
       gl.uniformMatrix4fv(xrRuntime.mvpLocation, false, mvpMatrix);
 
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, xrRuntime.texture);
+      gl.bindTexture(gl.TEXTURE_2D, texture);
 
-      gl.drawArrays(gl.TRIANGLES, 0, xrRuntime.vertexCount);
+      gl.drawArrays(gl.TRIANGLES, 0, vertexCount);
     }
 
     function onXRFrame(_time, frame) {
@@ -2024,6 +2140,11 @@ final class GalleryWebServer: ObservableObject {
         updateVideoTimeLabel(xrRuntime.mediaElement);
       }
 
+      if (xrRuntime.sourceType === 'video' && xrRuntime.overlayNeedsUpload && xrRuntime.overlayCanvas && xrRuntime.overlayTexture) {
+        uploadMediaTexture(gl, xrRuntime.overlayTexture, xrRuntime.overlayCanvas);
+        xrRuntime.overlayNeedsUpload = false;
+      }
+
       for (const view of pose.views) {
         const viewport = baseLayer.getViewport(view);
         if (!viewport) {
@@ -2041,7 +2162,27 @@ final class GalleryWebServer: ObservableObject {
         const mvpMatrix = mat4Multiply(projectionMatrix, modelViewMatrix);
 
         gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
-        drawEye(gl, eye, mvpMatrix);
+        drawTexturedPlane(
+          gl,
+          eye,
+          mvpMatrix,
+          xrRuntime.positionBuffer,
+          xrRuntime.texCoordBuffer,
+          xrRuntime.texture,
+          xrRuntime.vertexCount
+        );
+
+        if (xrRuntime.sourceType === 'video' && xrRuntime.overlayTexture) {
+          drawTexturedPlane(
+            gl,
+            eye,
+            mvpMatrix,
+            xrRuntime.overlayPositionBuffer,
+            xrRuntime.overlayTexCoordBuffer,
+            xrRuntime.overlayTexture,
+            xrRuntime.overlayVertexCount
+          );
+        }
       }
     }
 
@@ -2114,6 +2255,8 @@ final class GalleryWebServer: ObservableObject {
         xrRuntime.program = renderer.program;
         xrRuntime.positionBuffer = renderer.positionBuffer;
         xrRuntime.texCoordBuffer = renderer.texCoordBuffer;
+        xrRuntime.overlayPositionBuffer = renderer.overlayPositionBuffer;
+        xrRuntime.overlayTexCoordBuffer = renderer.overlayTexCoordBuffer;
         xrRuntime.positionLocation = renderer.positionLocation;
         xrRuntime.texCoordLocation = renderer.texCoordLocation;
         xrRuntime.textureLocation = renderer.textureLocation;
@@ -2121,6 +2264,12 @@ final class GalleryWebServer: ObservableObject {
         xrRuntime.mvpLocation = renderer.mvpLocation;
         xrRuntime.vertexCount = renderer.vertexCount;
         xrRuntime.texture = renderer.texture;
+        xrRuntime.overlayVertexCount = renderer.overlayVertexCount;
+        xrRuntime.overlayTexture = renderer.overlayTexture;
+        xrRuntime.overlayCanvas = renderer.overlayCanvas;
+        xrRuntime.overlayContext = renderer.overlayContext;
+        xrRuntime.overlayNeedsUpload = renderer.overlayNeedsUpload;
+        xrRuntime.overlayLastText = '';
         xrRuntime.mediaElement = source.element;
         xrRuntime.sourceType = source.type;
         xrRuntime.modelMatrix = renderer.modelMatrix;
@@ -2129,6 +2278,10 @@ final class GalleryWebServer: ObservableObject {
         xrRuntime.rightStickSeekLatch = 0;
         xrRuntime.rightStickButtonPressed = false;
         xrRuntime.lastXRFrameTimeSec = 0;
+
+        if (source.type === 'video') {
+          updateVideoTimeLabel(source.element);
+        }
 
         session.addEventListener('end', stopXRPlayback);
         session.requestAnimationFrame(onXRFrame);
@@ -2154,6 +2307,8 @@ final class GalleryWebServer: ObservableObject {
       xrRuntime.program = null;
       xrRuntime.positionBuffer = null;
       xrRuntime.texCoordBuffer = null;
+      xrRuntime.overlayPositionBuffer = null;
+      xrRuntime.overlayTexCoordBuffer = null;
       xrRuntime.positionLocation = null;
       xrRuntime.texCoordLocation = null;
       xrRuntime.textureLocation = null;
@@ -2161,6 +2316,12 @@ final class GalleryWebServer: ObservableObject {
       xrRuntime.mvpLocation = null;
       xrRuntime.vertexCount = 0;
       xrRuntime.texture = null;
+      xrRuntime.overlayVertexCount = 0;
+      xrRuntime.overlayTexture = null;
+      xrRuntime.overlayCanvas = null;
+      xrRuntime.overlayContext = null;
+      xrRuntime.overlayNeedsUpload = false;
+      xrRuntime.overlayLastText = '';
       xrRuntime.mediaElement = null;
       xrRuntime.sourceType = null;
       xrRuntime.modelMatrix = null;
