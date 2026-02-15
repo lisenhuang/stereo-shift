@@ -3,7 +3,9 @@ import SwiftUI
 enum AppLanguage: String, CaseIterable, Identifiable {
     case system
     case english
+    case spanish
     case simplifiedChinese
+    case japanese
     case korean
 
     var id: String { rawValue }
@@ -14,8 +16,12 @@ enum AppLanguage: String, CaseIterable, Identifiable {
             return Self.systemLocale()
         case .english:
             return Locale(identifier: "en")
+        case .spanish:
+            return Locale(identifier: "es")
         case .simplifiedChinese:
             return Locale(identifier: "zh-Hans")
+        case .japanese:
+            return Locale(identifier: "ja")
         case .korean:
             return Locale(identifier: "ko")
         }
@@ -27,8 +33,12 @@ enum AppLanguage: String, CaseIterable, Identifiable {
             return "Follow System"
         case .english:
             return "English"
+        case .spanish:
+            return "Español"
         case .simplifiedChinese:
             return "简体中文"
+        case .japanese:
+            return "日本語"
         case .korean:
             return "한국어"
         }
@@ -41,6 +51,12 @@ enum AppLanguage: String, CaseIterable, Identifiable {
 
         if preferred.hasPrefix("zh") {
             return Locale(identifier: "zh-Hans")
+        }
+        if preferred.hasPrefix("es") {
+            return Locale(identifier: "es")
+        }
+        if preferred.hasPrefix("ja") {
+            return Locale(identifier: "ja")
         }
         if preferred.hasPrefix("ko") {
             return Locale(identifier: "ko")
