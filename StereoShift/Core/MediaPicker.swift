@@ -99,14 +99,91 @@ enum MediaPicker {
             throw StereoPipelineError.spatialImagePairUnavailable
         }
 
+        let (leftIndex, rightIndex) = spatialStereoIndices(from: source, imageCount: imageCount)
+
         guard
-            let left = CGImageSourceCreateImageAtIndex(source, 0, nil),
-            let right = CGImageSourceCreateImageAtIndex(source, 1, nil)
+            let left = CGImageSourceCreateImageAtIndex(source, leftIndex, nil),
+            let right = CGImageSourceCreateImageAtIndex(source, rightIndex, nil)
         else {
             throw StereoPipelineError.spatialImagePairUnavailable
         }
 
         return StereoImagePair(left: left, right: right)
+    }
+
+    private static func spatialStereoIndices(from source: CGImageSource, imageCount: Int) -> (left: Int, right: Int) {
+        let defaultPair = (left: 0, right: 1)
+
+        if
+            let allProperties = CGImageSourceCopyProperties(source, nil) as? [CFString: Any],
+            let groupEntries = allProperties[kCGImagePropertyGroups] as? [[CFString: Any]]
+        {
+            for group in groupEntries {
+                guard let groupType = group[kCGImagePropertyGroupType] as? String else {
+                    continue
+                }
+                guard groupType == (kCGImagePropertyGroupTypeStereoPair as String) else {
+                    continue
+                }
+
+                if
+                    let leftIndexNumber = group[kCGImagePropertyGroupImageIndexLeft] as? NSNumber,
+                    let rightIndexNumber = group[kCGImagePropertyGroupImageIndexRight] as? NSNumber
+                {
+                    let leftIndex = leftIndexNumber.intValue
+                    let rightIndex = rightIndexNumber.intValue
+                    if isValidStereoIndexPair(left: leftIndex, right: rightIndex, imageCount: imageCount) {
+                        return (left: leftIndex, right: rightIndex)
+                    }
+                }
+            }
+        }
+
+        var leftByFlag: Int?
+        var rightByFlag: Int?
+
+        for index in 0..<imageCount {
+            guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any] else {
+                continue
+            }
+
+            let isLeft = boolValue(from: properties[kCGImagePropertyGroupImageIsLeftImage])
+            let isRight = boolValue(from: properties[kCGImagePropertyGroupImageIsRightImage])
+
+            if isLeft, leftByFlag == nil {
+                leftByFlag = index
+            }
+            if isRight, rightByFlag == nil {
+                rightByFlag = index
+            }
+
+            if let leftByFlag, let rightByFlag,
+               isValidStereoIndexPair(left: leftByFlag, right: rightByFlag, imageCount: imageCount) {
+                return (left: leftByFlag, right: rightByFlag)
+            }
+        }
+
+        return defaultPair
+    }
+
+    private static func isValidStereoIndexPair(left: Int, right: Int, imageCount: Int) -> Bool {
+        guard left >= 0, right >= 0 else {
+            return false
+        }
+        guard left < imageCount, right < imageCount else {
+            return false
+        }
+        return left != right
+    }
+
+    private static func boolValue(from value: Any?) -> Bool {
+        if let bool = value as? Bool {
+            return bool
+        }
+        if let number = value as? NSNumber {
+            return number.boolValue
+        }
+        return false
     }
 
     private static func normalizedCGImage(from image: UIImage) -> CGImage? {

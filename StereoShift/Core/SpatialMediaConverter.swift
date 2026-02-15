@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import CoreImage
 import CoreVideo
 import Foundation
@@ -13,6 +14,11 @@ enum SpatialMediaConverter {
         let presentationTime: CMTime
         let sbsFrame: CVPixelBuffer
         let processedSeconds: Double
+    }
+
+    private enum StereoEye {
+        case left
+        case right
     }
 
     static func makeSBSImage(from pair: StereoImagePair) throws -> CGImage {
@@ -395,6 +401,7 @@ enum SpatialMediaConverter {
     ) throws -> (leftLayerID: Int, rightLayerID: Int)? {
         let candidateLayerIDs = [0, 1, 2, 3]
         var discovered: [Int] = []
+        var detectedLayerForEye: [StereoEye: Int] = [:]
 
         for layerID in candidateLayerIDs {
             let reader = try AVAssetReader(asset: asset)
@@ -408,8 +415,32 @@ enum SpatialMediaConverter {
                 continue
             }
 
-            if output.copyNextSampleBuffer() != nil {
+            if let sampleBuffer = output.copyNextSampleBuffer() {
                 discovered.append(layerID)
+
+                if let taggedBuffers = sampleBuffer.taggedBuffers {
+                    for taggedBuffer in taggedBuffers {
+                        guard let eye = stereoEye(from: taggedBuffer.tags) else {
+                            continue
+                        }
+
+                        if let taggedLayerID = videoLayerID(from: taggedBuffer.tags) {
+                            detectedLayerForEye[eye] = taggedLayerID
+                        } else {
+                            detectedLayerForEye[eye] = layerID
+                        }
+                    }
+                }
+
+                if
+                    let leftLayerID = detectedLayerForEye[.left],
+                    let rightLayerID = detectedLayerForEye[.right],
+                    leftLayerID != rightLayerID
+                {
+                    reader.cancelReading()
+                    return (leftLayerID: leftLayerID, rightLayerID: rightLayerID)
+                }
+
                 if discovered.count >= 2 {
                     reader.cancelReading()
                     break
@@ -431,23 +462,90 @@ enum SpatialMediaConverter {
             throw StereoPipelineError.spatialViewsUnavailable
         }
 
-        var views: [CVPixelBuffer] = []
-        views.reserveCapacity(2)
+        var taggedEntries: [(pixelBuffer: CVPixelBuffer, eye: StereoEye?, isOrderReversed: Bool)] = []
+        taggedEntries.reserveCapacity(2)
 
         for taggedBuffer in taggedBuffers {
             if let pixelBuffer = pixelBuffer(from: taggedBuffer) {
-                views.append(pixelBuffer)
-                if views.count >= 2 {
-                    break
-                }
+                let eye = stereoEye(from: taggedBuffer.tags)
+                let isOrderReversed = hasStereoOrderReversedTag(in: taggedBuffer.tags)
+                taggedEntries.append((pixelBuffer: pixelBuffer, eye: eye, isOrderReversed: isOrderReversed))
             }
         }
 
-        guard views.count >= 2 else {
+        guard taggedEntries.count >= 2 else {
             throw StereoPipelineError.spatialViewsUnavailable
         }
 
-        return (left: views[0], right: views[1])
+        let leftTagged = taggedEntries.first(where: { $0.eye == .left })?.pixelBuffer
+        let rightTagged = taggedEntries.first(where: { $0.eye == .right })?.pixelBuffer
+
+        if let leftTagged, let rightTagged {
+            return (left: leftTagged, right: rightTagged)
+        }
+
+        if let leftTagged, rightTagged == nil {
+            if let fallbackRight = taggedEntries.first(where: { $0.eye != .left })?.pixelBuffer {
+                return (left: leftTagged, right: fallbackRight)
+            }
+        }
+
+        if leftTagged == nil, let rightTagged {
+            if let fallbackLeft = taggedEntries.first(where: { $0.eye != .right })?.pixelBuffer {
+                return (left: fallbackLeft, right: rightTagged)
+            }
+        }
+
+        if taggedEntries.contains(where: { $0.isOrderReversed }) {
+            return (left: taggedEntries[1].pixelBuffer, right: taggedEntries[0].pixelBuffer)
+        }
+
+        return (left: taggedEntries[0].pixelBuffer, right: taggedEntries[1].pixelBuffer)
+    }
+
+    private static func stereoEye(from tags: [CMTag]) -> StereoEye? {
+        for tag in tags {
+            guard let components = tag.value(onlyIfMatching: CMTypedTag<CMStereoViewComponents>.Category.stereoView) else {
+                continue
+            }
+
+            let hasLeft = components.contains(.leftEye)
+            let hasRight = components.contains(.rightEye)
+
+            if hasLeft, !hasRight {
+                return .left
+            }
+
+            if hasRight, !hasLeft {
+                return .right
+            }
+        }
+
+        return nil
+    }
+
+    private static func videoLayerID(from tags: [CMTag]) -> Int? {
+        for tag in tags {
+            if let layerID = tag.value(onlyIfMatching: CMTypedTag<Int64>.Category.videoLayerID) {
+                return Int(layerID)
+            }
+        }
+
+        return nil
+    }
+
+    private static func hasStereoOrderReversedTag(in tags: [CMTag]) -> Bool {
+        for tag in tags {
+            guard let interpretation = tag.value(onlyIfMatching: CMTypedTag<CMStereoViewInterpretationOptions>.Category.stereoViewInterpretation) else {
+                continue
+            }
+
+            if interpretation.contains(.stereoOrderReversed) {
+                return true
+            }
+        }
+
+        return false
     }
 
     private static func pixelBuffer(from taggedBuffer: CMTaggedBuffer) -> CVPixelBuffer? {
