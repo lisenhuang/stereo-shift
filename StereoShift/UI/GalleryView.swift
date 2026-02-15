@@ -22,9 +22,20 @@ struct GalleryView: View {
     @State private var errorMessage: String?
     @State private var visibleItemCount = 0
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 150), spacing: 12, alignment: .top)
-    ]
+    private static let gridCardWidth: CGFloat = 170
+    private static let gridCardHeight: CGFloat = 210
+    private static let gridThumbnailSide: CGFloat = 150
+    private static let gridSpacing: CGFloat = 12
+
+    private var columns: [GridItem] {
+        [
+            GridItem(
+                .adaptive(minimum: Self.gridCardWidth, maximum: Self.gridCardWidth),
+                spacing: Self.gridSpacing,
+                alignment: .top
+            )
+        ]
+    }
     private let initialPageSize = 120
     private let pageSize = 80
 
@@ -36,12 +47,16 @@ struct GalleryView: View {
                 emptyState
             } else {
                 ScrollView {
-                    LazyVGrid(columns: columns, spacing: 12) {
+                    LazyVGrid(columns: columns, spacing: Self.gridSpacing) {
                         ForEach(visibleItems) { item in
                             Button {
                                 selectedItem = item
                             } label: {
-                                GalleryGridItemView(item: item)
+                                GalleryGridItemView(
+                                    item: item,
+                                    thumbnailSide: Self.gridThumbnailSide,
+                                    cardHeight: Self.gridCardHeight
+                                )
                             }
                             .buttonStyle(.plain)
                             .onAppear {
@@ -482,11 +497,13 @@ struct GalleryView: View {
 
 private struct GalleryGridItemView: View {
     let item: GalleryItem
+    let thumbnailSide: CGFloat
+    let cardHeight: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             GalleryThumbnailView(item: item)
-                .frame(height: 120)
+                .frame(width: thumbnailSide, height: thumbnailSide)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
@@ -496,17 +513,20 @@ private struct GalleryGridItemView: View {
             if item.type == .image {
                 Text("Photo")
                     .font(.subheadline.bold())
+                    .lineLimit(1)
             } else {
                 Text("Video")
                     .font(.subheadline.bold())
+                    .lineLimit(1)
             }
 
             Text(item.createdAt, format: .dateTime.year().month(.abbreviated).day().hour().minute())
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: cardHeight, maxHeight: cardHeight, alignment: .topLeading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
@@ -538,6 +558,7 @@ private struct GalleryThumbnailView: View {
                     }
             }
         }
+        .clipped()
         .task(id: item.id) {
             await loadThumbnail()
         }
