@@ -1,3 +1,5 @@
+import AVFoundation
+import CoreVideo
 import Foundation
 import ImageIO
 import PhotosUI
@@ -24,8 +26,17 @@ struct StereoImagePair {
     let right: CGImage
 }
 
+struct PickedPhoto {
+    let image: CGImage
+    let embeddedDepth: CVPixelBuffer?
+}
+
 enum MediaPicker {
     static func loadPhoto(from item: PhotosPickerItem) async throws -> CGImage {
+        try await loadPhotoWithEmbeddedDepth(from: item).image
+    }
+
+    static func loadPhotoWithEmbeddedDepth(from item: PhotosPickerItem) async throws -> PickedPhoto {
         guard let data = try await item.loadTransferable(type: Data.self) else {
             throw StereoPipelineError.photoPickerDataUnavailable
         }
@@ -34,10 +45,15 @@ enum MediaPicker {
             throw StereoPipelineError.photoDecodingFailed
         }
 
-        return cgImage
+        let embeddedDepth = embeddedDepthClosenessMap(from: data, uiOrientation: image.imageOrientation)
+        return PickedPhoto(image: cgImage, embeddedDepth: embeddedDepth)
     }
 
     static func loadPhoto(fromFileURL url: URL) throws -> CGImage {
+        try loadPhotoWithEmbeddedDepth(fromFileURL: url).image
+    }
+
+    static func loadPhotoWithEmbeddedDepth(fromFileURL url: URL) throws -> PickedPhoto {
         let data = try withSecurityScopedAccess(to: url) {
             try Data(contentsOf: url)
         }
@@ -46,7 +62,8 @@ enum MediaPicker {
             throw StereoPipelineError.photoDecodingFailed
         }
 
-        return cgImage
+        let embeddedDepth = embeddedDepthClosenessMap(from: data, uiOrientation: image.imageOrientation)
+        return PickedPhoto(image: cgImage, embeddedDepth: embeddedDepth)
     }
 
     static func loadVideoURL(from item: PhotosPickerItem) async throws -> URL {
@@ -201,6 +218,179 @@ enum MediaPicker {
         }
 
         return normalized.cgImage
+    }
+
+    private static func embeddedDepthClosenessMap(from data: Data, uiOrientation: UIImage.Orientation) -> CVPixelBuffer? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return nil
+        }
+
+        let orientation = cgImageOrientation(from: uiOrientation)
+
+        let candidates: [(type: CFString, invert: Bool, targetType: OSType)] = [
+            (kCGImageAuxiliaryDataTypeDisparity, false, kCVPixelFormatType_DisparityFloat32),
+            (kCGImageAuxiliaryDataTypeDepth, true, kCVPixelFormatType_DepthFloat32)
+        ]
+
+        for candidate in candidates {
+            guard let info = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, candidate.type) as? [AnyHashable: Any] else {
+                continue
+            }
+
+            guard let depthData = try? AVDepthData(fromDictionaryRepresentation: info) else {
+                continue
+            }
+
+            let orientedDepth = depthData.applyingExifOrientation(orientation)
+            let converted: AVDepthData
+            do {
+                converted = try orientedDepth.converting(toDepthDataType: candidate.targetType)
+            } catch {
+                continue
+            }
+
+            guard let normalized = try? normalizeDepthMapToOneComponent8(converted.depthDataMap, invert: candidate.invert) else {
+                continue
+            }
+            return normalized
+        }
+
+        return nil
+    }
+
+    private static func normalizeDepthMapToOneComponent8(_ depthMap: CVPixelBuffer, invert: Bool) throws -> CVPixelBuffer {
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        let format = CVPixelBufferGetPixelFormatType(depthMap)
+
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(depthMap) else {
+            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
+        var values = [Float](repeating: 0, count: width * height)
+        var valid = [Float]()
+        valid.reserveCapacity(width * height)
+
+        func addValue(_ raw: Float, at index: Int) {
+            let value = raw.isFinite ? raw : 0
+            values[index] = value
+            if value > 0 {
+                valid.append(value)
+            }
+        }
+
+        switch format {
+        case kCVPixelFormatType_DisparityFloat16, kCVPixelFormatType_DepthFloat16:
+            let stride = bytesPerRow / MemoryLayout<UInt16>.stride
+            let pointer = baseAddress.bindMemory(to: UInt16.self, capacity: stride * height)
+            for y in 0..<height {
+                let row = pointer.advanced(by: y * stride)
+                for x in 0..<width {
+                    let bits = row[x]
+                    let value = Float(Float16(bitPattern: bits))
+                    addValue(value, at: (y * width) + x)
+                }
+            }
+        case kCVPixelFormatType_DisparityFloat32, kCVPixelFormatType_DepthFloat32:
+            let stride = bytesPerRow / MemoryLayout<Float>.stride
+            let pointer = baseAddress.bindMemory(to: Float.self, capacity: stride * height)
+            for y in 0..<height {
+                let row = pointer.advanced(by: y * stride)
+                for x in 0..<width {
+                    addValue(row[x], at: (y * width) + x)
+                }
+            }
+        case kCVPixelFormatType_OneComponent16:
+            let stride = bytesPerRow / MemoryLayout<UInt16>.stride
+            let pointer = baseAddress.bindMemory(to: UInt16.self, capacity: stride * height)
+            for y in 0..<height {
+                let row = pointer.advanced(by: y * stride)
+                for x in 0..<width {
+                    addValue(Float(row[x]) / 65535, at: (y * width) + x)
+                }
+            }
+        case kCVPixelFormatType_OneComponent8:
+            let stride = bytesPerRow / MemoryLayout<UInt8>.stride
+            let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: stride * height)
+            for y in 0..<height {
+                let row = pointer.advanced(by: y * stride)
+                for x in 0..<width {
+                    addValue(Float(row[x]) / 255, at: (y * width) + x)
+                }
+            }
+        default:
+            throw StereoPipelineError.unsupportedPixelFormat
+        }
+
+        guard valid.count >= 64 else {
+            throw StereoPipelineError.embeddedDepthUnavailable
+        }
+
+        valid.sort()
+        let lowIndex = max(0, min(valid.count - 1, Int((Double(valid.count) * 0.02).rounded(.down))))
+        let highIndex = max(lowIndex, min(valid.count - 1, Int((Double(valid.count) * 0.98).rounded(.down))))
+        let low = valid[lowIndex]
+        let high = valid[highIndex]
+        let range = max(high - low, 0.000001)
+
+        let output = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: kCVPixelFormatType_OneComponent8)
+
+        CVPixelBufferLockBaseAddress(output, [])
+        defer { CVPixelBufferUnlockBaseAddress(output, []) }
+
+        guard let outputBase = CVPixelBufferGetBaseAddress(output) else {
+            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        }
+
+        let outputBPR = CVPixelBufferGetBytesPerRow(output)
+        let outputPtr = outputBase.bindMemory(to: UInt8.self, capacity: outputBPR * height)
+
+        for y in 0..<height {
+            let outRow = outputPtr.advanced(by: y * outputBPR)
+            for x in 0..<width {
+                let value = values[(y * width) + x]
+                if !value.isFinite || value <= 0 {
+                    outRow[x] = 0
+                    continue
+                }
+
+                let clipped = max(low, min(high, value))
+                var t = (clipped - low) / range
+                if invert {
+                    t = 1 - t
+                }
+                outRow[x] = UInt8(max(0, min(255, Int((t * 255).rounded()))))
+            }
+        }
+
+        return output
+    }
+
+    private static func cgImageOrientation(from uiOrientation: UIImage.Orientation) -> CGImagePropertyOrientation {
+        switch uiOrientation {
+        case .up:
+            return .up
+        case .down:
+            return .down
+        case .left:
+            return .left
+        case .right:
+            return .right
+        case .upMirrored:
+            return .upMirrored
+        case .downMirrored:
+            return .downMirrored
+        case .leftMirrored:
+            return .leftMirrored
+        case .rightMirrored:
+            return .rightMirrored
+        @unknown default:
+            return .up
+        }
     }
 
     private static func withSecurityScopedAccess<T>(to url: URL, work: () throws -> T) throws -> T {

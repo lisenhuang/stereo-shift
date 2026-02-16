@@ -14,21 +14,23 @@ actor DepthEstimator {
         let contentRect: CGRect
     }
 
-    private let shortSide: Int = 518
     private let longSideMultiple: Int = 14
-    private let modelNameCandidates = [
-        "DepthAnythingV2SmallF32",
-        "DepthAnythingV2SmallFP32",
-        "coreml-depth-anything-v2-small"
-    ]
 
-    private var model: MLModel?
-    private var compiledModelURL: URL?
+    private var loadedModels: [DepthModel: MLModel] = [:]
+    private var compiledModelURLs: [URL: URL] = [:]
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
     func predictDepth(pixelBuffer: CVPixelBuffer) async throws -> CVPixelBuffer {
-        let model = try loadModel()
-        let prepared = try preprocess(pixelBuffer, model: model)
+        try await predictDepth(
+            pixelBuffer: pixelBuffer,
+            model: .depthAnythingV2SmallF16,
+            quality: .quality
+        )
+    }
+
+    func predictDepth(pixelBuffer: CVPixelBuffer, model: DepthModel, quality: DepthQuality) async throws -> CVPixelBuffer {
+        let model = try loadModel(model)
+        let prepared = try preprocess(pixelBuffer, model: model, quality: quality)
         let provider = try featureProvider(for: prepared.pixelBuffer, model: model)
 
         let prediction = try await Task.detached(priority: .userInitiated) {
@@ -39,12 +41,12 @@ actor DepthEstimator {
         return try postprocess(depth: rawDepth, metadata: prepared.metadata)
     }
 
-    private func loadModel() throws -> MLModel {
-        if let model {
+    private func loadModel(_ depthModel: DepthModel) throws -> MLModel {
+        if let model = loadedModels[depthModel] {
             return model
         }
 
-        guard let modelURL = try locateModelURL() else {
+        guard let modelURL = try locateModelURL(depthModel) else {
             throw StereoPipelineError.modelNotFound
         }
 
@@ -55,7 +57,7 @@ actor DepthEstimator {
                 let configuration = MLModelConfiguration()
                 configuration.computeUnits = computeUnits
                 let loadedModel = try MLModel(contentsOf: modelURL, configuration: configuration)
-                self.model = loadedModel
+                loadedModels[depthModel] = loadedModel
                 return loadedModel
             } catch {
                 lastError = error
@@ -119,8 +121,10 @@ actor DepthEstimator {
         return (false, false)
     }
 
-    private func locateModelURL() throws -> URL? {
-        for name in modelNameCandidates {
+    private func locateModelURL(_ depthModel: DepthModel) throws -> URL? {
+        let candidateNames = Set(depthModel.resourceNameCandidates)
+
+        for name in depthModel.resourceNameCandidates {
             if let direct = Bundle.main.url(forResource: name, withExtension: "mlmodelc") {
                 return direct
             }
@@ -129,7 +133,7 @@ actor DepthEstimator {
             }
         }
 
-        for name in modelNameCandidates {
+        for name in depthModel.resourceNameCandidates {
             if let packageURL = Bundle.main.url(forResource: name, withExtension: "mlpackage")
                 ?? Bundle.main.url(forResource: name, withExtension: "mlpackage", subdirectory: "Resources") {
                 let compiled = try compilePackageIfNeeded(at: packageURL)
@@ -146,10 +150,16 @@ actor DepthEstimator {
 
         while let url = enumerator?.nextObject() as? URL {
             if url.pathExtension == "mlmodelc" {
-                return url
+                let name = url.deletingPathExtension().lastPathComponent
+                if candidateNames.contains(name) {
+                    return url
+                }
             }
             if mlpackageURL == nil, url.pathExtension == "mlpackage" {
-                mlpackageURL = url
+                let name = url.deletingPathExtension().lastPathComponent
+                if candidateNames.contains(name) {
+                    mlpackageURL = url
+                }
             }
         }
 
@@ -161,11 +171,11 @@ actor DepthEstimator {
     }
 
     private func compilePackageIfNeeded(at packageURL: URL) throws -> URL {
-        if let compiledModelURL {
+        if let compiledModelURL = compiledModelURLs[packageURL] {
             return compiledModelURL
         }
         let compiled = try MLModel.compileModel(at: packageURL)
-        compiledModelURL = compiled
+        compiledModelURLs[packageURL] = compiled
         return compiled
     }
 
@@ -266,14 +276,28 @@ actor DepthEstimator {
         }
     }
 
-    private func preprocess(_ sourcePixelBuffer: CVPixelBuffer, model: MLModel) throws -> (pixelBuffer: CVPixelBuffer, metadata: PreprocessMetadata) {
+    private func preprocess(
+        _ sourcePixelBuffer: CVPixelBuffer,
+        model: MLModel,
+        quality: DepthQuality
+    ) throws -> (pixelBuffer: CVPixelBuffer, metadata: PreprocessMetadata) {
         let sourceWidth = CVPixelBufferGetWidth(sourcePixelBuffer)
         let sourceHeight = CVPixelBufferGetHeight(sourcePixelBuffer)
+
+        let sourceShortSide = min(max(sourceWidth, 1), max(sourceHeight, 1))
+        let desiredShortSide = min(quality.shortSide, sourceShortSide)
+        let effectiveShortSide = max(longSideMultiple, Self.roundDown(desiredShortSide, multiple: longSideMultiple))
+
         let modelSizes: (model: IntSize, scaled: IntSize)
         if let fixedInput = modelInputSize(for: model) {
             modelSizes = Self.computeFixedModelSizing(width: sourceWidth, height: sourceHeight, target: fixedInput)
         } else {
-            modelSizes = Self.computeModelSizing(width: sourceWidth, height: sourceHeight, shortSide: shortSide, longMultiple: longSideMultiple)
+            modelSizes = Self.computeModelSizing(
+                width: sourceWidth,
+                height: sourceHeight,
+                shortSide: effectiveShortSide,
+                longMultiple: longSideMultiple
+            )
         }
 
         let modelPixelBuffer = try PixelBufferUtilities.makePixelBuffer(
@@ -387,6 +411,11 @@ actor DepthEstimator {
         let remainder = value % multiple
         if remainder == 0 { return value }
         return value + (multiple - remainder)
+    }
+
+    private static func roundDown(_ value: Int, multiple: Int) -> Int {
+        guard multiple > 0 else { return value }
+        return value - (value % multiple)
     }
 
     private static func computeFixedModelSizing(width: Int, height: Int, target: IntSize) -> (model: IntSize, scaled: IntSize) {

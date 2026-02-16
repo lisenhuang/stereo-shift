@@ -10,7 +10,7 @@ All processing runs on-device.
 ## Tech Stack
 
 - Swift + SwiftUI
-- Core ML (`apple/coreml-depth-anything-v2-small`, Small F32)
+- Core ML (`apple/coreml-depth-anything-v2-small`, Small F16)
 - AVFoundation reader/writer pipeline
 - CPU stereo warp + lightweight hole fill
 
@@ -29,9 +29,9 @@ All processing runs on-device.
 /Users/easonsmith/Desktop/practice/StereoShift/StereoShift/scripts/download_depth_anything_v2.sh
 ```
 
-2. The script installs Small F32 by default. The model package path is:
+2. The script installs Small F16 by default. The model package path is:
 
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Resources/DepthAnythingV2SmallF32.mlpackage`
+- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Resources/DepthAnythingV2SmallF16.mlpackage`
 
 `DepthEstimator` will load either compiled `.mlmodelc` or compile `.mlpackage` at runtime.
 

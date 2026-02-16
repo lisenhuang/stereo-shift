@@ -22,6 +22,7 @@ final class VideoProcessor {
     func processVideo(
         inputURL: URL,
         strength: Float,
+        options: Stereo3DOptions = Stereo3DOptions(),
         maxDurationSeconds: Double? = nil,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
@@ -102,6 +103,11 @@ final class VideoProcessor {
 
             progress(VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: effectiveDurationSeconds))
 
+            var frameIndex = 0
+            var cachedDepth: CVPixelBuffer?
+            let cadence = max(1, options.videoDepthCadence.rawValue)
+            let smoothingAlpha = max(0, min(1, options.videoDepthSmoothing))
+
             while reader.status == .reading {
                 try Task.checkCancellation()
 
@@ -124,8 +130,40 @@ final class VideoProcessor {
                     targetSize: processingSize
                 )
 
-                let depth = try await depthEstimator.predictDepth(pixelBuffer: preparedFrame)
-                let stereoFrame = try renderer.makeSBS(from: preparedFrame, depth: depth, strength: strength)
+                let shouldRecomputeDepth: Bool = {
+                    if cachedDepth == nil { return true }
+                    if cadence <= 1 { return true }
+                    return frameIndex % cadence == 0
+                }()
+
+                if shouldRecomputeDepth {
+                    let rawDepth = try await depthEstimator.predictDepth(
+                        pixelBuffer: preparedFrame,
+                        model: options.depthModel,
+                        quality: options.depthQuality
+                    )
+
+                    if smoothingAlpha > 0 {
+                        let currentDepth = try oneComponent8(from: rawDepth, targetWidth: Int(processingSize.width), targetHeight: Int(processingSize.height))
+                        if let previousDepth = cachedDepth {
+                            cachedDepth = try blendOneComponent8(previous: previousDepth, current: currentDepth, alpha: smoothingAlpha)
+                        } else {
+                            cachedDepth = currentDepth
+                        }
+                    } else {
+                        cachedDepth = rawDepth
+                    }
+                }
+
+                guard let depthForFrame = cachedDepth else {
+                    throw StereoPipelineError.modelOutputNotFound
+                }
+                let stereoFrame = try renderer.makeSBS(
+                    from: preparedFrame,
+                    depth: depthForFrame,
+                    strength: strength,
+                    options: options
+                )
 
                 try await append(
                     pixelBuffer: stereoFrame,
@@ -142,6 +180,8 @@ final class VideoProcessor {
                     processedSeconds: processedSeconds,
                     totalSeconds: effectiveDurationSeconds
                 ))
+
+                frameIndex += 1
             }
 
             if reader.status == .failed {
@@ -251,6 +291,79 @@ final class VideoProcessor {
         if writer.status == .failed {
             throw writer.error ?? StereoPipelineError.exportFailed
         }
+    }
+
+    private func oneComponent8(from pixelBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> CVPixelBuffer {
+        let extent = CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
+        let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.0])
+
+        let sx = CGFloat(targetWidth) / max(sourceImage.extent.width, 1)
+        let sy = CGFloat(targetHeight) / max(sourceImage.extent.height, 1)
+        let scaled = sourceImage
+            .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+            .cropped(to: extent)
+
+        let output = try PixelBufferUtilities.makePixelBuffer(
+            width: targetWidth,
+            height: targetHeight,
+            pixelFormat: kCVPixelFormatType_OneComponent8
+        )
+        ciContext.render(scaled, to: output, bounds: extent, colorSpace: CGColorSpaceCreateDeviceGray())
+        return output
+    }
+
+    private func blendOneComponent8(previous: CVPixelBuffer, current: CVPixelBuffer, alpha: Float) throws -> CVPixelBuffer {
+        let width = CVPixelBufferGetWidth(current)
+        let height = CVPixelBufferGetHeight(current)
+
+        guard CVPixelBufferGetPixelFormatType(previous) == kCVPixelFormatType_OneComponent8,
+              CVPixelBufferGetPixelFormatType(current) == kCVPixelFormatType_OneComponent8,
+              CVPixelBufferGetWidth(previous) == width,
+              CVPixelBufferGetHeight(previous) == height
+        else {
+            throw StereoPipelineError.unsupportedPixelFormat
+        }
+
+        let output = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: kCVPixelFormatType_OneComponent8)
+
+        CVPixelBufferLockBaseAddress(previous, .readOnly)
+        CVPixelBufferLockBaseAddress(current, .readOnly)
+        CVPixelBufferLockBaseAddress(output, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(output, [])
+            CVPixelBufferUnlockBaseAddress(current, .readOnly)
+            CVPixelBufferUnlockBaseAddress(previous, .readOnly)
+        }
+
+        guard let prevBase = CVPixelBufferGetBaseAddress(previous),
+              let currBase = CVPixelBufferGetBaseAddress(current),
+              let outBase = CVPixelBufferGetBaseAddress(output) else {
+            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        }
+
+        let prevBPR = CVPixelBufferGetBytesPerRow(previous)
+        let currBPR = CVPixelBufferGetBytesPerRow(current)
+        let outBPR = CVPixelBufferGetBytesPerRow(output)
+
+        let prevPtr = prevBase.bindMemory(to: UInt8.self, capacity: prevBPR * height)
+        let currPtr = currBase.bindMemory(to: UInt8.self, capacity: currBPR * height)
+        let outPtr = outBase.bindMemory(to: UInt8.self, capacity: outBPR * height)
+
+        let a = max(0, min(1, alpha))
+        let invA = 1 - a
+
+        for y in 0..<height {
+            let prevRow = prevPtr.advanced(by: y * prevBPR)
+            let currRow = currPtr.advanced(by: y * currBPR)
+            let outRow = outPtr.advanced(by: y * outBPR)
+            for x in 0..<width {
+                let blended = (invA * Float(prevRow[x])) + (a * Float(currRow[x]))
+                outRow[x] = UInt8(max(0, min(255, Int(blended.rounded()))))
+            }
+        }
+
+        return output
     }
 
     private func attachOriginalAudioIfAvailable(sourceURL: URL, processedVideoURL: URL) async throws -> URL {

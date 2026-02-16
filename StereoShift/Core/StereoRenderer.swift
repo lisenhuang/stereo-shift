@@ -1,14 +1,15 @@
 import CoreImage
 import CoreVideo
 import Foundation
+import Vision
 
 final class StereoRenderer {
     private let depthEstimator: DepthEstimator
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
-    private var isKernelWarpEnabled = false
+    private var kernelWarpIsHealthy = true
     private static let stereoWarpKernel: CIKernel? = {
         let source = """
-        kernel vec4 stereoWarp(sampler colorImage, sampler depthImage, float direction, float maxShift, float minDepth, float invRange, float invertDepth) {
+        kernel vec4 stereoWarp(sampler colorImage, sampler depthImage, float direction, float maxShift, float minDepth, float invRange, float invertDepth, float gamma) {
             vec2 d = destCoord();
             vec4 colorExtent = samplerExtent(colorImage);
             float minX = colorExtent.x;
@@ -28,6 +29,7 @@ final class StereoRenderer {
             if (invertDepth > 0.5) {
                 depthValue = 1.0 - depthValue;
             }
+            depthValue = pow(depthValue, gamma);
             float shiftedX = clamp(d.x + (direction * depthValue * maxShift), minX, maxX);
             vec4 sampledColor = sample(colorImage, vec2(shiftedX, d.y));
             vec3 opaqueColor = sampledColor.rgb;
@@ -49,34 +51,94 @@ final class StereoRenderer {
     }
 
     static func maxDisparity(forWidth width: Int) -> Float {
+        maxDisparity(forWidth: width, tuning: .classic)
+    }
+
+    static func maxDisparity(forWidth width: Int, tuning: DepthTuning) -> Float {
         let scaled = 24 * (Float(width) / 720)
-        return min(max(8, scaled), 56)
+        let base = max(8, scaled)
+        let cap: Float = tuning == .enhanced ? 140 : 56
+        return min(base, cap)
     }
 
     func makeSBS(from image: CGImage, strength: Float) async throws -> CGImage {
+        let options = Stereo3DOptions()
+        let output = try await makeSBS(from: image, strength: strength, options: options)
+        return output
+    }
+
+    func makeSBS(from image: CGImage, strength: Float, options: Stereo3DOptions) async throws -> CGImage {
         let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: image)
-        let depthBuffer = try await depthEstimator.predictDepth(pixelBuffer: rgbBuffer)
-        let outputBuffer = try makeSBS(from: rgbBuffer, depth: depthBuffer, strength: strength)
+        let depthBuffer = try await depthEstimator.predictDepth(
+            pixelBuffer: rgbBuffer,
+            model: options.depthModel,
+            quality: options.depthQuality
+        )
+        let outputBuffer = try makeSBS(from: rgbBuffer, depth: depthBuffer, strength: strength, options: options)
         return try PixelBufferUtilities.makeCGImage(from: outputBuffer, context: ciContext)
     }
 
     func makeSBS(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float) throws -> CVPixelBuffer {
-        if isKernelWarpEnabled, let accelerated = try makeSBSUsingKernel(from: rgb, depth: depth, strength: strength) {
+        try makeSBS(from: rgb, depth: depth, strength: strength, options: Stereo3DOptions())
+    }
+
+    func makeSBS(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
+        if options.generationMethod == .serverLike {
+            return try makeSBSServerLike(from: rgb, depth: depth, strength: strength)
+        }
+
+        let width = CVPixelBufferGetWidth(rgb)
+        let height = CVPixelBufferGetHeight(rgb)
+        let refinedDepth = try refineDepthBufferIfNeeded(
+            depth: depth,
+            guide: rgb,
+            targetWidth: width,
+            targetHeight: height,
+            refinement: options.depthRefinement,
+            tuning: options.depthTuning
+        )
+
+        if options.viewSynthesis == .inverseWarp,
+           options.renderEngine == .ciKernel,
+           kernelWarpIsHealthy,
+           let accelerated = try makeSBSUsingKernel(from: rgb, depth: refinedDepth, strength: strength, tuning: options.depthTuning) {
             if isLikelyInvalidKernelOutput(accelerated, comparedTo: rgb) {
-                isKernelWarpEnabled = false
+                kernelWarpIsHealthy = false
             } else {
                 return accelerated
             }
         }
 
+        switch options.viewSynthesis {
+        case .inverseWarp:
+            return try makeSBSUsingCPUInverseWarp(from: rgb, depth: refinedDepth, strength: strength, tuning: options.depthTuning)
+        case .forwardWarp:
+            return try makeSBSUsingCPUForwardWarp(from: rgb, depth: refinedDepth, strength: strength, tuning: options.depthTuning)
+        }
+    }
+
+    func makeSBS(
+        from rgb: CVPixelBuffer,
+        depth: CVPixelBuffer,
+        strength: Float,
+        tuning: DepthTuning,
+        engine: StereoRenderEngine
+    ) throws -> CVPixelBuffer {
+        var options = Stereo3DOptions()
+        options.depthTuning = tuning
+        options.renderEngine = engine
+        return try makeSBS(from: rgb, depth: depth, strength: strength, options: options)
+    }
+
+    private func makeSBSUsingCPUInverseWarp(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, tuning: DepthTuning) throws -> CVPixelBuffer {
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
 
         let sourceBytes = try bgraBytes(from: rgb)
-        let depthMap = try normalizedDepthMap(from: depth, targetWidth: width, targetHeight: height)
+        let depthMap = try normalizedDepthMap(from: depth, targetWidth: width, targetHeight: height, tuning: tuning)
 
         let clampedStrength = max(0, min(1.5, strength))
-        let disparityScale = clampedStrength * Self.maxDisparity(forWidth: width)
+        let disparityScale = clampedStrength * Self.maxDisparity(forWidth: width, tuning: tuning)
         let disparity = depthMap.map { $0 * disparityScale }
 
         var left = [UInt8](repeating: 0, count: width * height * 4)
@@ -104,7 +166,127 @@ final class StereoRenderer {
 
         fillHolesHorizontally(bytes: &left, mask: &leftMask, width: width, height: height)
         fillHolesHorizontally(bytes: &right, mask: &rightMask, width: width, height: height)
+        if tuning == .enhanced {
+            fillHolesVertically(bytes: &left, mask: &leftMask, width: width, height: height)
+            fillHolesVertically(bytes: &right, mask: &rightMask, width: width, height: height)
+        }
 
+        return try assembleSBS(left: left, right: right, width: width, height: height)
+    }
+
+    private func makeSBSUsingCPUForwardWarp(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, tuning: DepthTuning) throws -> CVPixelBuffer {
+        let width = CVPixelBufferGetWidth(rgb)
+        let height = CVPixelBufferGetHeight(rgb)
+
+        let sourceBytes = try bgraBytes(from: rgb)
+        let depthMap = try normalizedDepthMap(from: depth, targetWidth: width, targetHeight: height, tuning: tuning)
+
+        let clampedStrength = max(0, min(1.5, strength))
+        let disparityScale = clampedStrength * Self.maxDisparity(forWidth: width, tuning: tuning)
+
+        var left = [UInt8](repeating: 0, count: width * height * 4)
+        var right = [UInt8](repeating: 0, count: width * height * 4)
+        var leftMask = [UInt8](repeating: 0, count: width * height)
+        var rightMask = [UInt8](repeating: 0, count: width * height)
+        var leftZ = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
+        var rightZ = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let srcIdx = (y * width) + x
+                let z = depthMap[srcIdx]
+                let halfShift = z * disparityScale * 0.5
+                let srcPixel = pixel(sourceBytes, width: width, x: x, y: y)
+
+                let destXL = Int((Float(x) - halfShift).rounded())
+                if destXL >= 0, destXL < width {
+                    let destIdx = (y * width) + destXL
+                    if z > leftZ[destIdx] {
+                        writePixel(srcPixel, into: &left, at: destIdx)
+                        leftMask[destIdx] = 1
+                        leftZ[destIdx] = z
+                    }
+                }
+
+                let destXR = Int((Float(x) + halfShift).rounded())
+                if destXR >= 0, destXR < width {
+                    let destIdx = (y * width) + destXR
+                    if z > rightZ[destIdx] {
+                        writePixel(srcPixel, into: &right, at: destIdx)
+                        rightMask[destIdx] = 1
+                        rightZ[destIdx] = z
+                    }
+                }
+            }
+        }
+
+        fillHolesHorizontally(bytes: &left, mask: &leftMask, width: width, height: height)
+        fillHolesHorizontally(bytes: &right, mask: &rightMask, width: width, height: height)
+        if tuning == .enhanced {
+            fillHolesVertically(bytes: &left, mask: &leftMask, width: width, height: height)
+            fillHolesVertically(bytes: &right, mask: &rightMask, width: width, height: height)
+        }
+
+        return try assembleSBS(left: left, right: right, width: width, height: height)
+    }
+
+    private func makeSBSServerLike(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float) throws -> CVPixelBuffer {
+        let width = CVPixelBufferGetWidth(rgb)
+        let height = CVPixelBufferGetHeight(rgb)
+
+        let sourceBytes = try bgraBytes(from: rgb)
+        let depthMap = try serverNormalizedDepthMap(from: depth, targetWidth: width, targetHeight: height)
+
+        // Matches the server baseline disparity (per-eye shift) at strength=1.0.
+        let clampedStrength = max(0, min(1.5, strength))
+        let baselinePerEye = max(0, Float(40) * clampedStrength)
+
+        var left = [UInt8](repeating: 0, count: width * height * 4)
+        var right = [UInt8](repeating: 0, count: width * height * 4)
+        var leftMask = [UInt8](repeating: 0, count: width * height)
+        var rightMask = [UInt8](repeating: 0, count: width * height)
+
+        // Forward mapping (source -> destination) matches the server's hole-filling step.
+        for y in 0..<height {
+            for x in 0..<width {
+                let srcIdx = (y * width) + x
+                let shift = Int(depthMap[srcIdx] * baselinePerEye)
+
+                let destXL = min(width - 1, x + shift)
+                let destXR = max(0, x - shift)
+
+                let p = pixel(sourceBytes, width: width, x: x, y: y)
+
+                let leftIdx = (y * width) + destXL
+                let rightIdx = (y * width) + destXR
+
+                writePixel(p, into: &left, at: leftIdx)
+                leftMask[leftIdx] = 1
+
+                writePixel(p, into: &right, at: rightIdx)
+                rightMask[rightIdx] = 1
+            }
+        }
+
+        // Fill holes using the original image at the same coordinates.
+        for y in 0..<height {
+            for x in 0..<width {
+                let idx = (y * width) + x
+                if leftMask[idx] == 0 {
+                    writePixel(pixel(sourceBytes, width: width, x: x, y: y), into: &left, at: idx)
+                    leftMask[idx] = 1
+                }
+                if rightMask[idx] == 0 {
+                    writePixel(pixel(sourceBytes, width: width, x: x, y: y), into: &right, at: idx)
+                    rightMask[idx] = 1
+                }
+            }
+        }
+
+        return try assembleSBS(left: left, right: right, width: width, height: height)
+    }
+
+    private func assembleSBS(left: [UInt8], right: [UInt8], width: Int, height: Int) throws -> CVPixelBuffer {
         var sbs = [UInt8](repeating: 0, count: width * 2 * height * 4)
         let destinationWidth = width * 2
 
@@ -146,7 +328,7 @@ final class StereoRenderer {
         return outputBuffer
     }
 
-    private func makeSBSUsingKernel(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float) throws -> CVPixelBuffer? {
+    private func makeSBSUsingKernel(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, tuning: DepthTuning) throws -> CVPixelBuffer? {
         guard let kernel = Self.stereoWarpKernel else {
             return nil
         }
@@ -154,12 +336,13 @@ final class StereoRenderer {
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
         let clampedStrength = max(0, min(1.5, strength))
-        let maxShift = CGFloat(clampedStrength * Self.maxDisparity(forWidth: width) * 0.5)
+        let maxShift = CGFloat(clampedStrength * Self.maxDisparity(forWidth: width, tuning: tuning) * 0.5)
         let depthImage = try prepareDepthImageForKernel(from: depth, targetWidth: width, targetHeight: height)
-        let stats = try depthStatistics(from: depthImage, width: width, height: height)
+        let stats = try depthStatistics(from: depthImage, width: width, height: height, tuning: tuning)
         let range = max(stats.max - stats.min, 0.0001)
         let invRange = CGFloat(1 / range)
         let invertDepth = stats.shouldInvert ? CGFloat(1) : CGFloat(0)
+        let gamma = tuning == .enhanced ? CGFloat(0.78) : CGFloat(1)
 
         let colorImage = CIImage(cvPixelBuffer: rgb)
         let extent = CGRect(x: 0, y: 0, width: width, height: height)
@@ -170,7 +353,7 @@ final class StereoRenderer {
             roiCallback: { _, rect in
                 rect.insetBy(dx: -roiInset, dy: 0)
             },
-            arguments: [colorImage, depthImage, CGFloat(1), maxShift, CGFloat(stats.min), invRange, invertDepth]
+            arguments: [colorImage, depthImage, CGFloat(1), maxShift, CGFloat(stats.min), invRange, invertDepth, gamma]
         ) else {
             return nil
         }
@@ -180,7 +363,7 @@ final class StereoRenderer {
             roiCallback: { _, rect in
                 rect.insetBy(dx: -roiInset, dy: 0)
             },
-            arguments: [colorImage, depthImage, CGFloat(-1), maxShift, CGFloat(stats.min), invRange, invertDepth]
+            arguments: [colorImage, depthImage, CGFloat(-1), maxShift, CGFloat(stats.min), invRange, invertDepth, gamma]
         ) else {
             return nil
         }
@@ -285,7 +468,7 @@ final class StereoRenderer {
         return image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.0])
     }
 
-    private func depthStatistics(from depthImage: CIImage, width: Int, height: Int) throws -> (min: Float, max: Float, shouldInvert: Bool) {
+    private func depthStatistics(from depthImage: CIImage, width: Int, height: Int, tuning: DepthTuning) throws -> (min: Float, max: Float, shouldInvert: Bool) {
         let analysisWidth = max(24, min(160, width))
         let analysisHeight = max(24, min(160, height))
         let sx = CGFloat(analysisWidth) / max(CGFloat(width), 1)
@@ -318,6 +501,7 @@ final class StereoRenderer {
 
         var minValue = Float.greatestFiniteMagnitude
         var maxValue = -Float.greatestFiniteMagnitude
+        var histogram = [Int](repeating: 0, count: 256)
 
         var borderSum: Float = 0
         var borderCount = 0
@@ -333,6 +517,7 @@ final class StereoRenderer {
             let row = pointer.advanced(by: y * bytesPerRow)
             for x in 0..<analysisWidth {
                 let value = Float(row[x]) / 255
+                histogram[Int(row[x])] += 1
                 minValue = min(minValue, value)
                 maxValue = max(maxValue, value)
 
@@ -353,12 +538,26 @@ final class StereoRenderer {
             maxValue = 1
         }
 
+        if tuning == .enhanced {
+            let totalCount = analysisWidth * analysisHeight
+            let lowTarget = max(0, Int((Double(totalCount) * 0.02).rounded(.down)))
+            let highTarget = min(totalCount, Int((Double(totalCount) * 0.98).rounded(.down)))
+
+            let (lowBin, highBin) = histogramPercentiles(histogram, lowTarget: lowTarget, highTarget: highTarget)
+            let lowValue = Float(lowBin) / 255
+            let highValue = Float(highBin) / 255
+            if highValue > lowValue {
+                minValue = lowValue
+                maxValue = highValue
+            }
+        }
+
         let borderMean = borderSum / Float(max(borderCount, 1))
         let centerMean = centerSum / Float(max(centerCount, 1))
         return (min: minValue, max: maxValue, shouldInvert: borderMean > centerMean)
     }
 
-    private func normalizedDepthMap(from depthBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> [Float] {
+    private func normalizedDepthMap(from depthBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int, tuning: DepthTuning) throws -> [Float] {
         let preparedDepth: CVPixelBuffer
 
         if CVPixelBufferGetWidth(depthBuffer) == targetWidth && CVPixelBufferGetHeight(depthBuffer) == targetHeight {
@@ -381,6 +580,7 @@ final class StereoRenderer {
         var map = [Float](repeating: 0, count: width * height)
         var minValue = Float.greatestFiniteMagnitude
         var maxValue = -Float.greatestFiniteMagnitude
+        var histogram = [Int](repeating: 0, count: 256)
 
         if format == kCVPixelFormatType_OneComponent8 {
             let bytesPerRow = CVPixelBufferGetBytesPerRow(preparedDepth)
@@ -390,6 +590,7 @@ final class StereoRenderer {
                 let row = pointer.advanced(by: y * bytesPerRow)
                 for x in 0..<width {
                     let value = Float(row[x]) / 255
+                    histogram[Int(row[x])] += 1
                     map[(y * width) + x] = value
                     minValue = min(minValue, value)
                     maxValue = max(maxValue, value)
@@ -407,6 +608,8 @@ final class StereoRenderer {
                     let g = Float(row[offset + 1]) / 255
                     let r = Float(row[offset + 2]) / 255
                     let value = (0.299 * r) + (0.587 * g) + (0.114 * b)
+                    let bin = max(0, min(255, Int((value * 255).rounded())))
+                    histogram[bin] += 1
                     map[(y * width) + x] = value
                     minValue = min(minValue, value)
                     maxValue = max(maxValue, value)
@@ -414,9 +617,24 @@ final class StereoRenderer {
             }
         }
 
+        if tuning == .enhanced {
+            let totalCount = width * height
+            let lowTarget = max(0, Int((Double(totalCount) * 0.02).rounded(.down)))
+            let highTarget = min(totalCount, Int((Double(totalCount) * 0.98).rounded(.down)))
+
+            let (lowBin, highBin) = histogramPercentiles(histogram, lowTarget: lowTarget, highTarget: highTarget)
+            let lowValue = Float(lowBin) / 255
+            let highValue = Float(highBin) / 255
+            if highValue > lowValue {
+                minValue = lowValue
+                maxValue = highValue
+            }
+        }
+
         let range = max(maxValue - minValue, 0.0001)
         for index in map.indices {
-            map[index] = (map[index] - minValue) / range
+            let clipped = max(minValue, min(maxValue, map[index]))
+            map[index] = (clipped - minValue) / range
         }
 
         boxBlur(&map, width: width, height: height)
@@ -431,7 +649,199 @@ final class StereoRenderer {
             }
         }
 
+        if tuning == .enhanced {
+            for index in map.indices {
+                map[index] = pow(max(0, min(1, map[index])), 0.78)
+            }
+        }
+
         return map
+    }
+
+    private func serverNormalizedDepthMap(from depthBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> [Float] {
+        let preparedDepth: CVPixelBuffer
+        if CVPixelBufferGetWidth(depthBuffer) == targetWidth && CVPixelBufferGetHeight(depthBuffer) == targetHeight {
+            preparedDepth = depthBuffer
+        } else {
+            // This produces BGRA, which is fine for extracting grayscale depth values.
+            preparedDepth = try PixelBufferUtilities.resize(depthBuffer, to: CGSize(width: targetWidth, height: targetHeight), context: ciContext)
+        }
+
+        CVPixelBufferLockBaseAddress(preparedDepth, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(preparedDepth, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(preparedDepth) else {
+            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        }
+
+        let width = CVPixelBufferGetWidth(preparedDepth)
+        let height = CVPixelBufferGetHeight(preparedDepth)
+        let format = CVPixelBufferGetPixelFormatType(preparedDepth)
+
+        var map = [Float](repeating: 0, count: width * height)
+        var minValue = Float.greatestFiniteMagnitude
+        var maxValue = -Float.greatestFiniteMagnitude
+
+        if format == kCVPixelFormatType_OneComponent8 {
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(preparedDepth)
+            let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
+            for y in 0..<height {
+                let row = pointer.advanced(by: y * bytesPerRow)
+                for x in 0..<width {
+                    let value = Float(row[x]) / 255
+                    map[(y * width) + x] = value
+                    minValue = min(minValue, value)
+                    maxValue = max(maxValue, value)
+                }
+            }
+        } else {
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(preparedDepth)
+            let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
+            for y in 0..<height {
+                let row = pointer.advanced(by: y * bytesPerRow)
+                for x in 0..<width {
+                    let offset = x * 4
+                    let b = Float(row[offset]) / 255
+                    let g = Float(row[offset + 1]) / 255
+                    let r = Float(row[offset + 2]) / 255
+                    let value = (0.299 * r) + (0.587 * g) + (0.114 * b)
+                    map[(y * width) + x] = value
+                    minValue = min(minValue, value)
+                    maxValue = max(maxValue, value)
+                }
+            }
+        }
+
+        let range = max(maxValue - minValue, 0.000001)
+        for index in map.indices {
+            map[index] = max(0, min(1, (map[index] - minValue) / range))
+        }
+
+        return map
+    }
+
+    private func refineDepthBufferIfNeeded(
+        depth: CVPixelBuffer,
+        guide: CVPixelBuffer,
+        targetWidth: Int,
+        targetHeight: Int,
+        refinement: DepthRefinement,
+        tuning: DepthTuning
+    ) throws -> CVPixelBuffer {
+        if refinement == .none {
+            if CVPixelBufferGetWidth(depth) == targetWidth, CVPixelBufferGetHeight(depth) == targetHeight {
+                return depth
+            }
+            return try PixelBufferUtilities.resize(depth, to: CGSize(width: targetWidth, height: targetHeight), context: ciContext)
+        }
+
+        let extent = CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
+        let guideImage = CIImage(cvPixelBuffer: guide).cropped(to: extent)
+        var workingDepthImage = try prepareDepthImageForKernel(from: depth, targetWidth: targetWidth, targetHeight: targetHeight)
+            .cropped(to: extent)
+
+        let wantsGuidedFilter = refinement == .guidedFilter || refinement == .guidedFilterAndPersonMask
+        let wantsPersonMask = refinement == .personMask || refinement == .guidedFilterAndPersonMask
+
+        if wantsGuidedFilter {
+            if let guided = guidedDepthImage(depthImage: workingDepthImage, guideImage: guideImage, width: targetWidth, tuning: tuning) {
+                workingDepthImage = guided.cropped(to: extent)
+            }
+        }
+
+        if wantsPersonMask {
+            if let personMask = try? makePersonMask(from: guide, targetWidth: targetWidth, targetHeight: targetHeight) {
+                var maskImage = CIImage(cvPixelBuffer: personMask).cropped(to: extent)
+
+                // Expand the foreground region slightly so edges are less likely to halo.
+                if let dilated = CIFilter(
+                    name: "CIMorphologyMaximum",
+                    parameters: [
+                        kCIInputImageKey: maskImage,
+                        kCIInputRadiusKey: CGFloat(3)
+                    ]
+                )?.outputImage {
+                    maskImage = dilated.cropped(to: extent)
+                }
+
+                let blurRadius = CGFloat(max(6, min(18, targetWidth / 90)))
+                let blurred = workingDepthImage
+                    .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: blurRadius])
+                    .cropped(to: extent)
+
+                if let blended = CIFilter(
+                    name: "CIBlendWithMask",
+                    parameters: [
+                        kCIInputImageKey: workingDepthImage,
+                        kCIInputBackgroundImageKey: blurred,
+                        kCIInputMaskImageKey: maskImage
+                    ]
+                )?.outputImage {
+                    workingDepthImage = blended.cropped(to: extent)
+                }
+            }
+        }
+
+        let output = try PixelBufferUtilities.makePixelBuffer(
+            width: targetWidth,
+            height: targetHeight,
+            pixelFormat: kCVPixelFormatType_OneComponent8
+        )
+        ciContext.render(workingDepthImage, to: output, bounds: extent, colorSpace: CGColorSpaceCreateDeviceGray())
+        return output
+    }
+
+    private func guidedDepthImage(depthImage: CIImage, guideImage: CIImage, width: Int, tuning: DepthTuning) -> CIImage? {
+        guard let filter = CIFilter(name: "CIGuidedFilter") else {
+            return nil
+        }
+
+        let radius = CGFloat(max(4, min(20, width / 120)))
+        let epsilon: CGFloat = tuning == .enhanced ? 0.0025 : 0.005
+
+        filter.setValue(depthImage, forKey: kCIInputImageKey)
+        filter.setValue(guideImage, forKey: "inputGuideImage")
+        filter.setValue(radius, forKey: "inputRadius")
+        filter.setValue(epsilon, forKey: "inputEpsilon")
+        return filter.outputImage
+    }
+
+    private func makePersonMask(from guide: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> CVPixelBuffer? {
+        if #available(iOS 15.0, macOS 12.0, *) {
+            let request = VNGeneratePersonSegmentationRequest()
+            request.qualityLevel = .balanced
+            request.outputPixelFormat = kCVPixelFormatType_OneComponent8
+
+            let handler = VNImageRequestHandler(cvPixelBuffer: guide, orientation: .up, options: [:])
+            try handler.perform([request])
+
+            guard let observation = request.results?.first as? VNPixelBufferObservation else {
+                return nil
+            }
+
+            let maskBuffer = observation.pixelBuffer
+            if CVPixelBufferGetWidth(maskBuffer) == targetWidth, CVPixelBufferGetHeight(maskBuffer) == targetHeight {
+                return maskBuffer
+            }
+
+            let maskExtent = CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
+            let maskImage = CIImage(cvPixelBuffer: maskBuffer)
+            let sx = CGFloat(targetWidth) / max(maskImage.extent.width, 1)
+            let sy = CGFloat(targetHeight) / max(maskImage.extent.height, 1)
+            let scaled = maskImage
+                .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+                .cropped(to: maskExtent)
+
+            let output = try PixelBufferUtilities.makePixelBuffer(
+                width: targetWidth,
+                height: targetHeight,
+                pixelFormat: kCVPixelFormatType_OneComponent8
+            )
+            ciContext.render(scaled, to: output, bounds: maskExtent, colorSpace: CGColorSpaceCreateDeviceGray())
+            return output
+        }
+
+        return nil
     }
 
     private func bgraBytes(from pixelBuffer: CVPixelBuffer) throws -> [UInt8] {
@@ -567,6 +977,70 @@ final class StereoRenderer {
                 }
             }
         }
+    }
+
+    private func fillHolesVertically(bytes: inout [UInt8], mask: inout [UInt8], width: Int, height: Int) {
+        for x in 0..<width {
+            var lastValidOffset: Int?
+
+            for y in 0..<height {
+                let index = (y * width) + x
+                let offset = index * 4
+                if mask[index] == 1 {
+                    lastValidOffset = offset
+                } else if let lastValidOffset {
+                    bytes[offset] = bytes[lastValidOffset]
+                    bytes[offset + 1] = bytes[lastValidOffset + 1]
+                    bytes[offset + 2] = bytes[lastValidOffset + 2]
+                    bytes[offset + 3] = bytes[lastValidOffset + 3]
+                    mask[index] = 1
+                }
+            }
+
+            lastValidOffset = nil
+            for y in stride(from: height - 1, through: 0, by: -1) {
+                let index = (y * width) + x
+                let offset = index * 4
+                if mask[index] == 1 {
+                    lastValidOffset = offset
+                } else if let lastValidOffset {
+                    bytes[offset] = bytes[lastValidOffset]
+                    bytes[offset + 1] = bytes[lastValidOffset + 1]
+                    bytes[offset + 2] = bytes[lastValidOffset + 2]
+                    bytes[offset + 3] = bytes[lastValidOffset + 3]
+                    mask[index] = 1
+                }
+            }
+        }
+    }
+
+    private func histogramPercentiles(_ histogram: [Int], lowTarget: Int, highTarget: Int) -> (low: Int, high: Int) {
+        var lowBin = 0
+        var highBin = 255
+
+        var cumulative = 0
+        for bin in 0..<histogram.count {
+            cumulative += histogram[bin]
+            if cumulative >= lowTarget {
+                lowBin = bin
+                break
+            }
+        }
+
+        cumulative = 0
+        for bin in 0..<histogram.count {
+            cumulative += histogram[bin]
+            if cumulative >= highTarget {
+                highBin = bin
+                break
+            }
+        }
+
+        if highBin < lowBin {
+            return (low: lowBin, high: lowBin)
+        }
+
+        return (low: lowBin, high: highBin)
     }
 
     private func boxBlur(_ map: inout [Float], width: Int, height: Int) {

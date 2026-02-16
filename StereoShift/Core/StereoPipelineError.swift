@@ -24,13 +24,14 @@ enum StereoPipelineError: LocalizedError {
     case spatialImagePairUnavailable
     case spatialViewsUnavailable
     case spatialPickerUnavailable
+    case embeddedDepthUnavailable
     case temporaryFileCreationFailed
     case photoLibraryAccessDenied
 
     var errorDescription: String? {
         switch self {
         case .modelNotFound:
-            return "Depth model is missing. Add DepthAnythingV2SmallF32.mlpackage to StereoShift/Resources and try again."
+            return "Depth model is missing. Add DepthAnythingV2SmallF16.mlpackage to StereoShift/Resources and try again."
         case .modelInputNotFound:
             return "Model input could not be resolved."
         case .modelOutputNotFound:
@@ -73,6 +74,8 @@ enum StereoPipelineError: LocalizedError {
             return "Unable to extract left/right views from the selected spatial video. Please choose an original spatial video."
         case .spatialPickerUnavailable:
             return "Spatial-only picking requires iOS 18 or later."
+        case .embeddedDepthUnavailable:
+            return "This photo does not include usable embedded depth/disparity data."
         case .temporaryFileCreationFailed:
             return "Unable to create a temporary file."
         case .photoLibraryAccessDenied:

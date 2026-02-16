@@ -1,3 +1,4 @@
+import CoreVideo
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -7,6 +8,7 @@ struct PhotoFlowView: View {
     @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
+    @Binding var stereo3DOptions: Stereo3DOptions
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
@@ -14,6 +16,7 @@ struct PhotoFlowView: View {
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceImage: CGImage?
     @State private var sourceSpatialPair: StereoImagePair?
+    @State private var sourceEmbeddedDepth: CVPixelBuffer?
     @State private var outputImage: CGImage?
     @State private var outputFileURL: URL?
     @State private var isLoadingSelection = false
@@ -284,6 +287,7 @@ struct PhotoFlowView: View {
         selectedItem = nil
         sourceImage = nil
         sourceSpatialPair = nil
+        sourceEmbeddedDepth = nil
         outputImage = nil
         outputFileURL = nil
         saveMessageKey = nil
@@ -316,18 +320,20 @@ struct PhotoFlowView: View {
                     await MainActor.run {
                         sourceImage = pair.left
                         sourceSpatialPair = pair
+                        sourceEmbeddedDepth = nil
                         outputImage = nil
                         outputFileURL = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
                     }
                 } else {
-                    let image = try await MediaPicker.loadPhoto(from: item)
+                    let picked = try await MediaPicker.loadPhotoWithEmbeddedDepth(from: item)
                     if Task.isCancelled { return }
 
                     await MainActor.run {
-                        sourceImage = image
+                        sourceImage = picked.image
                         sourceSpatialPair = nil
+                        sourceEmbeddedDepth = picked.embeddedDepth
                         outputImage = nil
                         outputFileURL = nil
                         saveMessageKey = nil
@@ -374,21 +380,23 @@ struct PhotoFlowView: View {
                         selectedItem = nil
                         sourceImage = pair.left
                         sourceSpatialPair = pair
+                        sourceEmbeddedDepth = nil
                         outputImage = nil
                         outputFileURL = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
                     }
                 } else {
-                    let image = try await Task.detached(priority: .userInitiated) {
-                        try MediaPicker.loadPhoto(fromFileURL: url)
+                    let picked = try await Task.detached(priority: .userInitiated) {
+                        try MediaPicker.loadPhotoWithEmbeddedDepth(fromFileURL: url)
                     }.value
                     if Task.isCancelled { return }
 
                     await MainActor.run {
                         selectedItem = nil
-                        sourceImage = image
+                        sourceImage = picked.image
                         sourceSpatialPair = nil
+                        sourceEmbeddedDepth = picked.embeddedDepth
                         outputImage = nil
                         outputFileURL = nil
                         saveMessageKey = nil
@@ -456,11 +464,29 @@ struct PhotoFlowView: View {
 
         let renderer = pipeline.stereoRenderer
         let appliedStrength = strength
+        let appliedOptions = stereo3DOptions
+        let appliedEmbeddedDepth = sourceEmbeddedDepth
 
         generateTask = Task.detached(priority: .userInitiated) {
             do {
                 try Task.checkCancellation()
-                let output = try await renderer.makeSBS(from: sourceImage, strength: appliedStrength)
+                let shouldUseEmbeddedDepth = appliedEmbeddedDepth != nil
+
+                let output: CGImage
+                if shouldUseEmbeddedDepth {
+                    let embeddedDepth = appliedEmbeddedDepth!
+
+                    let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: sourceImage)
+                    let outputBuffer = try renderer.makeSBS(
+                        from: rgbBuffer,
+                        depth: embeddedDepth,
+                        strength: appliedStrength,
+                        options: appliedOptions
+                    )
+                    output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
+                } else {
+                    output = try await renderer.makeSBS(from: sourceImage, strength: appliedStrength, options: appliedOptions)
+                }
                 let fileURL = try TempFiles.writePNG(cgImage: output, prefix: "stereoshift-photo")
 
                 if Task.isCancelled {
@@ -607,6 +633,11 @@ struct PhotoFlowView: View {
 
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                     .disabled(true)
+
+                Text("Uses a simple baseline: min/max depth normalize + integer pixel shifts. Baseline disparity is 40px at strength=1.0.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)

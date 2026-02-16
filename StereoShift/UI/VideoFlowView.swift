@@ -8,6 +8,7 @@ struct VideoFlowView: View {
     @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
+    @Binding var stereo3DOptions: Stereo3DOptions
     @ObservedObject var subscriptionManager: SubscriptionManager
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onRequireSubscription: () -> Void
@@ -424,6 +425,7 @@ struct VideoFlowView: View {
 
         let processor = pipeline.videoProcessor
         let appliedStrength = strength
+        let appliedOptions = stereo3DOptions
         let usingSpatialMode = inputMode == .spatial
         let shouldLimitDuration = !usingSpatialMode && limitToFirstTenSeconds && (sourceVideoDurationSeconds ?? .infinity) > 10.0
         let maxDurationSeconds = shouldLimitDuration ? 10.0 : nil
@@ -443,6 +445,7 @@ struct VideoFlowView: View {
                     outputURL = try await processor.processVideo(
                         inputURL: sourceVideoURL,
                         strength: appliedStrength,
+                        options: appliedOptions,
                         maxDurationSeconds: maxDurationSeconds
                     ) { update in
                         Task { @MainActor in
@@ -641,6 +644,11 @@ struct VideoFlowView: View {
                 if (sourceVideoDurationSeconds ?? 0) > 10 {
                     Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)
                 }
+
+                Text("Uses a simple baseline: min/max depth normalize + integer pixel shifts. Baseline disparity is 40px at strength=1.0.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)

@@ -27,6 +27,7 @@ struct HomeView: View {
     @State private var inputMode: InputMediaMode = .regular2D
     @State private var strength: Float = 0.9
     @State private var sbsLayoutEnabled = true
+    @State private var stereo3DOptions = Stereo3DOptions()
     @State private var isProcessing = false
     @State private var showVideoSubscriptionSheet = false
     private let bottomAnchorID = "content-bottom-anchor"
@@ -46,6 +47,7 @@ struct HomeView: View {
                                 inputMode: $inputMode,
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
+                                stereo3DOptions: $stereo3DOptions,
                                 galleryLibrary: galleryLibrary,
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
@@ -60,6 +62,7 @@ struct HomeView: View {
                                 inputMode: $inputMode,
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
+                                stereo3DOptions: $stereo3DOptions,
                                 subscriptionManager: subscriptionManager,
                                 galleryLibrary: galleryLibrary,
                                 onRequireSubscription: {
