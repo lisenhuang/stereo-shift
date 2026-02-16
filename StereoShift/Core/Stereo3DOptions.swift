@@ -3,6 +3,7 @@ import Foundation
 enum DepthModel: String, CaseIterable, Sendable {
     case depthAnythingV2SmallF16 = "DepthAnythingV2SmallF16"
     case depthAnythingV2SmallF32 = "DepthAnythingV2SmallF32"
+    case depthAnythingV3SmallF16 = "DepthAnythingV3SmallF16"
 
     var displayName: String {
         switch self {
@@ -10,6 +11,8 @@ enum DepthModel: String, CaseIterable, Sendable {
             return "Depth Anything v2 Small F16"
         case .depthAnythingV2SmallF32:
             return "Depth Anything v2 Small F32"
+        case .depthAnythingV3SmallF16:
+            return "Depth Anything v3 Small F16"
         }
     }
 
@@ -27,6 +30,12 @@ enum DepthModel: String, CaseIterable, Sendable {
                 "DepthAnythingV2SmallFP32",
                 "coreml-depth-anything-v2-small-f32",
                 "coreml-depth-anything-v2-small-fp32"
+            ]
+        case .depthAnythingV3SmallF16:
+            return [
+                "DepthAnythingV3SmallF16",
+                "DepthAnythingV3SmallFP16",
+                "coreml-depth-anything-v3-small"
             ]
         }
     }

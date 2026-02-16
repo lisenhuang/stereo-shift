@@ -616,20 +616,30 @@ struct PhotoFlowView: View {
                         .font(.headline)
 
                     Picker("Depth Model", selection: $stereo3DOptions.depthModel) {
-                        Text("Small F16").tag(DepthModel.depthAnythingV2SmallF16)
-                        Text("Small F32")
+                        Text("V2 F16").tag(DepthModel.depthAnythingV2SmallF16)
+                        Text("V2 F32")
                             .tag(DepthModel.depthAnythingV2SmallF32)
                             .disabled(!DepthModel.depthAnythingV2SmallF32.isAvailableInBundle)
+                        Text("V3 F16")
+                            .tag(DepthModel.depthAnythingV3SmallF16)
+                            .disabled(!DepthModel.depthAnythingV3SmallF16.isAvailableInBundle)
                     }
                     .pickerStyle(.segmented)
 
-                    Text("F16 is faster and smaller memory use. F32 may improve precision but is usually slower.")
+                    Text("F16 is faster and smaller memory use. F32 may improve precision but is usually slower. V3 is an alternative depth model to compare quality and speed.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
                     if !DepthModel.depthAnythingV2SmallF32.isAvailableInBundle {
                         Text("Small F32 model package is not installed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if !DepthModel.depthAnythingV3SmallF16.isAvailableInBundle {
+                        Text("V3 Small F16 model package is not installed.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -646,7 +656,7 @@ struct PhotoFlowView: View {
                     .pickerStyle(.segmented)
 
                     if stereo3DOptions.renderProfile == .quality {
-                        Text("Quality mode reduces edge jaggies with subpixel warp and stronger edge/hole processing. It is slower.")
+                        Text("Quality mode reduces edge jaggies with edge supersampling and stronger edge/hole processing. It is slower.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -683,7 +693,7 @@ struct PhotoFlowView: View {
                     .disabled(true)
 
                 if stereo3DOptions.renderProfile == .quality {
-                    Text("Uses quality depth rendering: higher-res depth map, stronger bilateral + edge-aware smoothing, subpixel z-buffer warp, and stronger hole filling. Baseline disparity is 35px at strength=1.0.")
+                    Text("Uses quality depth rendering: higher-res depth map, guided refinement, stronger bilateral + edge-aware smoothing, z-buffer warp, edge supersampling AA, and stronger hole filling. Baseline disparity is 35px at strength=1.0.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)

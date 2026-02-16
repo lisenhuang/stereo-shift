@@ -26,6 +26,9 @@ final class StereoRenderer {
         let outputEdgeAntiAliasEnabled: Bool
         let outputEdgeAntiAliasThreshold: Float
         let outputEdgeAntiAliasStrength: Float
+        let edgeSupersamplingEnabled: Bool
+        let edgeSupersamplingShiftGradientThreshold: Float
+        let edgeSupersamplingMaxBlend: Float
 
         static func forProfile(_ profile: StereoRenderProfile) -> RefinedServerPreset {
             switch profile {
@@ -51,7 +54,10 @@ final class StereoRenderer {
                     subpixelWarpEnabled: false,
                     outputEdgeAntiAliasEnabled: false,
                     outputEdgeAntiAliasThreshold: 0,
-                    outputEdgeAntiAliasStrength: 0
+                    outputEdgeAntiAliasStrength: 0,
+                    edgeSupersamplingEnabled: false,
+                    edgeSupersamplingShiftGradientThreshold: 0,
+                    edgeSupersamplingMaxBlend: 0
                 )
             case .quality:
                 return RefinedServerPreset(
@@ -72,10 +78,13 @@ final class StereoRenderer {
                     dilationMaxRightOffset: 2,
                     inpaintRadius: 3,
                     inpaintPasses: 2,
-                    subpixelWarpEnabled: true,
-                    outputEdgeAntiAliasEnabled: true,
-                    outputEdgeAntiAliasThreshold: 0.65,
-                    outputEdgeAntiAliasStrength: 0.45
+                    subpixelWarpEnabled: false,
+                    outputEdgeAntiAliasEnabled: false,
+                    outputEdgeAntiAliasThreshold: 0,
+                    outputEdgeAntiAliasStrength: 0,
+                    edgeSupersamplingEnabled: true,
+                    edgeSupersamplingShiftGradientThreshold: 0.55,
+                    edgeSupersamplingMaxBlend: 0.9
                 )
             }
         }
@@ -473,6 +482,31 @@ final class StereoRenderer {
             width: width,
             height: height
         )
+
+        if preset.edgeSupersamplingEnabled {
+            supersampleWarpEdges(
+                bytes: &left,
+                width: width,
+                height: height,
+                sourceBytes: sourceBytes,
+                depthMap: depthMap,
+                baselinePerEye: baselinePerEye,
+                direction: -1,
+                shiftGradientThreshold: preset.edgeSupersamplingShiftGradientThreshold,
+                maxBlend: preset.edgeSupersamplingMaxBlend
+            )
+            supersampleWarpEdges(
+                bytes: &right,
+                width: width,
+                height: height,
+                sourceBytes: sourceBytes,
+                depthMap: depthMap,
+                baselinePerEye: baselinePerEye,
+                direction: 1,
+                shiftGradientThreshold: preset.edgeSupersamplingShiftGradientThreshold,
+                maxBlend: preset.edgeSupersamplingMaxBlend
+            )
+        }
 
         if preset.outputEdgeAntiAliasEnabled {
             let shiftMap = depthMap.map { max(0, min(1, $0)) * baselinePerEye }
@@ -1777,6 +1811,94 @@ final class StereoRenderer {
                 bytes[sourceOffset + 2] = sourceBytes[sourceOffset + 2]
                 bytes[sourceOffset + 3] = sourceBytes[sourceOffset + 3]
                 mask[index] = 1
+            }
+        }
+    }
+
+    private func supersampleWarpEdges(
+        bytes: inout [UInt8],
+        width: Int,
+        height: Int,
+        sourceBytes: [UInt8],
+        depthMap: [Float],
+        baselinePerEye: Float,
+        direction: Float,
+        shiftGradientThreshold: Float,
+        maxBlend: Float
+    ) {
+        guard width > 2, height > 2 else { return }
+        guard depthMap.count == width * height else { return }
+        guard sourceBytes.count == width * height * 4 else { return }
+
+        let safeThreshold = max(0.0001, shiftGradientThreshold)
+        let safeMaxBlend = max(0, min(1, maxBlend))
+        guard safeMaxBlend > 0 else { return }
+
+        // 2x2 jitter around the inverse-warp sample point reduces jaggies without large supersampled buffers.
+        let jitter: Float = 0.25
+        let halfThreshold = safeThreshold * 2
+
+        for y in 1..<(height - 1) {
+            for x in 1..<(width - 1) {
+                let index = (y * width) + x
+                let gx = abs(depthMap[index + 1] - depthMap[index - 1]) * baselinePerEye
+                let gy = abs(depthMap[index + width] - depthMap[index - width]) * baselinePerEye
+                let edgeScore = max(gx, gy)
+                guard edgeScore > safeThreshold else {
+                    continue
+                }
+
+                let depthValue = max(0, min(1, depthMap[index]))
+                let shift = depthValue * baselinePerEye
+                let sourceX = Float(x) + (direction * shift)
+                let sourceY = Float(y)
+
+                var sumB: Float = 0
+                var sumG: Float = 0
+                var sumR: Float = 0
+                var sumA: Float = 0
+                var count: Float = 0
+
+                let positions: [(Float, Float)] = [
+                    (sourceX - jitter, sourceY - jitter),
+                    (sourceX + jitter, sourceY - jitter),
+                    (sourceX - jitter, sourceY + jitter),
+                    (sourceX + jitter, sourceY + jitter)
+                ]
+
+                for (sx, sy) in positions {
+                    if let sample = bilinearSample(from: sourceBytes, width: width, height: height, x: sx, y: sy) {
+                        sumB += Float(sample.0)
+                        sumG += Float(sample.1)
+                        sumR += Float(sample.2)
+                        sumA += Float(sample.3)
+                        count += 1
+                    }
+                }
+
+                guard count > 0 else {
+                    continue
+                }
+
+                let inv = 1 / count
+                let targetB = sumB * inv
+                let targetG = sumG * inv
+                let targetR = sumR * inv
+                let targetA = sumA * inv
+
+                let normalized = min(1, (edgeScore - safeThreshold) / halfThreshold)
+                let blend = safeMaxBlend * (0.25 + (0.75 * normalized))
+
+                let offset = index * 4
+                let oldB = Float(bytes[offset])
+                let oldG = Float(bytes[offset + 1])
+                let oldR = Float(bytes[offset + 2])
+                let oldA = Float(bytes[offset + 3])
+
+                bytes[offset] = UInt8(max(0, min(255, Int(((oldB * (1 - blend)) + (targetB * blend)).rounded()))))
+                bytes[offset + 1] = UInt8(max(0, min(255, Int(((oldG * (1 - blend)) + (targetG * blend)).rounded()))))
+                bytes[offset + 2] = UInt8(max(0, min(255, Int(((oldR * (1 - blend)) + (targetR * blend)).rounded()))))
+                bytes[offset + 3] = UInt8(max(0, min(255, Int(((oldA * (1 - blend)) + (targetA * blend)).rounded()))))
             }
         }
     }
