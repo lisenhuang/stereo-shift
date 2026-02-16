@@ -2,6 +2,16 @@ import Foundation
 
 enum DepthModel: String, CaseIterable, Sendable {
     case depthAnythingV2SmallF16 = "DepthAnythingV2SmallF16"
+    case depthAnythingV2SmallF32 = "DepthAnythingV2SmallF32"
+
+    var displayName: String {
+        switch self {
+        case .depthAnythingV2SmallF16:
+            return "Depth Anything v2 Small F16"
+        case .depthAnythingV2SmallF32:
+            return "Depth Anything v2 Small F32"
+        }
+    }
 
     var resourceNameCandidates: [String] {
         switch self {
@@ -11,7 +21,51 @@ enum DepthModel: String, CaseIterable, Sendable {
                 "DepthAnythingV2SmallFP16",
                 "coreml-depth-anything-v2-small"
             ]
+        case .depthAnythingV2SmallF32:
+            return [
+                "DepthAnythingV2SmallF32",
+                "DepthAnythingV2SmallFP32",
+                "coreml-depth-anything-v2-small-f32",
+                "coreml-depth-anything-v2-small-fp32"
+            ]
         }
+    }
+
+    var isAvailableInBundle: Bool {
+        let names = Set(resourceNameCandidates)
+
+        for name in resourceNameCandidates {
+            if Bundle.main.url(forResource: name, withExtension: "mlmodelc") != nil {
+                return true
+            }
+            if Bundle.main.url(forResource: name, withExtension: "mlmodelc", subdirectory: "Resources") != nil {
+                return true
+            }
+            if Bundle.main.url(forResource: name, withExtension: "mlpackage") != nil {
+                return true
+            }
+            if Bundle.main.url(forResource: name, withExtension: "mlpackage", subdirectory: "Resources") != nil {
+                return true
+            }
+        }
+
+        guard let resourcesURL = Bundle.main.resourceURL,
+              let enumerator = FileManager.default.enumerator(at: resourcesURL, includingPropertiesForKeys: nil) else {
+            return false
+        }
+
+        while let url = enumerator.nextObject() as? URL {
+            let ext = url.pathExtension
+            guard ext == "mlmodelc" || ext == "mlpackage" else {
+                continue
+            }
+            let name = url.deletingPathExtension().lastPathComponent
+            if names.contains(name) {
+                return true
+            }
+        }
+
+        return false
     }
 }
 
@@ -57,7 +111,7 @@ enum VideoDepthCadence: Int, CaseIterable, Sendable {
 struct Stereo3DOptions: Hashable, Sendable {
     // Keep using server-like generation (simple min/max depth normalize + integer pixel shifts).
     var generationMethod: StereoGenerationMethod = .serverLike
-    // Fixed depth model choice (no in-app selector).
+    // User-selectable model. F16 remains the default.
     var depthModel: DepthModel = .depthAnythingV2SmallF16
     var depthQuality: DepthQuality = .quality
     var renderEngine: StereoRenderEngine = .cpu

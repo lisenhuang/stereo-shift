@@ -31,7 +31,7 @@ enum StereoPipelineError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .modelNotFound:
-            return "Depth model is missing. Add DepthAnythingV2SmallF16.mlpackage to StereoShift/Resources and try again."
+            return "Depth model is missing. Add DepthAnythingV2SmallF16.mlpackage or DepthAnythingV2SmallF32.mlpackage to StereoShift/Resources and try again."
         case .modelInputNotFound:
             return "Model input could not be resolved."
         case .modelOutputNotFound:

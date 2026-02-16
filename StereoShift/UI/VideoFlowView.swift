@@ -617,6 +617,31 @@ struct VideoFlowView: View {
     private var controlsCard: some View {
         VStack(spacing: 14) {
             if inputMode == .regular2D {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Depth Model")
+                        .font(.headline)
+
+                    Picker("Depth Model", selection: $stereo3DOptions.depthModel) {
+                        Text("Small F16").tag(DepthModel.depthAnythingV2SmallF16)
+                        Text("Small F32")
+                            .tag(DepthModel.depthAnythingV2SmallF32)
+                            .disabled(!DepthModel.depthAnythingV2SmallF32.isAvailableInBundle)
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("F16 is faster and smaller memory use. F32 may improve precision but is usually slower.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if !DepthModel.depthAnythingV2SmallF32.isAvailableInBundle {
+                        Text("Small F32 model package is not installed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+
                 HStack {
                     Text("3D Strength")
                         .font(.headline)
@@ -645,7 +670,7 @@ struct VideoFlowView: View {
                     Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)
                 }
 
-                Text("Uses refined depth rendering: min/max depth normalization, bilateral smoothing, edge-aware filtering, z-buffer forward warp, and hole filling. Baseline disparity is 35px at strength=1.0.")
+                Text("Uses fast depth rendering: min/max depth normalization, light bilateral smoothing, z-buffer forward warp, and quick hole filling (edge filtering skipped for speed). Baseline disparity is 35px at strength=1.0.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

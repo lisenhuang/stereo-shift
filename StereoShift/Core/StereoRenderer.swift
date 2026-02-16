@@ -6,15 +6,16 @@ import Vision
 final class StereoRenderer {
     private struct RefinedServerPreset {
         static let baselinePerEye: Float = 35
-        static let depthShortSideCap = 448
-        static let bilateralDiameter = 5
-        static let bilateralSigmaColor: Float = 38.25
+        static let depthShortSideCap = 392
+        static let bilateralDiameter = 3
+        static let bilateralSigmaColor: Float = 51
         static let bilateralSigmaSpace: Float = 3
+        static let edgeFilteringEnabled = false
         static let cannyLowThreshold: Float = 50
         static let cannyHighThreshold: Float = 150
         static let edgeKernelSize = 3
         static let dilationIterations = 1
-        static let inpaintRadius = 2
+        static let inpaintRadius = 1
     }
 
     private let depthEstimator: DepthEstimator
@@ -266,20 +267,22 @@ final class StereoRenderer {
             sigmaColor: RefinedServerPreset.bilateralSigmaColor,
             sigmaSpace: RefinedServerPreset.bilateralSigmaSpace
         )
-        let edgeMask = cannyEdgeMask(
-            depthMap: depthMap,
-            width: depthProcessWidth,
-            height: depthProcessHeight,
-            lowThreshold: RefinedServerPreset.cannyLowThreshold,
-            highThreshold: RefinedServerPreset.cannyHighThreshold
-        )
-        depthMap = smoothDepthAtEdges(
-            depthMap: depthMap,
-            edgeMask: edgeMask,
-            width: depthProcessWidth,
-            height: depthProcessHeight,
-            kernelSize: RefinedServerPreset.edgeKernelSize
-        )
+        if RefinedServerPreset.edgeFilteringEnabled {
+            let edgeMask = cannyEdgeMask(
+                depthMap: depthMap,
+                width: depthProcessWidth,
+                height: depthProcessHeight,
+                lowThreshold: RefinedServerPreset.cannyLowThreshold,
+                highThreshold: RefinedServerPreset.cannyHighThreshold
+            )
+            depthMap = smoothDepthAtEdges(
+                depthMap: depthMap,
+                edgeMask: edgeMask,
+                width: depthProcessWidth,
+                height: depthProcessHeight,
+                kernelSize: RefinedServerPreset.edgeKernelSize
+            )
+        }
         if depthProcessWidth != width || depthProcessHeight != height {
             depthMap = resizeDepthMap(
                 depthMap,
@@ -336,14 +339,14 @@ final class StereoRenderer {
                 mask: &leftMask,
                 width: width,
                 height: height,
-                maxRightOffset: 2
+                maxRightOffset: 1
             )
             asymmetricHorizontalDilationFill(
                 bytes: &right,
                 mask: &rightMask,
                 width: width,
                 height: height,
-                maxRightOffset: 2
+                maxRightOffset: 1
             )
         }
 
@@ -1332,7 +1335,7 @@ final class StereoRenderer {
     ) {
         let clampedRadius = max(1, radius)
         let radiusSquared = clampedRadius * clampedRadius
-        let maxPasses = max(2, clampedRadius)
+        let maxPasses = 1
 
         for _ in 0..<maxPasses {
             var didFillAny = false
