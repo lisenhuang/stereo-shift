@@ -5,17 +5,80 @@ import Vision
 
 final class StereoRenderer {
     private struct RefinedServerPreset {
-        static let baselinePerEye: Float = 35
-        static let depthShortSideCap = 392
-        static let bilateralDiameter = 3
-        static let bilateralSigmaColor: Float = 51
-        static let bilateralSigmaSpace: Float = 3
-        static let edgeFilteringEnabled = false
-        static let cannyLowThreshold: Float = 50
-        static let cannyHighThreshold: Float = 150
-        static let edgeKernelSize = 3
-        static let dilationIterations = 1
-        static let inpaintRadius = 1
+        let baselinePerEye: Float
+        let depthShortSideCap: Int
+        let bilateralDiameter: Int
+        let bilateralSigmaColor: Float
+        let bilateralSigmaSpace: Float
+        let guidedDepthRefinementEnabled: Bool
+        let depthEdgeFeatherEnabled: Bool
+        let depthEdgeFeatherThreshold: Float
+        let depthEdgeFeatherStrength: Float
+        let edgeFilteringEnabled: Bool
+        let cannyLowThreshold: Float
+        let cannyHighThreshold: Float
+        let edgeKernelSize: Int
+        let dilationIterations: Int
+        let dilationMaxRightOffset: Int
+        let inpaintRadius: Int
+        let inpaintPasses: Int
+        let subpixelWarpEnabled: Bool
+        let outputEdgeAntiAliasEnabled: Bool
+        let outputEdgeAntiAliasThreshold: Float
+        let outputEdgeAntiAliasStrength: Float
+
+        static func forProfile(_ profile: StereoRenderProfile) -> RefinedServerPreset {
+            switch profile {
+            case .ultraFast:
+                return RefinedServerPreset(
+                    baselinePerEye: 35,
+                    depthShortSideCap: 392,
+                    bilateralDiameter: 3,
+                    bilateralSigmaColor: 51,
+                    bilateralSigmaSpace: 3,
+                    guidedDepthRefinementEnabled: false,
+                    depthEdgeFeatherEnabled: false,
+                    depthEdgeFeatherThreshold: 0,
+                    depthEdgeFeatherStrength: 0,
+                    edgeFilteringEnabled: false,
+                    cannyLowThreshold: 50,
+                    cannyHighThreshold: 150,
+                    edgeKernelSize: 3,
+                    dilationIterations: 1,
+                    dilationMaxRightOffset: 1,
+                    inpaintRadius: 1,
+                    inpaintPasses: 1,
+                    subpixelWarpEnabled: false,
+                    outputEdgeAntiAliasEnabled: false,
+                    outputEdgeAntiAliasThreshold: 0,
+                    outputEdgeAntiAliasStrength: 0
+                )
+            case .quality:
+                return RefinedServerPreset(
+                    baselinePerEye: 35,
+                    depthShortSideCap: 518,
+                    bilateralDiameter: 9,
+                    bilateralSigmaColor: 25.5,
+                    bilateralSigmaSpace: 5,
+                    guidedDepthRefinementEnabled: true,
+                    depthEdgeFeatherEnabled: true,
+                    depthEdgeFeatherThreshold: 0.03,
+                    depthEdgeFeatherStrength: 0.5,
+                    edgeFilteringEnabled: true,
+                    cannyLowThreshold: 50,
+                    cannyHighThreshold: 150,
+                    edgeKernelSize: 5,
+                    dilationIterations: 1,
+                    dilationMaxRightOffset: 2,
+                    inpaintRadius: 3,
+                    inpaintPasses: 2,
+                    subpixelWarpEnabled: true,
+                    outputEdgeAntiAliasEnabled: true,
+                    outputEdgeAntiAliasThreshold: 0.65,
+                    outputEdgeAntiAliasStrength: 0.45
+                )
+            }
+        }
     }
 
     private let depthEstimator: DepthEstimator
@@ -245,17 +308,32 @@ final class StereoRenderer {
     }
 
     private func makeSBSServerLike(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
+        let preset = RefinedServerPreset.forProfile(options.renderProfile)
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
         let (depthProcessWidth, depthProcessHeight) = serverDepthProcessingSize(
             width: width,
             height: height,
-            shortSideCap: min(options.depthQuality.shortSide, RefinedServerPreset.depthShortSideCap)
+            shortSideCap: min(options.depthQuality.shortSide, preset.depthShortSideCap)
         )
+
+        let normalizedDepthInput: CVPixelBuffer
+        if preset.guidedDepthRefinementEnabled {
+            normalizedDepthInput = try refineDepthBufferIfNeeded(
+                depth: depth,
+                guide: rgb,
+                targetWidth: depthProcessWidth,
+                targetHeight: depthProcessHeight,
+                refinement: .guidedFilter,
+                tuning: .enhanced
+            )
+        } else {
+            normalizedDepthInput = depth
+        }
 
         let sourceBytes = try bgraBytes(from: rgb)
         var depthMap = try serverNormalizedDepthMap(
-            from: depth,
+            from: normalizedDepthInput,
             targetWidth: depthProcessWidth,
             targetHeight: depthProcessHeight
         )
@@ -263,24 +341,24 @@ final class StereoRenderer {
             depthMap: depthMap,
             width: depthProcessWidth,
             height: depthProcessHeight,
-            diameter: RefinedServerPreset.bilateralDiameter,
-            sigmaColor: RefinedServerPreset.bilateralSigmaColor,
-            sigmaSpace: RefinedServerPreset.bilateralSigmaSpace
+            diameter: preset.bilateralDiameter,
+            sigmaColor: preset.bilateralSigmaColor,
+            sigmaSpace: preset.bilateralSigmaSpace
         )
-        if RefinedServerPreset.edgeFilteringEnabled {
+        if preset.edgeFilteringEnabled {
             let edgeMask = cannyEdgeMask(
                 depthMap: depthMap,
                 width: depthProcessWidth,
                 height: depthProcessHeight,
-                lowThreshold: RefinedServerPreset.cannyLowThreshold,
-                highThreshold: RefinedServerPreset.cannyHighThreshold
+                lowThreshold: preset.cannyLowThreshold,
+                highThreshold: preset.cannyHighThreshold
             )
             depthMap = smoothDepthAtEdges(
                 depthMap: depthMap,
                 edgeMask: edgeMask,
                 width: depthProcessWidth,
                 height: depthProcessHeight,
-                kernelSize: RefinedServerPreset.edgeKernelSize
+                kernelSize: preset.edgeKernelSize
             )
         }
         if depthProcessWidth != width || depthProcessHeight != height {
@@ -292,10 +370,19 @@ final class StereoRenderer {
                 targetHeight: height
             )
         }
+        if preset.depthEdgeFeatherEnabled {
+            depthMap = featherDepthDiscontinuities(
+                depthMap: depthMap,
+                width: width,
+                height: height,
+                threshold: preset.depthEdgeFeatherThreshold,
+                maxBlend: preset.depthEdgeFeatherStrength
+            )
+        }
 
         // Matches the server baseline disparity (per-eye shift) at strength=1.0.
         let clampedStrength = max(0, min(1.5, strength))
-        let baselinePerEye = max(0, RefinedServerPreset.baselinePerEye * clampedStrength)
+        let baselinePerEye = max(0, preset.baselinePerEye * clampedStrength)
 
         var left = [UInt8](repeating: 0, count: width * height * 4)
         var right = [UInt8](repeating: 0, count: width * height * 4)
@@ -304,49 +391,50 @@ final class StereoRenderer {
         var leftZBuffer = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
         var rightZBuffer = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
 
-        // Forward mapping with z-buffer for occlusion handling.
-        for y in 0..<height {
-            for x in 0..<width {
-                let srcIdx = (y * width) + x
-                let depthValue = max(0, min(1, depthMap[srcIdx]))
-                let shift = Int(depthValue * baselinePerEye)
-
-                let destXL = min(width - 1, x + shift)
-                let destXR = max(0, x - shift)
-
-                let p = pixel(sourceBytes, width: width, x: x, y: y)
-
-                let leftIdx = (y * width) + destXL
-                let rightIdx = (y * width) + destXR
-
-                if depthValue > leftZBuffer[leftIdx] {
-                    writePixel(p, into: &left, at: leftIdx)
-                    leftMask[leftIdx] = 1
-                    leftZBuffer[leftIdx] = depthValue
-                }
-
-                if depthValue > rightZBuffer[rightIdx] {
-                    writePixel(p, into: &right, at: rightIdx)
-                    rightMask[rightIdx] = 1
-                    rightZBuffer[rightIdx] = depthValue
-                }
-            }
+        if preset.subpixelWarpEnabled {
+            forwardWarpWithSubpixelShift(
+                sourceBytes: sourceBytes,
+                depthMap: depthMap,
+                width: width,
+                height: height,
+                baselinePerEye: baselinePerEye,
+                left: &left,
+                right: &right,
+                leftMask: &leftMask,
+                rightMask: &rightMask,
+                leftZBuffer: &leftZBuffer,
+                rightZBuffer: &rightZBuffer
+            )
+        } else {
+            forwardWarpWithIntegerShift(
+                sourceBytes: sourceBytes,
+                depthMap: depthMap,
+                width: width,
+                height: height,
+                baselinePerEye: baselinePerEye,
+                left: &left,
+                right: &right,
+                leftMask: &leftMask,
+                rightMask: &rightMask,
+                leftZBuffer: &leftZBuffer,
+                rightZBuffer: &rightZBuffer
+            )
         }
 
-        for _ in 0..<RefinedServerPreset.dilationIterations {
+        for _ in 0..<preset.dilationIterations {
             asymmetricHorizontalDilationFill(
                 bytes: &left,
                 mask: &leftMask,
                 width: width,
                 height: height,
-                maxRightOffset: 1
+                maxRightOffset: preset.dilationMaxRightOffset
             )
             asymmetricHorizontalDilationFill(
                 bytes: &right,
                 mask: &rightMask,
                 width: width,
                 height: height,
-                maxRightOffset: 1
+                maxRightOffset: preset.dilationMaxRightOffset
             )
         }
 
@@ -356,7 +444,8 @@ final class StereoRenderer {
                 mask: &leftMask,
                 width: width,
                 height: height,
-                radius: RefinedServerPreset.inpaintRadius
+                radius: preset.inpaintRadius,
+                maxPasses: preset.inpaintPasses
             )
         }
         if rightMask.contains(0) {
@@ -365,7 +454,8 @@ final class StereoRenderer {
                 mask: &rightMask,
                 width: width,
                 height: height,
-                radius: RefinedServerPreset.inpaintRadius
+                radius: preset.inpaintRadius,
+                maxPasses: preset.inpaintPasses
             )
         }
 
@@ -384,7 +474,270 @@ final class StereoRenderer {
             height: height
         )
 
+        if preset.outputEdgeAntiAliasEnabled {
+            let shiftMap = depthMap.map { max(0, min(1, $0)) * baselinePerEye }
+            antiAliasWarpEdges(
+                bytes: &left,
+                width: width,
+                height: height,
+                shiftMap: shiftMap,
+                gradientThreshold: preset.outputEdgeAntiAliasThreshold,
+                maxBlend: preset.outputEdgeAntiAliasStrength
+            )
+            antiAliasWarpEdges(
+                bytes: &right,
+                width: width,
+                height: height,
+                shiftMap: shiftMap,
+                gradientThreshold: preset.outputEdgeAntiAliasThreshold,
+                maxBlend: preset.outputEdgeAntiAliasStrength
+            )
+        }
+
         return try assembleSBS(left: left, right: right, width: width, height: height)
+    }
+
+    private func forwardWarpWithIntegerShift(
+        sourceBytes: [UInt8],
+        depthMap: [Float],
+        width: Int,
+        height: Int,
+        baselinePerEye: Float,
+        left: inout [UInt8],
+        right: inout [UInt8],
+        leftMask: inout [UInt8],
+        rightMask: inout [UInt8],
+        leftZBuffer: inout [Float],
+        rightZBuffer: inout [Float]
+    ) {
+        // Fast integer-shift path keeps runtime low.
+        for y in 0..<height {
+            for x in 0..<width {
+                let sourceIndex = (y * width) + x
+                let depthValue = max(0, min(1, depthMap[sourceIndex]))
+                let shift = Int(depthValue * baselinePerEye)
+
+                let leftX = min(width - 1, x + shift)
+                let rightX = max(0, x - shift)
+
+                let sourcePixel = pixel(sourceBytes, width: width, x: x, y: y)
+                let leftIndex = (y * width) + leftX
+                let rightIndex = (y * width) + rightX
+
+                if depthValue > leftZBuffer[leftIndex] {
+                    writePixel(sourcePixel, into: &left, at: leftIndex)
+                    leftMask[leftIndex] = 1
+                    leftZBuffer[leftIndex] = depthValue
+                }
+
+                if depthValue > rightZBuffer[rightIndex] {
+                    writePixel(sourcePixel, into: &right, at: rightIndex)
+                    rightMask[rightIndex] = 1
+                    rightZBuffer[rightIndex] = depthValue
+                }
+            }
+        }
+    }
+
+    private func forwardWarpWithSubpixelShift(
+        sourceBytes: [UInt8],
+        depthMap: [Float],
+        width: Int,
+        height: Int,
+        baselinePerEye: Float,
+        left: inout [UInt8],
+        right: inout [UInt8],
+        leftMask: inout [UInt8],
+        rightMask: inout [UInt8],
+        leftZBuffer: inout [Float],
+        rightZBuffer: inout [Float]
+    ) {
+        // Higher-quality path: subpixel splat to reduce stair-stepping on object edges.
+        let pixelCount = width * height
+        var leftSumB = [Float](repeating: 0, count: pixelCount)
+        var leftSumG = [Float](repeating: 0, count: pixelCount)
+        var leftSumR = [Float](repeating: 0, count: pixelCount)
+        var leftSumA = [Float](repeating: 0, count: pixelCount)
+        var leftWeights = [Float](repeating: 0, count: pixelCount)
+
+        var rightSumB = [Float](repeating: 0, count: pixelCount)
+        var rightSumG = [Float](repeating: 0, count: pixelCount)
+        var rightSumR = [Float](repeating: 0, count: pixelCount)
+        var rightSumA = [Float](repeating: 0, count: pixelCount)
+        var rightWeights = [Float](repeating: 0, count: pixelCount)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let sourceIndex = (y * width) + x
+                let depthValue = max(0, min(1, depthMap[sourceIndex]))
+                let shift = depthValue * baselinePerEye
+                let sourcePixel = pixel(sourceBytes, width: width, x: x, y: y)
+
+                splatPixelLinear(
+                    pixel: sourcePixel,
+                    depthValue: depthValue,
+                    targetX: Float(x) + shift,
+                    y: y,
+                    width: width,
+                    sumB: &leftSumB,
+                    sumG: &leftSumG,
+                    sumR: &leftSumR,
+                    sumA: &leftSumA,
+                    weights: &leftWeights,
+                    zBuffer: &leftZBuffer,
+                    mask: &leftMask
+                )
+
+                splatPixelLinear(
+                    pixel: sourcePixel,
+                    depthValue: depthValue,
+                    targetX: Float(x) - shift,
+                    y: y,
+                    width: width,
+                    sumB: &rightSumB,
+                    sumG: &rightSumG,
+                    sumR: &rightSumR,
+                    sumA: &rightSumA,
+                    weights: &rightWeights,
+                    zBuffer: &rightZBuffer,
+                    mask: &rightMask
+                )
+            }
+        }
+
+        resolveSplatAccumulation(
+            bytes: &left,
+            mask: leftMask,
+            sumB: leftSumB,
+            sumG: leftSumG,
+            sumR: leftSumR,
+            sumA: leftSumA,
+            weights: leftWeights
+        )
+        resolveSplatAccumulation(
+            bytes: &right,
+            mask: rightMask,
+            sumB: rightSumB,
+            sumG: rightSumG,
+            sumR: rightSumR,
+            sumA: rightSumA,
+            weights: rightWeights
+        )
+    }
+
+    private func splatPixelLinear(
+        pixel: (UInt8, UInt8, UInt8, UInt8),
+        depthValue: Float,
+        targetX: Float,
+        y: Int,
+        width: Int,
+        sumB: inout [Float],
+        sumG: inout [Float],
+        sumR: inout [Float],
+        sumA: inout [Float],
+        weights: inout [Float],
+        zBuffer: inout [Float],
+        mask: inout [UInt8]
+    ) {
+        let clampedX = max(0, min(Float(width - 1), targetX))
+        let lowerX = Int(floor(clampedX))
+        let upperX = min(width - 1, lowerX + 1)
+        let upperWeight = clampedX - Float(lowerX)
+        let lowerWeight = 1 - upperWeight
+
+        blendSplatContribution(
+            pixel: pixel,
+            depthValue: depthValue,
+            x: lowerX,
+            y: y,
+            width: width,
+            weight: lowerWeight,
+            sumB: &sumB,
+            sumG: &sumG,
+            sumR: &sumR,
+            sumA: &sumA,
+            weights: &weights,
+            zBuffer: &zBuffer,
+            mask: &mask
+        )
+
+        if upperX != lowerX {
+            blendSplatContribution(
+                pixel: pixel,
+                depthValue: depthValue,
+                x: upperX,
+                y: y,
+                width: width,
+                weight: upperWeight,
+                sumB: &sumB,
+                sumG: &sumG,
+                sumR: &sumR,
+                sumA: &sumA,
+                weights: &weights,
+                zBuffer: &zBuffer,
+                mask: &mask
+            )
+        }
+    }
+
+    private func blendSplatContribution(
+        pixel: (UInt8, UInt8, UInt8, UInt8),
+        depthValue: Float,
+        x: Int,
+        y: Int,
+        width: Int,
+        weight: Float,
+        sumB: inout [Float],
+        sumG: inout [Float],
+        sumR: inout [Float],
+        sumA: inout [Float],
+        weights: inout [Float],
+        zBuffer: inout [Float],
+        mask: inout [UInt8]
+    ) {
+        guard weight > 0.00001 else { return }
+
+        let index = (y * width) + x
+        let depthDelta = depthValue - zBuffer[index]
+
+        if depthDelta > 0.0005 {
+            zBuffer[index] = depthValue
+            weights[index] = weight
+            sumB[index] = Float(pixel.0) * weight
+            sumG[index] = Float(pixel.1) * weight
+            sumR[index] = Float(pixel.2) * weight
+            sumA[index] = Float(pixel.3) * weight
+            mask[index] = 1
+            return
+        }
+
+        if abs(depthDelta) <= 0.02 {
+            weights[index] += weight
+            sumB[index] += Float(pixel.0) * weight
+            sumG[index] += Float(pixel.1) * weight
+            sumR[index] += Float(pixel.2) * weight
+            sumA[index] += Float(pixel.3) * weight
+            mask[index] = 1
+        }
+    }
+
+    private func resolveSplatAccumulation(
+        bytes: inout [UInt8],
+        mask: [UInt8],
+        sumB: [Float],
+        sumG: [Float],
+        sumR: [Float],
+        sumA: [Float],
+        weights: [Float]
+    ) {
+        for index in mask.indices where mask[index] == 1 {
+            let weight = max(0.00001, weights[index])
+            let offset = index * 4
+            bytes[offset] = UInt8(max(0, min(255, Int((sumB[index] / weight).rounded()))))
+            bytes[offset + 1] = UInt8(max(0, min(255, Int((sumG[index] / weight).rounded()))))
+            bytes[offset + 2] = UInt8(max(0, min(255, Int((sumR[index] / weight).rounded()))))
+            bytes[offset + 3] = UInt8(max(0, min(255, Int((sumA[index] / weight).rounded()))))
+        }
     }
 
     private func assembleSBS(left: [UInt8], right: [UInt8], width: Int, height: Int) throws -> CVPixelBuffer {
@@ -1331,13 +1684,14 @@ final class StereoRenderer {
         mask: inout [UInt8],
         width: Int,
         height: Int,
-        radius: Int
+        radius: Int,
+        maxPasses: Int
     ) {
         let clampedRadius = max(1, radius)
         let radiusSquared = clampedRadius * clampedRadius
-        let maxPasses = 1
+        let clampedPasses = max(1, maxPasses)
 
-        for _ in 0..<maxPasses {
+        for _ in 0..<clampedPasses {
             var didFillAny = false
             let sourceBytes = bytes
             let sourceMask = mask
@@ -1423,6 +1777,116 @@ final class StereoRenderer {
                 bytes[sourceOffset + 2] = sourceBytes[sourceOffset + 2]
                 bytes[sourceOffset + 3] = sourceBytes[sourceOffset + 3]
                 mask[index] = 1
+            }
+        }
+    }
+
+    private func featherDepthDiscontinuities(
+        depthMap: [Float],
+        width: Int,
+        height: Int,
+        threshold: Float,
+        maxBlend: Float
+    ) -> [Float] {
+        guard width > 2, height > 2 else { return depthMap }
+
+        let source = depthMap
+        var output = depthMap
+        let safeThreshold = max(0.0001, threshold)
+        let safeMaxBlend = max(0, min(1, maxBlend))
+
+        for y in 1..<(height - 1) {
+            for x in 1..<(width - 1) {
+                let index = (y * width) + x
+                let gx = abs(source[index + 1] - source[index - 1])
+                let gy = abs(source[index + width] - source[index - width])
+                let edgeScore = max(gx, gy)
+                guard edgeScore > safeThreshold else {
+                    continue
+                }
+
+                let normalized = min(1, (edgeScore - safeThreshold) / (safeThreshold * 2))
+                let blend = safeMaxBlend * (0.35 + (0.65 * normalized))
+                guard blend > 0 else {
+                    continue
+                }
+
+                // 3x3 gaussian-like smoothing only near strong depth discontinuities.
+                var weightedSum: Float = 0
+                var totalWeight: Float = 0
+                for ky in -1...1 {
+                    for kx in -1...1 {
+                        let sampleIndex = ((y + ky) * width) + (x + kx)
+                        let wx: Float = (kx == 0) ? 2 : 1
+                        let wy: Float = (ky == 0) ? 2 : 1
+                        let weight = wx * wy
+                        weightedSum += source[sampleIndex] * weight
+                        totalWeight += weight
+                    }
+                }
+
+                guard totalWeight > 0 else {
+                    continue
+                }
+
+                let blurred = weightedSum / totalWeight
+                output[index] = (source[index] * (1 - blend)) + (blurred * blend)
+            }
+        }
+
+        return output
+    }
+
+    private func antiAliasWarpEdges(
+        bytes: inout [UInt8],
+        width: Int,
+        height: Int,
+        shiftMap: [Float],
+        gradientThreshold: Float,
+        maxBlend: Float
+    ) {
+        guard width > 2, height > 2 else { return }
+        guard shiftMap.count == width * height else { return }
+
+        let source = bytes
+        let rowStride = width * 4
+        let safeThreshold = max(0.0001, gradientThreshold)
+        let safeMaxBlend = max(0, min(1, maxBlend))
+
+        for y in 1..<(height - 1) {
+            for x in 1..<(width - 1) {
+                let index = (y * width) + x
+                let gx = abs(shiftMap[index + 1] - shiftMap[index - 1])
+                let gy = abs(shiftMap[index + width] - shiftMap[index - width])
+                let edgeScore = max(gx, gy)
+                guard edgeScore > safeThreshold else {
+                    continue
+                }
+
+                let normalized = min(1, (edgeScore - safeThreshold) / (safeThreshold * 2))
+                let blend = safeMaxBlend * (0.3 + (0.7 * normalized))
+                guard blend > 0 else {
+                    continue
+                }
+
+                let offset = (y * rowStride) + (x * 4)
+                let leftOffset = offset - 4
+                let rightOffset = offset + 4
+                let upOffset = offset - rowStride
+                let downOffset = offset + rowStride
+
+                for channel in 0..<4 {
+                    let center = Float(source[offset + channel])
+                    let blurred =
+                        (center * 4) +
+                        Float(source[leftOffset + channel]) +
+                        Float(source[rightOffset + channel]) +
+                        Float(source[upOffset + channel]) +
+                        Float(source[downOffset + channel])
+                    let averaged = blurred / 8
+                    let mixed = (center * (1 - blend)) + (averaged * blend)
+                    bytes[offset + channel] = UInt8(max(0, min(255, Int(mixed.rounded()))))
+                }
             }
         }
     }

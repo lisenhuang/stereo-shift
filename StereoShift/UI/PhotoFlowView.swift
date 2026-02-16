@@ -487,7 +487,8 @@ struct PhotoFlowView: View {
                 } else {
                     output = try await renderer.makeSBS(from: sourceImage, strength: appliedStrength, options: appliedOptions)
                 }
-                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: 0.90)
+                let jpegQuality: Float = appliedOptions.renderProfile == .quality ? 0.95 : 0.90
+                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
 
                 if Task.isCancelled {
                     TempFiles.removeItemIfExists(at: fileURL)
@@ -633,6 +634,28 @@ struct PhotoFlowView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    Text("Render Profile")
+                        .font(.headline)
+                        .padding(.top, 4)
+
+                    Picker("Render Profile", selection: $stereo3DOptions.renderProfile) {
+                        Text("Ultra Fast").tag(StereoRenderProfile.ultraFast)
+                        Text("Quality").tag(StereoRenderProfile.quality)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if stereo3DOptions.renderProfile == .quality {
+                        Text("Quality mode reduces edge jaggies with subpixel warp and stronger edge/hole processing. It is slower.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Ultra Fast mode prioritizes speed with lighter processing, but can show more edge artifacts.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 HStack {
@@ -659,10 +682,17 @@ struct PhotoFlowView: View {
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                     .disabled(true)
 
-                Text("Uses fast depth rendering: min/max depth normalization, light bilateral smoothing, z-buffer forward warp, and quick hole filling (edge filtering skipped for speed). Baseline disparity is 35px at strength=1.0.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if stereo3DOptions.renderProfile == .quality {
+                    Text("Uses quality depth rendering: higher-res depth map, stronger bilateral + edge-aware smoothing, subpixel z-buffer warp, and stronger hole filling. Baseline disparity is 35px at strength=1.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("Uses fast depth rendering: min/max depth normalization, light bilateral smoothing, integer z-buffer warp, and quick hole filling. Baseline disparity is 35px at strength=1.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)

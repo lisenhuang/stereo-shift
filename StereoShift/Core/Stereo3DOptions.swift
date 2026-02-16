@@ -108,11 +108,17 @@ enum VideoDepthCadence: Int, CaseIterable, Sendable {
     case every4Frames = 4
 }
 
+enum StereoRenderProfile: String, CaseIterable, Sendable {
+    case ultraFast
+    case quality
+}
+
 struct Stereo3DOptions: Hashable, Sendable {
     // Keep using server-like generation (simple min/max depth normalize + integer pixel shifts).
     var generationMethod: StereoGenerationMethod = .serverLike
     // User-selectable model. F16 remains the default.
     var depthModel: DepthModel = .depthAnythingV2SmallF16
+    var renderProfile: StereoRenderProfile = .ultraFast
     var depthQuality: DepthQuality = .quality
     var renderEngine: StereoRenderEngine = .cpu
     var depthTuning: DepthTuning = .classic

@@ -640,6 +640,28 @@ struct VideoFlowView: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
+
+                    Text("Render Profile")
+                        .font(.headline)
+                        .padding(.top, 4)
+
+                    Picker("Render Profile", selection: $stereo3DOptions.renderProfile) {
+                        Text("Ultra Fast").tag(StereoRenderProfile.ultraFast)
+                        Text("Quality").tag(StereoRenderProfile.quality)
+                    }
+                    .pickerStyle(.segmented)
+
+                    if stereo3DOptions.renderProfile == .quality {
+                        Text("Quality mode reduces edge jaggies with subpixel warp and stronger edge/hole processing. It is slower.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Text("Ultra Fast mode prioritizes speed with lighter processing, but can show more edge artifacts.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 }
 
                 HStack {
@@ -670,10 +692,17 @@ struct VideoFlowView: View {
                     Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)
                 }
 
-                Text("Uses fast depth rendering: min/max depth normalization, light bilateral smoothing, z-buffer forward warp, and quick hole filling (edge filtering skipped for speed). Baseline disparity is 35px at strength=1.0.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                if stereo3DOptions.renderProfile == .quality {
+                    Text("Uses quality depth rendering: higher-res depth map, stronger bilateral + edge-aware smoothing, subpixel z-buffer warp, and stronger hole filling. Baseline disparity is 35px at strength=1.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Text("Uses fast depth rendering: min/max depth normalization, light bilateral smoothing, integer z-buffer warp, and quick hole filling. Baseline disparity is 35px at strength=1.0.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)
