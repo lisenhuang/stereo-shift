@@ -31,6 +31,31 @@ enum TempFiles {
         return url
     }
 
+    static func writeJPEG(cgImage: CGImage, prefix: String, quality: Float) throws -> URL {
+        let url = try makeTemporaryFileURL(prefix: prefix, fileExtension: "jpg")
+
+        guard let destination = CGImageDestinationCreateWithURL(
+            url as CFURL,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else {
+            throw StereoPipelineError.temporaryFileCreationFailed
+        }
+
+        let clampedQuality = max(0, min(1, quality))
+        let properties: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: clampedQuality
+        ]
+        CGImageDestinationAddImage(destination, cgImage, properties as CFDictionary)
+
+        guard CGImageDestinationFinalize(destination) else {
+            throw StereoPipelineError.temporaryFileCreationFailed
+        }
+
+        return url
+    }
+
     static func removeItemIfExists(at url: URL) {
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         try? FileManager.default.removeItem(at: url)

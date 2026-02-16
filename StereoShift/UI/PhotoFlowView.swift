@@ -487,7 +487,7 @@ struct PhotoFlowView: View {
                 } else {
                     output = try await renderer.makeSBS(from: sourceImage, strength: appliedStrength, options: appliedOptions)
                 }
-                let fileURL = try TempFiles.writePNG(cgImage: output, prefix: "stereoshift-photo")
+                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: 0.95)
 
                 if Task.isCancelled {
                     TempFiles.removeItemIfExists(at: fileURL)
@@ -634,7 +634,7 @@ struct PhotoFlowView: View {
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                     .disabled(true)
 
-                Text("Uses a simple baseline: min/max depth normalize + integer pixel shifts. Baseline disparity is 40px at strength=1.0.")
+                Text("Uses refined depth rendering: min/max depth normalization, bilateral smoothing, edge-aware filtering, z-buffer forward warp, and hole filling. Baseline disparity is 35px at strength=1.0.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

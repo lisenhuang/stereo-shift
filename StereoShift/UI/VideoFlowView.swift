@@ -645,7 +645,7 @@ struct VideoFlowView: View {
                     Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)
                 }
 
-                Text("Uses a simple baseline: min/max depth normalize + integer pixel shifts. Baseline disparity is 40px at strength=1.0.")
+                Text("Uses refined depth rendering: min/max depth normalization, bilateral smoothing, edge-aware filtering, z-buffer forward warp, and hole filling. Baseline disparity is 35px at strength=1.0.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)

@@ -4,6 +4,19 @@ import Foundation
 import Vision
 
 final class StereoRenderer {
+    private struct RefinedServerPreset {
+        static let baselinePerEye: Float = 35
+        static let depthShortSideCap = 448
+        static let bilateralDiameter = 5
+        static let bilateralSigmaColor: Float = 38.25
+        static let bilateralSigmaSpace: Float = 3
+        static let cannyLowThreshold: Float = 50
+        static let cannyHighThreshold: Float = 150
+        static let edgeKernelSize = 3
+        static let dilationIterations = 1
+        static let inpaintRadius = 2
+    }
+
     private let depthEstimator: DepthEstimator
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private var kernelWarpIsHealthy = true
@@ -84,7 +97,7 @@ final class StereoRenderer {
 
     func makeSBS(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
         if options.generationMethod == .serverLike {
-            return try makeSBSServerLike(from: rgb, depth: depth, strength: strength)
+            return try makeSBSServerLike(from: rgb, depth: depth, strength: strength, options: options)
         }
 
         let width = CVPixelBufferGetWidth(rgb)
@@ -230,27 +243,70 @@ final class StereoRenderer {
         return try assembleSBS(left: left, right: right, width: width, height: height)
     }
 
-    private func makeSBSServerLike(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float) throws -> CVPixelBuffer {
+    private func makeSBSServerLike(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
+        let (depthProcessWidth, depthProcessHeight) = serverDepthProcessingSize(
+            width: width,
+            height: height,
+            shortSideCap: min(options.depthQuality.shortSide, RefinedServerPreset.depthShortSideCap)
+        )
 
         let sourceBytes = try bgraBytes(from: rgb)
-        let depthMap = try serverNormalizedDepthMap(from: depth, targetWidth: width, targetHeight: height)
+        var depthMap = try serverNormalizedDepthMap(
+            from: depth,
+            targetWidth: depthProcessWidth,
+            targetHeight: depthProcessHeight
+        )
+        depthMap = bilateralFilter(
+            depthMap: depthMap,
+            width: depthProcessWidth,
+            height: depthProcessHeight,
+            diameter: RefinedServerPreset.bilateralDiameter,
+            sigmaColor: RefinedServerPreset.bilateralSigmaColor,
+            sigmaSpace: RefinedServerPreset.bilateralSigmaSpace
+        )
+        let edgeMask = cannyEdgeMask(
+            depthMap: depthMap,
+            width: depthProcessWidth,
+            height: depthProcessHeight,
+            lowThreshold: RefinedServerPreset.cannyLowThreshold,
+            highThreshold: RefinedServerPreset.cannyHighThreshold
+        )
+        depthMap = smoothDepthAtEdges(
+            depthMap: depthMap,
+            edgeMask: edgeMask,
+            width: depthProcessWidth,
+            height: depthProcessHeight,
+            kernelSize: RefinedServerPreset.edgeKernelSize
+        )
+        if depthProcessWidth != width || depthProcessHeight != height {
+            depthMap = resizeDepthMap(
+                depthMap,
+                sourceWidth: depthProcessWidth,
+                sourceHeight: depthProcessHeight,
+                targetWidth: width,
+                targetHeight: height
+            )
+        }
 
         // Matches the server baseline disparity (per-eye shift) at strength=1.0.
         let clampedStrength = max(0, min(1.5, strength))
-        let baselinePerEye = max(0, Float(40) * clampedStrength)
+        let baselinePerEye = max(0, RefinedServerPreset.baselinePerEye * clampedStrength)
 
         var left = [UInt8](repeating: 0, count: width * height * 4)
         var right = [UInt8](repeating: 0, count: width * height * 4)
         var leftMask = [UInt8](repeating: 0, count: width * height)
         var rightMask = [UInt8](repeating: 0, count: width * height)
+        var leftZBuffer = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
+        var rightZBuffer = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
 
-        // Forward mapping (source -> destination) matches the server's hole-filling step.
+        // Forward mapping with z-buffer for occlusion handling.
         for y in 0..<height {
             for x in 0..<width {
                 let srcIdx = (y * width) + x
-                let shift = Int(depthMap[srcIdx] * baselinePerEye)
+                let depthValue = max(0, min(1, depthMap[srcIdx]))
+                let shift = Int(depthValue * baselinePerEye)
 
                 let destXL = min(width - 1, x + shift)
                 let destXR = max(0, x - shift)
@@ -260,28 +316,70 @@ final class StereoRenderer {
                 let leftIdx = (y * width) + destXL
                 let rightIdx = (y * width) + destXR
 
-                writePixel(p, into: &left, at: leftIdx)
-                leftMask[leftIdx] = 1
-
-                writePixel(p, into: &right, at: rightIdx)
-                rightMask[rightIdx] = 1
-            }
-        }
-
-        // Fill holes using the original image at the same coordinates.
-        for y in 0..<height {
-            for x in 0..<width {
-                let idx = (y * width) + x
-                if leftMask[idx] == 0 {
-                    writePixel(pixel(sourceBytes, width: width, x: x, y: y), into: &left, at: idx)
-                    leftMask[idx] = 1
+                if depthValue > leftZBuffer[leftIdx] {
+                    writePixel(p, into: &left, at: leftIdx)
+                    leftMask[leftIdx] = 1
+                    leftZBuffer[leftIdx] = depthValue
                 }
-                if rightMask[idx] == 0 {
-                    writePixel(pixel(sourceBytes, width: width, x: x, y: y), into: &right, at: idx)
-                    rightMask[idx] = 1
+
+                if depthValue > rightZBuffer[rightIdx] {
+                    writePixel(p, into: &right, at: rightIdx)
+                    rightMask[rightIdx] = 1
+                    rightZBuffer[rightIdx] = depthValue
                 }
             }
         }
+
+        for _ in 0..<RefinedServerPreset.dilationIterations {
+            asymmetricHorizontalDilationFill(
+                bytes: &left,
+                mask: &leftMask,
+                width: width,
+                height: height,
+                maxRightOffset: 2
+            )
+            asymmetricHorizontalDilationFill(
+                bytes: &right,
+                mask: &rightMask,
+                width: width,
+                height: height,
+                maxRightOffset: 2
+            )
+        }
+
+        if leftMask.contains(0) {
+            inpaintHolesTeleaLike(
+                bytes: &left,
+                mask: &leftMask,
+                width: width,
+                height: height,
+                radius: RefinedServerPreset.inpaintRadius
+            )
+        }
+        if rightMask.contains(0) {
+            inpaintHolesTeleaLike(
+                bytes: &right,
+                mask: &rightMask,
+                width: width,
+                height: height,
+                radius: RefinedServerPreset.inpaintRadius
+            )
+        }
+
+        fillRemainingHolesWithSource(
+            bytes: &left,
+            mask: &leftMask,
+            sourceBytes: sourceBytes,
+            width: width,
+            height: height
+        )
+        fillRemainingHolesWithSource(
+            bytes: &right,
+            mask: &rightMask,
+            sourceBytes: sourceBytes,
+            width: width,
+            height: height
+        )
 
         return try assembleSBS(left: left, right: right, width: width, height: height)
     }
@@ -942,6 +1040,388 @@ final class StereoRenderer {
         destination[offset + 1] = pixel.1
         destination[offset + 2] = pixel.2
         destination[offset + 3] = pixel.3
+    }
+
+    private func serverDepthProcessingSize(width: Int, height: Int, shortSideCap: Int) -> (width: Int, height: Int) {
+        guard width > 0, height > 0 else { return (max(width, 1), max(height, 1)) }
+        let shortSide = min(width, height)
+        let cap = max(32, shortSideCap)
+        guard shortSide > cap else {
+            return (width, height)
+        }
+
+        let scale = Float(cap) / Float(shortSide)
+        let scaledWidth = max(1, Int((Float(width) * scale).rounded()))
+        let scaledHeight = max(1, Int((Float(height) * scale).rounded()))
+        return (scaledWidth, scaledHeight)
+    }
+
+    private func resizeDepthMap(
+        _ depthMap: [Float],
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetWidth: Int,
+        targetHeight: Int
+    ) -> [Float] {
+        guard sourceWidth > 0, sourceHeight > 0, targetWidth > 0, targetHeight > 0 else {
+            return depthMap
+        }
+        if sourceWidth == targetWidth, sourceHeight == targetHeight {
+            return depthMap
+        }
+
+        var output = [Float](repeating: 0, count: targetWidth * targetHeight)
+        let scaleX = Float(sourceWidth) / Float(targetWidth)
+        let scaleY = Float(sourceHeight) / Float(targetHeight)
+
+        for y in 0..<targetHeight {
+            let fy = (Float(y) + 0.5) * scaleY - 0.5
+            let y0 = max(0, min(sourceHeight - 1, Int(floor(fy))))
+            let y1 = min(sourceHeight - 1, y0 + 1)
+            let wy = max(0, min(1, fy - Float(y0)))
+
+            for x in 0..<targetWidth {
+                let fx = (Float(x) + 0.5) * scaleX - 0.5
+                let x0 = max(0, min(sourceWidth - 1, Int(floor(fx))))
+                let x1 = min(sourceWidth - 1, x0 + 1)
+                let wx = max(0, min(1, fx - Float(x0)))
+
+                let v00 = depthMap[(y0 * sourceWidth) + x0]
+                let v10 = depthMap[(y0 * sourceWidth) + x1]
+                let v01 = depthMap[(y1 * sourceWidth) + x0]
+                let v11 = depthMap[(y1 * sourceWidth) + x1]
+
+                let top = (v00 * (1 - wx)) + (v10 * wx)
+                let bottom = (v01 * (1 - wx)) + (v11 * wx)
+                output[(y * targetWidth) + x] = (top * (1 - wy)) + (bottom * wy)
+            }
+        }
+
+        return output
+    }
+
+    private func bilateralFilter(
+        depthMap: [Float],
+        width: Int,
+        height: Int,
+        diameter: Int,
+        sigmaColor: Float,
+        sigmaSpace: Float
+    ) -> [Float] {
+        guard width > 0, height > 0 else { return depthMap }
+
+        let kernelSize = max(1, diameter | 1)
+        let radius = kernelSize / 2
+        let colorSigmaNormalized = max(0.0001, sigmaColor / 255)
+        let colorDenominator = 2 * colorSigmaNormalized * colorSigmaNormalized
+        let spaceSigma = max(0.0001, sigmaSpace)
+        let spaceDenominator = 2 * spaceSigma * spaceSigma
+
+        var spatialWeights = [Float](repeating: 0, count: kernelSize * kernelSize)
+        for ky in -radius...radius {
+            for kx in -radius...radius {
+                let index = (ky + radius) * kernelSize + (kx + radius)
+                let distanceSquared = Float((kx * kx) + (ky * ky))
+                spatialWeights[index] = expf(-distanceSquared / spaceDenominator)
+            }
+        }
+
+        var output = depthMap
+        for y in 0..<height {
+            for x in 0..<width {
+                let centerIndex = (y * width) + x
+                let centerValue = depthMap[centerIndex]
+
+                var weightedSum: Float = 0
+                var totalWeight: Float = 0
+
+                let yStart = max(0, y - radius)
+                let yEnd = min(height - 1, y + radius)
+                let xStart = max(0, x - radius)
+                let xEnd = min(width - 1, x + radius)
+
+                for ny in yStart...yEnd {
+                    let ky = ny - y + radius
+                    for nx in xStart...xEnd {
+                        let kx = nx - x + radius
+                        let neighborIndex = (ny * width) + nx
+                        let neighborValue = depthMap[neighborIndex]
+                        let diff = neighborValue - centerValue
+                        let colorWeight = expf(-(diff * diff) / colorDenominator)
+                        let spatialWeight = spatialWeights[(ky * kernelSize) + kx]
+                        let weight = colorWeight * spatialWeight
+                        weightedSum += neighborValue * weight
+                        totalWeight += weight
+                    }
+                }
+
+                if totalWeight > 0 {
+                    output[centerIndex] = weightedSum / totalWeight
+                } else {
+                    output[centerIndex] = centerValue
+                }
+            }
+        }
+
+        return output
+    }
+
+    private func cannyEdgeMask(
+        depthMap: [Float],
+        width: Int,
+        height: Int,
+        lowThreshold: Float,
+        highThreshold: Float
+    ) -> [UInt8] {
+        guard width > 2, height > 2 else {
+            return [UInt8](repeating: 0, count: width * height)
+        }
+
+        let low = max(0, lowThreshold)
+        let high = max(low, highThreshold)
+        var state = [UInt8](repeating: 0, count: width * height)
+
+        for y in 1..<(height - 1) {
+            for x in 1..<(width - 1) {
+                let tl = depthMap[((y - 1) * width) + (x - 1)] * 255
+                let tc = depthMap[((y - 1) * width) + x] * 255
+                let tr = depthMap[((y - 1) * width) + (x + 1)] * 255
+                let ml = depthMap[(y * width) + (x - 1)] * 255
+                let mr = depthMap[(y * width) + (x + 1)] * 255
+                let bl = depthMap[((y + 1) * width) + (x - 1)] * 255
+                let bc = depthMap[((y + 1) * width) + x] * 255
+                let br = depthMap[((y + 1) * width) + (x + 1)] * 255
+
+                let gx = (-tl + tr) + (-2 * ml + 2 * mr) + (-bl + br)
+                let gy = (-tl - 2 * tc - tr) + (bl + 2 * bc + br)
+                let magnitude = sqrtf((gx * gx) + (gy * gy))
+                let index = (y * width) + x
+
+                if magnitude >= high {
+                    state[index] = 2
+                } else if magnitude >= low {
+                    state[index] = 1
+                }
+            }
+        }
+
+        var edgeMask = [UInt8](repeating: 0, count: width * height)
+        var stack = [Int]()
+        stack.reserveCapacity((width * height) / 16)
+
+        for index in state.indices where state[index] == 2 {
+            edgeMask[index] = 1
+            stack.append(index)
+        }
+
+        while let current = stack.popLast() {
+            let y = current / width
+            let x = current % width
+
+            let yStart = max(1, y - 1)
+            let yEnd = min(height - 2, y + 1)
+            let xStart = max(1, x - 1)
+            let xEnd = min(width - 2, x + 1)
+
+            for ny in yStart...yEnd {
+                for nx in xStart...xEnd {
+                    let neighbor = (ny * width) + nx
+                    if edgeMask[neighbor] == 0, state[neighbor] == 1 {
+                        edgeMask[neighbor] = 1
+                        stack.append(neighbor)
+                    }
+                }
+            }
+        }
+
+        return edgeMask
+    }
+
+    private func smoothDepthAtEdges(
+        depthMap: [Float],
+        edgeMask: [UInt8],
+        width: Int,
+        height: Int,
+        kernelSize: Int
+    ) -> [Float] {
+        guard width > 0, height > 0 else { return depthMap }
+
+        let clampedKernel = max(1, kernelSize | 1)
+        let radius = clampedKernel / 2
+        guard radius > 0 else { return depthMap }
+
+        var output = depthMap
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = (y * width) + x
+                guard edgeMask[index] == 1 else {
+                    continue
+                }
+
+                var sum: Float = 0
+                var count: Float = 0
+                let yStart = max(0, y - radius)
+                let yEnd = min(height - 1, y + radius)
+                let xStart = max(0, x - radius)
+                let xEnd = min(width - 1, x + radius)
+
+                for ny in yStart...yEnd {
+                    for nx in xStart...xEnd {
+                        sum += depthMap[(ny * width) + nx]
+                        count += 1
+                    }
+                }
+
+                if count > 0 {
+                    output[index] = sum / count
+                }
+            }
+        }
+
+        return output
+    }
+
+    private func asymmetricHorizontalDilationFill(
+        bytes: inout [UInt8],
+        mask: inout [UInt8],
+        width: Int,
+        height: Int,
+        maxRightOffset: Int
+    ) {
+        let sourceBytes = bytes
+        let sourceMask = mask
+        let maxOffset = max(0, maxRightOffset)
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = (y * width) + x
+                guard sourceMask[index] == 0 else {
+                    continue
+                }
+
+                for offset in 0...maxOffset {
+                    let nx = x + offset
+                    if nx >= width {
+                        break
+                    }
+                    let neighborIndex = (y * width) + nx
+                    guard sourceMask[neighborIndex] == 1 else {
+                        continue
+                    }
+
+                    let sourceOffset = neighborIndex * 4
+                    let destinationOffset = index * 4
+                    bytes[destinationOffset] = sourceBytes[sourceOffset]
+                    bytes[destinationOffset + 1] = sourceBytes[sourceOffset + 1]
+                    bytes[destinationOffset + 2] = sourceBytes[sourceOffset + 2]
+                    bytes[destinationOffset + 3] = sourceBytes[sourceOffset + 3]
+                    mask[index] = 1
+                    break
+                }
+            }
+        }
+    }
+
+    private func inpaintHolesTeleaLike(
+        bytes: inout [UInt8],
+        mask: inout [UInt8],
+        width: Int,
+        height: Int,
+        radius: Int
+    ) {
+        let clampedRadius = max(1, radius)
+        let radiusSquared = clampedRadius * clampedRadius
+        let maxPasses = max(2, clampedRadius)
+
+        for _ in 0..<maxPasses {
+            var didFillAny = false
+            let sourceBytes = bytes
+            let sourceMask = mask
+
+            for y in 0..<height {
+                for x in 0..<width {
+                    let index = (y * width) + x
+                    guard sourceMask[index] == 0 else {
+                        continue
+                    }
+
+                    var sumB: Float = 0
+                    var sumG: Float = 0
+                    var sumR: Float = 0
+                    var sumA: Float = 0
+                    var sumWeight: Float = 0
+
+                    let yStart = max(0, y - clampedRadius)
+                    let yEnd = min(height - 1, y + clampedRadius)
+                    let xStart = max(0, x - clampedRadius)
+                    let xEnd = min(width - 1, x + clampedRadius)
+
+                    for ny in yStart...yEnd {
+                        for nx in xStart...xEnd {
+                            let dx = nx - x
+                            let dy = ny - y
+                            let distanceSquared = (dx * dx) + (dy * dy)
+                            if distanceSquared == 0 || distanceSquared > radiusSquared {
+                                continue
+                            }
+
+                            let neighborIndex = (ny * width) + nx
+                            guard sourceMask[neighborIndex] == 1 else {
+                                continue
+                            }
+
+                            let weight = 1 / (1 + sqrtf(Float(distanceSquared)))
+                            let sourceOffset = neighborIndex * 4
+                            sumB += Float(sourceBytes[sourceOffset]) * weight
+                            sumG += Float(sourceBytes[sourceOffset + 1]) * weight
+                            sumR += Float(sourceBytes[sourceOffset + 2]) * weight
+                            sumA += Float(sourceBytes[sourceOffset + 3]) * weight
+                            sumWeight += weight
+                        }
+                    }
+
+                    guard sumWeight > 0 else {
+                        continue
+                    }
+
+                    let destinationOffset = index * 4
+                    bytes[destinationOffset] = UInt8(max(0, min(255, Int((sumB / sumWeight).rounded()))))
+                    bytes[destinationOffset + 1] = UInt8(max(0, min(255, Int((sumG / sumWeight).rounded()))))
+                    bytes[destinationOffset + 2] = UInt8(max(0, min(255, Int((sumR / sumWeight).rounded()))))
+                    bytes[destinationOffset + 3] = UInt8(max(0, min(255, Int((sumA / sumWeight).rounded()))))
+                    mask[index] = 1
+                    didFillAny = true
+                }
+            }
+
+            if !didFillAny {
+                break
+            }
+        }
+    }
+
+    private func fillRemainingHolesWithSource(
+        bytes: inout [UInt8],
+        mask: inout [UInt8],
+        sourceBytes: [UInt8],
+        width: Int,
+        height: Int
+    ) {
+        for y in 0..<height {
+            for x in 0..<width {
+                let index = (y * width) + x
+                guard mask[index] == 0 else {
+                    continue
+                }
+                let sourceOffset = index * 4
+                bytes[sourceOffset] = sourceBytes[sourceOffset]
+                bytes[sourceOffset + 1] = sourceBytes[sourceOffset + 1]
+                bytes[sourceOffset + 2] = sourceBytes[sourceOffset + 2]
+                bytes[sourceOffset + 3] = sourceBytes[sourceOffset + 3]
+                mask[index] = 1
+            }
+        }
     }
 
     private func fillHolesHorizontally(bytes: inout [UInt8], mask: inout [UInt8], width: Int, height: Int) {
