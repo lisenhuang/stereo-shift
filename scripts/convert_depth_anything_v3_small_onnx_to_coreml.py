@@ -28,6 +28,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--onnx-data", required=True, help="Path to model.onnx_data")
     parser.add_argument("--output", required=True, help="Output .mlpackage path")
     parser.add_argument("--size", type=int, default=518, help="Square input size (default: 518)")
+    parser.add_argument(
+        "--precision",
+        choices=["f16", "f32"],
+        default="f16",
+        help="Core ML compute precision (default: f16)",
+    )
     return parser.parse_args()
 
 
@@ -38,6 +44,7 @@ def main() -> None:
     onnx_data_path = Path(args.onnx_data).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
     input_size = int(args.size)
+    precision = args.precision
 
     if not onnx_path.exists():
         raise SystemExit(f"Missing ONNX file: {onnx_path}")
@@ -202,6 +209,7 @@ def main() -> None:
             output_path.unlink()
 
     print("Converting Torch -> Core ML (mlprogram)...")
+    compute_precision = ct.precision.FLOAT16 if precision == "f16" else ct.precision.FLOAT32
     mlmodel = ct.convert(
         traced,
         source="pytorch",
@@ -216,7 +224,7 @@ def main() -> None:
         ],
         minimum_deployment_target=ct.target.iOS17,
         convert_to="mlprogram",
-        compute_precision=ct.precision.FLOAT16,
+        compute_precision=compute_precision,
     )
 
     print(f"Saving: {output_path}")

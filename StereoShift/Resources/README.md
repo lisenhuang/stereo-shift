@@ -5,6 +5,7 @@ Place one or more Depth Anything Core ML packages in this folder using these nam
 - `DepthAnythingV2SmallF16.mlpackage`
 - `DepthAnythingV2SmallF32.mlpackage`
 - `DepthAnythingV3SmallF16.mlpackage`
+- `DepthAnythingV3SmallF32.mlpackage`
 
 At runtime, `DepthEstimator` will load either:
 
@@ -14,6 +15,8 @@ At runtime, `DepthEstimator` will load either:
 - `DepthAnythingV2SmallF32.mlpackage` (compiled on first launch)
 - `DepthAnythingV3SmallF16.mlmodelc` (compiled model), or
 - `DepthAnythingV3SmallF16.mlpackage` (compiled on first launch)
+- `DepthAnythingV3SmallF32.mlmodelc` (compiled model), or
+- `DepthAnythingV3SmallF32.mlpackage` (compiled on first launch)
 
 Use the helper script at `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/scripts/download_depth_anything_v2.sh`.
 Examples:

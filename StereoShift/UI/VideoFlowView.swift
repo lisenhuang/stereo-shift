@@ -629,6 +629,9 @@ struct VideoFlowView: View {
                         Text("V3 F16")
                             .tag(DepthModel.depthAnythingV3SmallF16)
                             .disabled(!DepthModel.depthAnythingV3SmallF16.isAvailableInBundle)
+                        Text("V3 F32")
+                            .tag(DepthModel.depthAnythingV3SmallF32)
+                            .disabled(!DepthModel.depthAnythingV3SmallF32.isAvailableInBundle)
                     }
                     .pickerStyle(.segmented)
 
@@ -646,6 +649,13 @@ struct VideoFlowView: View {
 
                     if !DepthModel.depthAnythingV3SmallF16.isAvailableInBundle {
                         Text("V3 Small F16 model package is not installed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+
+                    if !DepthModel.depthAnythingV3SmallF32.isAvailableInBundle {
+                        Text("V3 Small F32 model package is not installed.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)

@@ -4,6 +4,7 @@ enum DepthModel: String, CaseIterable, Sendable {
     case depthAnythingV2SmallF16 = "DepthAnythingV2SmallF16"
     case depthAnythingV2SmallF32 = "DepthAnythingV2SmallF32"
     case depthAnythingV3SmallF16 = "DepthAnythingV3SmallF16"
+    case depthAnythingV3SmallF32 = "DepthAnythingV3SmallF32"
 
     var displayName: String {
         switch self {
@@ -13,6 +14,8 @@ enum DepthModel: String, CaseIterable, Sendable {
             return "Depth Anything v2 Small F32"
         case .depthAnythingV3SmallF16:
             return "Depth Anything v3 Small F16"
+        case .depthAnythingV3SmallF32:
+            return "Depth Anything v3 Small F32"
         }
     }
 
@@ -36,6 +39,13 @@ enum DepthModel: String, CaseIterable, Sendable {
                 "DepthAnythingV3SmallF16",
                 "DepthAnythingV3SmallFP16",
                 "coreml-depth-anything-v3-small"
+            ]
+        case .depthAnythingV3SmallF32:
+            return [
+                "DepthAnythingV3SmallF32",
+                "DepthAnythingV3SmallFP32",
+                "coreml-depth-anything-v3-small-f32",
+                "coreml-depth-anything-v3-small-fp32"
             ]
         }
     }

@@ -31,7 +31,7 @@ actor DepthEstimator {
     func predictDepth(pixelBuffer: CVPixelBuffer, model: DepthModel, quality: DepthQuality) async throws -> CVPixelBuffer {
         let depthModel = model
         let model = try loadModel(depthModel)
-        let prepared = try preprocess(pixelBuffer, model: model, quality: quality)
+        let prepared = try preprocess(pixelBuffer, depthModel: depthModel, model: model, quality: quality)
         let provider = try featureProvider(for: prepared.pixelBuffer, model: model)
 
         let prediction = try await Task.detached(priority: .userInitiated) {
@@ -47,7 +47,7 @@ actor DepthEstimator {
     private func invertDepthIfNeeded(_ depth: CVPixelBuffer, model: DepthModel) throws -> CVPixelBuffer {
         // Depth Anything v3 Small's depth polarity is inverted relative to our v2 models.
         // Standardize here so the rest of the pipeline always treats larger depth values as "closer".
-        guard model == .depthAnythingV3SmallF16 else { return depth }
+        guard model == .depthAnythingV3SmallF16 || model == .depthAnythingV3SmallF32 else { return depth }
 
         let width = CVPixelBufferGetWidth(depth)
         let height = CVPixelBufferGetHeight(depth)
@@ -254,7 +254,41 @@ actor DepthEstimator {
             }
         }
 
-        let range = max(maxValue - minValue, 0.0001)
+        // Depth Anything v3 (and other depth models that output MLMultiArray) can produce occasional
+        // extreme outliers. Using raw min/max can collapse useful depth contrast (especially for
+        // Float32 models) and make results look worse than Float16. Use percentile clipping to
+        // stabilize normalization.
+        var normalizedMin = minValue
+        var normalizedMax = maxValue
+
+        if values.count > 0 {
+            // Deterministic sampling for performance (avoids sorting the full depth map).
+            let targetSamples = 4096
+            let step = max(1, values.count / max(1, targetSamples))
+            var sample: [Float] = []
+            sample.reserveCapacity(min(targetSamples, values.count))
+
+            var i = 0
+            while i < values.count {
+                sample.append(values[i])
+                i += step
+            }
+
+            if sample.count >= 4 {
+                sample.sort()
+                let lowIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * 0.01).rounded(.down))))
+                let highIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * 0.99).rounded(.down))))
+                let low = sample[lowIndex]
+                let high = sample[highIndex]
+
+                if low.isFinite, high.isFinite, high > low {
+                    normalizedMin = low
+                    normalizedMax = high
+                }
+            }
+        }
+
+        let range = max(normalizedMax - normalizedMin, 0.0001)
         let pixelBuffer = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: kCVPixelFormatType_OneComponent8)
 
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
@@ -270,7 +304,9 @@ actor DepthEstimator {
         for y in 0..<height {
             let row = pointer.advanced(by: y * bytesPerRow)
             for x in 0..<width {
-                let normalized = (values[(y * width) + x] - minValue) / range
+                let value = values[(y * width) + x]
+                let clipped = max(normalizedMin, min(normalizedMax, value))
+                let normalized = (clipped - normalizedMin) / range
                 row[x] = UInt8(max(0, min(255, Int((normalized * 255).rounded()))))
             }
         }
@@ -302,6 +338,7 @@ actor DepthEstimator {
 
     private func preprocess(
         _ sourcePixelBuffer: CVPixelBuffer,
+        depthModel: DepthModel,
         model: MLModel,
         quality: DepthQuality
     ) throws -> (pixelBuffer: CVPixelBuffer, metadata: PreprocessMetadata) {
@@ -333,7 +370,14 @@ actor DepthEstimator {
         let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer)
         let sx = CGFloat(modelSizes.scaled.width) / sourceImage.extent.width
         let sy = CGFloat(modelSizes.scaled.height) / sourceImage.extent.height
-        let scaled = sourceImage.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        var scaled = sourceImage.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+
+        // Depth Anything v3 Small is typically preprocessed without padding in the reference implementation.
+        // Our Core ML conversion uses a fixed-size square input, so we must pad. Replicating edge pixels
+        // avoids introducing black borders that can hurt depth quality.
+        if depthModel == .depthAnythingV3SmallF16 || depthModel == .depthAnythingV3SmallF32 {
+            scaled = scaled.clampedToExtent()
+        }
 
         let offsetX = CGFloat(modelSizes.model.width - modelSizes.scaled.width) * 0.5
         let offsetY = CGFloat(modelSizes.model.height - modelSizes.scaled.height) * 0.5
