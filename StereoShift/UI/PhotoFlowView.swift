@@ -34,6 +34,11 @@ struct PhotoFlowView: View {
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var generateTask: Task<Void, Never>?
+    @State private var rerenderTask: Task<Void, Never>?
+    @State private var isRerendering = false
+    @State private var cachedRGBBuffer: CVPixelBuffer?
+    @State private var cachedDepthBuffer: CVPixelBuffer?
+    @State private var cachedDepthModel: DepthModel?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -93,7 +98,7 @@ struct PhotoFlowView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isSaving || isGenerating)
+                    .disabled(isSaving || isGenerating || isRerendering)
 
                     Button(action: saveOutputToPhotos) {
                         Group {
@@ -106,7 +111,7 @@ struct PhotoFlowView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isSaving || isGenerating)
+                    .disabled(isSaving || isGenerating || isRerendering)
 
                     if supportsDesktopFileImport {
                         Button(action: saveOutputToDisk) {
@@ -114,7 +119,7 @@ struct PhotoFlowView: View {
                                 .frame(maxWidth: .infinity, alignment: .center)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(isSaving || isGenerating)
+                        .disabled(isSaving || isGenerating || isRerendering)
                     }
 
                     Button {
@@ -124,7 +129,7 @@ struct PhotoFlowView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isGenerating || isSaving)
+                    .disabled(isGenerating || isSaving || isRerendering)
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputFileURL])
@@ -162,10 +167,14 @@ struct PhotoFlowView: View {
             updateScreenAwakeLock(isActive: newValue)
             onProcessingStateChanged(newValue)
         }
+        .onChange(of: stereo3DOptions.depthModel) { _, _ in
+            clearRenderCache()
+        }
         .onDisappear {
             updateScreenAwakeLock(isActive: false)
             selectionTask?.cancel()
             generateTask?.cancel()
+            rerenderTask?.cancel()
             onProcessingStateChanged(false)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
@@ -283,6 +292,7 @@ struct PhotoFlowView: View {
     private func resetForSourceModeChange() {
         selectionTask?.cancel()
         generateTask?.cancel()
+        rerenderTask?.cancel()
 
         selectedItem = nil
         sourceImage = nil
@@ -293,16 +303,19 @@ struct PhotoFlowView: View {
         saveMessageKey = nil
         isLoadingSelection = false
         showFileImporter = false
+        clearRenderCache()
     }
 
     private func loadSelectedPhoto(_ item: PhotosPickerItem?) {
         selectionTask?.cancel()
+        rerenderTask?.cancel()
 
         guard let item else {
             sourceImage = nil
             sourceSpatialPair = nil
             outputImage = nil
             outputFileURL = nil
+            clearRenderCache()
             return
         }
 
@@ -325,6 +338,7 @@ struct PhotoFlowView: View {
                         outputFileURL = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
+                        clearRenderCache()
                     }
                 } else {
                     let picked = try await MediaPicker.loadPhotoWithEmbeddedDepth(from: item)
@@ -338,6 +352,7 @@ struct PhotoFlowView: View {
                         outputFileURL = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
+                        clearRenderCache()
                     }
                 }
             } catch {
@@ -362,6 +377,7 @@ struct PhotoFlowView: View {
 
     private func loadSelectedPhotoFile(_ url: URL) {
         selectionTask?.cancel()
+        rerenderTask?.cancel()
         isLoadingSelection = true
 
         selectionTask = Task {
@@ -385,6 +401,7 @@ struct PhotoFlowView: View {
                         outputFileURL = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
+                        clearRenderCache()
                     }
                 } else {
                     let picked = try await Task.detached(priority: .userInitiated) {
@@ -401,6 +418,7 @@ struct PhotoFlowView: View {
                         outputFileURL = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
+                        clearRenderCache()
                     }
                 }
             } catch {
@@ -415,6 +433,7 @@ struct PhotoFlowView: View {
 
     private func generateSBSPhoto() {
         generateTask?.cancel()
+        rerenderTask?.cancel()
         isGenerating = true
 
         if inputMode == .spatial {
@@ -463,30 +482,26 @@ struct PhotoFlowView: View {
         }
 
         let renderer = pipeline.stereoRenderer
+        let depthEstimator = pipeline.depthEstimator
         let appliedStrength = strength
         let appliedOptions = stereo3DOptions
-        let appliedEmbeddedDepth = sourceEmbeddedDepth
 
         generateTask = Task.detached(priority: .userInitiated) {
             do {
                 try Task.checkCancellation()
-                let shouldUseEmbeddedDepth = appliedEmbeddedDepth != nil
-
-                let output: CGImage
-                if shouldUseEmbeddedDepth {
-                    let embeddedDepth = appliedEmbeddedDepth!
-
-                    let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: sourceImage)
-                    let outputBuffer = try renderer.makeSBS(
-                        from: rgbBuffer,
-                        depth: embeddedDepth,
-                        strength: appliedStrength,
-                        options: appliedOptions
-                    )
-                    output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
-                } else {
-                    output = try await renderer.makeSBS(from: sourceImage, strength: appliedStrength, options: appliedOptions)
-                }
+                let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: sourceImage)
+                let depthBuffer = try await depthEstimator.predictDepth(
+                    pixelBuffer: rgbBuffer,
+                    model: appliedOptions.depthModel,
+                    quality: appliedOptions.depthQuality
+                )
+                let outputBuffer = try renderer.makeSBS(
+                    from: rgbBuffer,
+                    depth: depthBuffer,
+                    strength: appliedStrength,
+                    options: appliedOptions
+                )
+                let output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
                 let jpegQuality: Float = appliedOptions.renderProfile == .quality ? 0.95 : 0.90
                 let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
 
@@ -496,6 +511,9 @@ struct PhotoFlowView: View {
                 }
 
                 await MainActor.run {
+                    cachedRGBBuffer = rgbBuffer
+                    cachedDepthBuffer = depthBuffer
+                    cachedDepthModel = appliedOptions.depthModel
                     outputImage = output
                     outputFileURL = fileURL
                     saveMessageKey = nil
@@ -511,6 +529,72 @@ struct PhotoFlowView: View {
                 }
                 await MainActor.run {
                     isGenerating = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func clearRenderCache() {
+        rerenderTask?.cancel()
+        rerenderTask = nil
+        isRerendering = false
+        cachedRGBBuffer = nil
+        cachedDepthBuffer = nil
+        cachedDepthModel = nil
+    }
+
+    private func rerenderSBSWithCachedDepthIfPossible() {
+        guard inputMode == .regular2D else { return }
+        guard !isGenerating, !isSaving else { return }
+        guard let rgbBuffer = cachedRGBBuffer, let depthBuffer = cachedDepthBuffer else { return }
+        guard cachedDepthModel == stereo3DOptions.depthModel else { return }
+        guard outputImage != nil else { return }
+
+        rerenderTask?.cancel()
+        isRerendering = true
+
+        let renderer = pipeline.stereoRenderer
+        let appliedStrength = strength
+        let appliedOptions = stereo3DOptions
+        let jpegQuality: Float = appliedOptions.renderProfile == .quality ? 0.95 : 0.90
+        let oldFileURL = outputFileURL
+
+        rerenderTask = Task.detached(priority: .userInitiated) {
+            do {
+                try Task.checkCancellation()
+                let outputBuffer = try renderer.makeSBS(
+                    from: rgbBuffer,
+                    depth: depthBuffer,
+                    strength: appliedStrength,
+                    options: appliedOptions
+                )
+                let output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
+                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
+
+                if Task.isCancelled {
+                    TempFiles.removeItemIfExists(at: fileURL)
+                    return
+                }
+
+                await MainActor.run {
+                    if let oldFileURL {
+                        TempFiles.removeItemIfExists(at: oldFileURL)
+                    }
+                    outputImage = output
+                    outputFileURL = fileURL
+                    saveMessageKey = nil
+                    isRerendering = false
+                }
+            } catch {
+                if Task.isCancelled {
+                    await MainActor.run {
+                        isRerendering = false
+                    }
+                    return
+                }
+                await MainActor.run {
+                    isRerendering = false
                     errorMessage = error.localizedDescription
                 }
             }
@@ -686,7 +770,12 @@ struct PhotoFlowView: View {
                         get: { Double(strength) },
                         set: { strength = Float($0) }
                     ),
-                    in: 0.1...1.5
+                    in: 0.1...1.5,
+                    onEditingChanged: { editing in
+                        if !editing {
+                            rerenderSBSWithCachedDepthIfPossible()
+                        }
+                    }
                 )
 
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)

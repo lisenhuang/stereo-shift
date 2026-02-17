@@ -79,9 +79,9 @@ final class StereoRenderer {
                     inpaintRadius: 3,
                     inpaintPasses: 2,
                     subpixelWarpEnabled: false,
-                    outputEdgeAntiAliasEnabled: false,
-                    outputEdgeAntiAliasThreshold: 0,
-                    outputEdgeAntiAliasStrength: 0,
+                    outputEdgeAntiAliasEnabled: true,
+                    outputEdgeAntiAliasThreshold: 0.65,
+                    outputEdgeAntiAliasStrength: 0.45,
                     edgeSupersamplingEnabled: true,
                     edgeSupersamplingShiftGradientThreshold: 0.55,
                     edgeSupersamplingMaxBlend: 0.9
@@ -371,14 +371,6 @@ final class StereoRenderer {
             )
         }
 
-        // Depth Anything v3's predicted depth polarity is inverted relative to our v2 models.
-        // Invert here so larger values consistently mean "closer" (larger disparity).
-        if options.depthModel == .depthAnythingV3SmallF16 {
-            for index in depthMap.indices {
-                depthMap[index] = 1 - depthMap[index]
-            }
-        }
-
         if depthProcessWidth != width || depthProcessHeight != height {
             depthMap = resizeDepthMap(
                 depthMap,
@@ -519,13 +511,15 @@ final class StereoRenderer {
 
         if preset.outputEdgeAntiAliasEnabled {
             let shiftMap = depthMap.map { max(0, min(1, $0)) * baselinePerEye }
+            // More AA is useful at higher strengths where integer shifts can look jaggier.
+            let dynamicBlend = min(1, preset.outputEdgeAntiAliasStrength * (0.75 + (0.25 * clampedStrength)))
             antiAliasWarpEdges(
                 bytes: &left,
                 width: width,
                 height: height,
                 shiftMap: shiftMap,
                 gradientThreshold: preset.outputEdgeAntiAliasThreshold,
-                maxBlend: preset.outputEdgeAntiAliasStrength
+                maxBlend: dynamicBlend
             )
             antiAliasWarpEdges(
                 bytes: &right,
@@ -533,7 +527,7 @@ final class StereoRenderer {
                 height: height,
                 shiftMap: shiftMap,
                 gradientThreshold: preset.outputEdgeAntiAliasThreshold,
-                maxBlend: preset.outputEdgeAntiAliasStrength
+                maxBlend: dynamicBlend
             )
         }
 
@@ -1844,7 +1838,7 @@ final class StereoRenderer {
         guard safeMaxBlend > 0 else { return }
 
         // 2x2 jitter around the inverse-warp sample point reduces jaggies without large supersampled buffers.
-        let jitter: Float = 0.25
+        let jitter: Float = min(0.5, max(0.25, baselinePerEye * 0.00715))
         let halfThreshold = safeThreshold * 2
 
         for y in 1..<(height - 1) {

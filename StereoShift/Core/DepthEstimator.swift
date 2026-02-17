@@ -29,7 +29,8 @@ actor DepthEstimator {
     }
 
     func predictDepth(pixelBuffer: CVPixelBuffer, model: DepthModel, quality: DepthQuality) async throws -> CVPixelBuffer {
-        let model = try loadModel(model)
+        let depthModel = model
+        let model = try loadModel(depthModel)
         let prepared = try preprocess(pixelBuffer, model: model, quality: quality)
         let provider = try featureProvider(for: prepared.pixelBuffer, model: model)
 
@@ -38,7 +39,30 @@ actor DepthEstimator {
         }.value
 
         let rawDepth = try depthOutput(from: prediction)
-        return try postprocess(depth: rawDepth, metadata: prepared.metadata)
+        var depth = try postprocess(depth: rawDepth, metadata: prepared.metadata)
+        depth = try invertDepthIfNeeded(depth, model: depthModel)
+        return depth
+    }
+
+    private func invertDepthIfNeeded(_ depth: CVPixelBuffer, model: DepthModel) throws -> CVPixelBuffer {
+        // Depth Anything v3 Small's depth polarity is inverted relative to our v2 models.
+        // Standardize here so the rest of the pipeline always treats larger depth values as "closer".
+        guard model == .depthAnythingV3SmallF16 else { return depth }
+
+        let width = CVPixelBufferGetWidth(depth)
+        let height = CVPixelBufferGetHeight(depth)
+        let extent = CGRect(x: 0, y: 0, width: width, height: height)
+        let depthImage = CIImage(cvPixelBuffer: depth)
+            .cropped(to: extent)
+            .applyingFilter("CIColorInvert")
+
+        let output = try PixelBufferUtilities.makePixelBuffer(
+            width: width,
+            height: height,
+            pixelFormat: kCVPixelFormatType_32BGRA
+        )
+        ciContext.render(depthImage, to: output, bounds: extent, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return output
     }
 
     private func loadModel(_ depthModel: DepthModel) throws -> MLModel {
