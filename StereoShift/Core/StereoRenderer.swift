@@ -370,6 +370,15 @@ final class StereoRenderer {
                 kernelSize: preset.edgeKernelSize
             )
         }
+
+        // Depth Anything v3's predicted depth polarity is inverted relative to our v2 models.
+        // Invert here so larger values consistently mean "closer" (larger disparity).
+        if options.depthModel == .depthAnythingV3SmallF16 {
+            for index in depthMap.indices {
+                depthMap[index] = 1 - depthMap[index]
+            }
+        }
+
         if depthProcessWidth != width || depthProcessHeight != height {
             depthMap = resizeDepthMap(
                 depthMap,
