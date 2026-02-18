@@ -66,7 +66,9 @@
 "Preview unavailable" = "无法预览";
 "Purchase is pending approval." = "购买正在等待批准。";
 "Purchase verification failed." = "购买校验失败。";
+"Privacy Policy" = "隐私政策";
 "Rendering 3D Video" = "正在渲染 3D 视频";
+"Subscription" = "订阅";
 "SBS Output" = "SBS 输出";
 "Save to In-App Gallery" = "保存到应用内画廊";
 "Save to Disk" = "保存到磁盘";
@@ -90,6 +92,7 @@
 "Stop Web Share" = "停止网页共享";
 "Strong" = "强烈";
 "Subtle" = "轻微";
+"Terms of Use (EULA)" = "使用条款（EULA）";
 "Web share URL:" = "网页共享地址：";
 "Web Share requires Wi-Fi connection." = "网页共享需要连接 Wi-Fi。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "启动网页共享后，可在 VR/AR 浏览器中访问图片和视频，并以 3D 模式观看 SBS。";
@@ -100,6 +103,7 @@
 "System" = "系统";
 "Theme" = "主题";
 "Video" = "视频";
+"One-Time Purchase" = "一次性购买";
 "Unlock Video" = "解锁视频功能";
 "Unlock Video Conversion" = "解锁视频转换";
 "Video features require an active subscription." = "视频功能需要有效订阅。";

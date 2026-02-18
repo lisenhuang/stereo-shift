@@ -68,6 +68,9 @@ struct GalleryView: View {
                 }
             }
         }
+        // Avoid a janky large-title collapse/expand transition while scrolling this grid.
+        .navigationTitle("In-App Gallery")
+        .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             galleryLibrary.reload()
         }
@@ -115,11 +118,7 @@ struct GalleryView: View {
                 Text("Something went wrong.")
             }
         }
-        .confirmationDialog(
-            "Before Selecting",
-            isPresented: $showAddFromPhotosPrompt,
-            titleVisibility: .visible
-        ) {
+        .alert("Before Selecting", isPresented: $showAddFromPhotosPrompt) {
             Button("Confirm") {
                 isShowingPhotoImportPicker = true
             }
@@ -127,11 +126,7 @@ struct GalleryView: View {
         } message: {
             Text("Please choose left-right side-by-side 3D images or videos.")
         }
-        .confirmationDialog(
-            "Delete all items from In-App Gallery?",
-            isPresented: $showClearAllConfirmation,
-            titleVisibility: .visible
-        ) {
+        .alert("Delete all items from In-App Gallery?", isPresented: $showClearAllConfirmation) {
             Button("Delete", role: .destructive) {
                 clearAllItems()
             }
@@ -778,11 +773,7 @@ private struct GalleryItemDetailView: View {
                     Text("Something went wrong.")
                 }
             }
-            .confirmationDialog(
-                "Delete this item from In-App Gallery?",
-                isPresented: $showDeleteConfirmation,
-                titleVisibility: .visible
-            ) {
+            .alert("Delete this item from In-App Gallery?", isPresented: $showDeleteConfirmation) {
                 Button("Delete", role: .destructive) {
                     deleteItem()
                 }

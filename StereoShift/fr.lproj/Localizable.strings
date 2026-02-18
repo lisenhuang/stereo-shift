@@ -66,6 +66,7 @@
 "Preview unavailable" = "Apercu indisponible";
 "Purchase is pending approval." = "L'achat est en attente d'approbation.";
 "Purchase verification failed." = "La verification de l'achat a echoue.";
+"Privacy Policy" = "Politique de confidentialite";
 "Rendering 3D Video" = "Rendu de la video 3D";
 "SBS Output" = "Sortie SBS";
 "Save to In-App Gallery" = "Enregistrer dans la galerie integree";
@@ -90,16 +91,19 @@
 "Stop Web Share" = "Arreter le partage Web";
 "Strong" = "Fort";
 "Subtle" = "Leger";
+"Terms of Use (EULA)" = "Conditions d'utilisation (EULA)";
 "Web share URL:" = "URL du partage Web :";
 "Web Share requires Wi-Fi connection." = "Le partage Web necessite une connexion Wi-Fi.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Demarrez le partage Web, puis ouvrez-le dans un navigateur VR/AR pour voir les photos et videos SBS en 3D.";
 "Restore Purchases" = "Restaurer les achats";
 "Reset PIN" = "Reinitialiser le PIN";
 "Retry" = "Reessayer";
+"Subscription" = "Abonnement";
 "Subscription Active" = "Abonnement actif";
 "System" = "Systeme";
 "Theme" = "Theme";
 "Video" = "Video";
+"One-Time Purchase" = "Achat unique";
 "Unlock Video" = "Debloquer la video";
 "Unlock Video Conversion" = "Debloquer la conversion video";
 "Video features require an active subscription." = "Les fonctions video necessitent un abonnement actif.";

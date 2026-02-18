@@ -66,7 +66,9 @@
 "Preview unavailable" = "Preview unavailable";
 "Purchase is pending approval." = "Purchase is pending approval.";
 "Purchase verification failed." = "Purchase verification failed.";
+"Privacy Policy" = "Privacy Policy";
 "Rendering 3D Video" = "Rendering 3D Video";
+"Subscription" = "Subscription";
 "SBS Output" = "SBS Output";
 "Save to In-App Gallery" = "Save to In-App Gallery";
 "Save to Disk" = "Save to Disk";
@@ -90,6 +92,7 @@
 "Stop Web Share" = "Stop Web Share";
 "Strong" = "Strong";
 "Subtle" = "Subtle";
+"Terms of Use (EULA)" = "Terms of Use (EULA)";
 "Web share URL:" = "Web share URL:";
 "Web Share requires Wi-Fi connection." = "Web Share requires Wi-Fi connection.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Start Web Share, then open it in a VR/AR browser to view SBS photos and videos in 3D.";
@@ -100,6 +103,7 @@
 "System" = "System";
 "Theme" = "Theme";
 "Video" = "Video";
+"One-Time Purchase" = "One-Time Purchase";
 "Unlock Video" = "Unlock Video";
 "Unlock Video Conversion" = "Unlock Video Conversion";
 "Video features require an active subscription." = "Video features require an active subscription.";

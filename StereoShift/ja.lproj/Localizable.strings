@@ -66,6 +66,7 @@
 "Preview unavailable" = "プレビューできません";
 "Purchase is pending approval." = "購入は承認待ちです。";
 "Purchase verification failed." = "購入の検証に失敗しました。";
+"Privacy Policy" = "プライバシーポリシー";
 "Rendering 3D Video" = "3D動画をレンダリング中";
 "SBS Output" = "SBS出力";
 "Save to In-App Gallery" = "アプリ内ギャラリーに保存";
@@ -90,16 +91,19 @@
 "Stop Web Share" = "Web共有を停止";
 "Strong" = "強め";
 "Subtle" = "弱め";
+"Terms of Use (EULA)" = "利用規約（EULA）";
 "Web share URL:" = "Web共有URL:";
 "Web Share requires Wi-Fi connection." = "Web共有にはWi-Fi接続が必要です。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Web共有を開始すると、VR/ARブラウザで画像と動画を開いてSBSを3D表示できます。";
 "Restore Purchases" = "購入を復元";
 "Reset PIN" = "PINを再設定";
 "Retry" = "再試行";
+"Subscription" = "サブスクリプション";
 "Subscription Active" = "サブスクリプション有効";
 "System" = "システム";
 "Theme" = "テーマ";
 "Video" = "動画";
+"One-Time Purchase" = "買い切り";
 "Unlock Video" = "動画機能を解除";
 "Unlock Video Conversion" = "動画変換を解除";
 "Video features require an active subscription." = "動画機能には有効なサブスクリプションが必要です。";
