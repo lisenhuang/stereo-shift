@@ -5,14 +5,10 @@ import StoreKit
 
 @MainActor
 final class SubscriptionManager: ObservableObject {
-    // Replace these with your real App Store Connect product IDs.
-    // Recommended setup:
-    // - weekly: auto-renewable subscription
-    // - lifetime: non-consumable one-time purchase
-    nonisolated static let defaultVideoProductIDs = [
-        "com.huanglisen.stereoshift.video.weekly",
-        "com.huanglisen.stereoshift.video.lifetime"
-    ]
+    // Product IDs from App Store Connect.
+    nonisolated static let weeklyVideoProductID = "com.huanglisen.stereoshift.video.weekly"
+    nonisolated static let lifetimeVideoProductID = "com.huanglisen.stereoshift.video.lifetime"
+    nonisolated static let defaultVideoProductIDs = [weeklyVideoProductID, lifetimeVideoProductID]
 
     @Published private(set) var products: [Product] = []
     @Published private(set) var isSubscribed = false

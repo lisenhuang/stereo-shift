@@ -66,6 +66,7 @@
 "Preview unavailable" = "प्रीव्यू उपलब्ध नहीं";
 "Purchase is pending approval." = "खरीदारी स्वीकृति की प्रतीक्षा में है।";
 "Purchase verification failed." = "खरीदारी सत्यापन विफल हुआ।";
+"Privacy Policy" = "गोपनीयता नीति";
 "Rendering 3D Video" = "3D वीडियो रेंडर हो रहा है";
 "SBS Output" = "SBS आउटपुट";
 "Save to In-App Gallery" = "इन-ऐप गैलरी में सेव करें";
@@ -90,16 +91,19 @@
 "Stop Web Share" = "वेब शेयर बंद करें";
 "Strong" = "तेज";
 "Subtle" = "हल्का";
+"Terms of Use (EULA)" = "उपयोग की शर्तें (EULA)";
 "Web share URL:" = "वेब शेयर URL:";
 "Web Share requires Wi-Fi connection." = "वेब शेयर के लिए Wi-Fi कनेक्शन जरूरी है।";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "वेब शेयर शुरू करें, फिर VR/AR ब्राउज़र में खोलकर SBS फोटो और वीडियो 3D में देखें।";
 "Restore Purchases" = "खरीदारी बहाल करें";
 "Reset PIN" = "PIN रीसेट करें";
 "Retry" = "फिर से कोशिश करें";
+"Subscription" = "सदस्यता";
 "Subscription Active" = "सदस्यता सक्रिय";
 "System" = "सिस्टम";
 "Theme" = "थीम";
 "Video" = "वीडियो";
+"One-Time Purchase" = "एक बार की खरीद";
 "Unlock Video" = "वीडियो अनलॉक करें";
 "Unlock Video Conversion" = "वीडियो कन्वर्ज़न अनलॉक करें";
 "Video features require an active subscription." = "वीडियो फीचर्स के लिए सक्रिय सदस्यता जरूरी है।";

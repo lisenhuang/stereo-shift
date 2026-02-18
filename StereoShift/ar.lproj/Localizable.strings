@@ -66,6 +66,7 @@
 "Preview unavailable" = "المعاينة غير متاحة";
 "Purchase is pending approval." = "الشراء بانتظار الموافقة.";
 "Purchase verification failed." = "فشل التحقق من الشراء.";
+"Privacy Policy" = "سياسة الخصوصية";
 "Rendering 3D Video" = "جارٍ عرض فيديو 3D";
 "SBS Output" = "مخرجات SBS";
 "Save to In-App Gallery" = "حفظ في المعرض داخل التطبيق";
@@ -90,16 +91,19 @@
 "Stop Web Share" = "إيقاف مشاركة الويب";
 "Strong" = "قوي";
 "Subtle" = "خفيف";
+"Terms of Use (EULA)" = "شروط الاستخدام (EULA)";
 "Web share URL:" = "رابط مشاركة الويب:";
 "Web Share requires Wi-Fi connection." = "مشاركة الويب تتطلب اتصال Wi-Fi.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "ابدأ مشاركة الويب، ثم افتحها في متصفح VR/AR لعرض صور وفيديوهات SBS بنمط 3D.";
 "Restore Purchases" = "استعادة المشتريات";
 "Reset PIN" = "إعادة تعيين PIN";
 "Retry" = "إعادة المحاولة";
+"Subscription" = "الاشتراك";
 "Subscription Active" = "الاشتراك نشط";
 "System" = "النظام";
 "Theme" = "السمة";
 "Video" = "فيديو";
+"One-Time Purchase" = "شراء لمرة واحدة";
 "Unlock Video" = "إلغاء قفل الفيديو";
 "Unlock Video Conversion" = "إلغاء قفل تحويل الفيديو";
 "Video features require an active subscription." = "ميزات الفيديو تتطلب اشتراكًا نشطًا.";
