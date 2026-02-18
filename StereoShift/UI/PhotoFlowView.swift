@@ -179,11 +179,7 @@ struct PhotoFlowView: View {
                 Text("Something went wrong.")
             }
         }
-        .confirmationDialog(
-            "Stop current conversion?",
-            isPresented: $showStopConfirmation,
-            titleVisibility: .visible
-        ) {
+        .alert("Stop current conversion?", isPresented: $showStopConfirmation) {
             Button("Stop", role: .destructive) {
                 cancelGenerating()
             }
