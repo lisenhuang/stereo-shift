@@ -119,13 +119,63 @@ enum MediaPicker {
         let (leftIndex, rightIndex) = spatialStereoIndices(from: source, imageCount: imageCount)
 
         guard
-            let left = CGImageSourceCreateImageAtIndex(source, leftIndex, nil),
-            let right = CGImageSourceCreateImageAtIndex(source, rightIndex, nil)
+            let left = loadOrientedSpatialImage(from: source, index: leftIndex),
+            let right = loadOrientedSpatialImage(from: source, index: rightIndex)
         else {
             throw StereoPipelineError.spatialImagePairUnavailable
         }
 
         return StereoImagePair(left: left, right: right)
+    }
+
+    private static func loadOrientedSpatialImage(from source: CGImageSource, index: Int) -> CGImage? {
+        guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else {
+            return nil
+        }
+
+        let orientation = exifOrientation(from: source, index: index)
+        if orientation == .up {
+            return cgImage
+        }
+
+        // Spatial photos can have EXIF orientation metadata. CGImageSourceCreateImageAtIndex
+        // does not apply it, so normalize via UIImage drawing to avoid 180° flips.
+        let uiImage = UIImage(cgImage: cgImage, scale: 1, orientation: uiImageOrientation(from: orientation))
+        return normalizedCGImage(from: uiImage)
+    }
+
+    private static func exifOrientation(from source: CGImageSource, index: Int) -> CGImagePropertyOrientation {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any] else {
+            return .up
+        }
+        if let number = properties[kCGImagePropertyOrientation] as? NSNumber,
+           let orientation = CGImagePropertyOrientation(rawValue: number.uint32Value) {
+            return orientation
+        }
+        return .up
+    }
+
+    private static func uiImageOrientation(from orientation: CGImagePropertyOrientation) -> UIImage.Orientation {
+        switch orientation {
+        case .up:
+            return .up
+        case .upMirrored:
+            return .upMirrored
+        case .down:
+            return .down
+        case .downMirrored:
+            return .downMirrored
+        case .left:
+            return .left
+        case .leftMirrored:
+            return .leftMirrored
+        case .right:
+            return .right
+        case .rightMirrored:
+            return .rightMirrored
+        @unknown default:
+            return .up
+        }
     }
 
     private static func spatialStereoIndices(from source: CGImageSource, imageCount: Int) -> (left: Int, right: Int) {

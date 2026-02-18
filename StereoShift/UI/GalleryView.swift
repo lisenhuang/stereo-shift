@@ -68,6 +68,9 @@ struct GalleryView: View {
                 }
             }
         }
+        // Avoid a janky large-title collapse/expand transition while scrolling this grid.
+        .navigationTitle("In-App Gallery")
+        .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             galleryLibrary.reload()
         }

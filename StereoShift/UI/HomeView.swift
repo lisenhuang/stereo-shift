@@ -84,6 +84,7 @@ struct HomeView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 20)
                 }
+                .scrollDisabled(isProcessing)
                 .navigationTitle("StereoShift")
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
@@ -96,7 +97,6 @@ struct HomeView: View {
                                 webServer: galleryWebServer,
                                 subscriptionManager: subscriptionManager
                             )
-                                .navigationTitle("In-App Gallery")
                         } label: {
                             Label("Gallery", systemImage: "photo.on.rectangle.angled")
                         }
