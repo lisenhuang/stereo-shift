@@ -1,10 +1,15 @@
 import Combine
 import Foundation
 import Network
+import os
 import Security
 
 #if canImport(Darwin)
 import Darwin
+#endif
+
+#if canImport(UIKit)
+import UIKit
 #endif
 
 final class GalleryWebServer: ObservableObject {
@@ -20,22 +25,39 @@ final class GalleryWebServer: ObservableObject {
     private let queue = DispatchQueue(label: "com.stereoshift.gallery-web-server", qos: .utility)
     private let pathMonitor = NWPathMonitor()
     private var holdsScreenAwakeLock = false
+    private var memoryWarningObserver: NSObjectProtocol?
     private var failedAuthAttempts = 0
     private var authorizedSessionTokens: Set<String> = []
 
+    private static let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.huanglisen.StereoShift", category: "GalleryWebServer")
     private static let identityFilename = "WebShareIdentity"
     private static let identityExtension = "p12"
     private static let identityPassword = "StereoShiftLocalWebShare"
     private static let accessPINDefaultsKey = "galleryWebShareAccessPIN"
     private static let authCookieName = "stereoshift_session"
+    private static let authPath = "/session-auth"
+    private static let legacyAuthPath = "/auth"
     private static let maxFailedAuthAttempts = 10
+    private static let fileStreamChunkSize = 256 * 1024
 
     init() {
+#if canImport(UIKit)
+        memoryWarningObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.logMemoryFootprint("System memory warning received")
+        }
+#endif
         configureNetworkMonitor()
         refreshWiFiStatus()
     }
 
     deinit {
+        if let memoryWarningObserver {
+            NotificationCenter.default.removeObserver(memoryWarningObserver)
+        }
         pathMonitor.cancel()
         stop()
     }
@@ -62,6 +84,8 @@ final class GalleryWebServer: ObservableObject {
         errorMessage = nil
         failedAuthAttempts = 0
         authorizedSessionTokens.removeAll()
+        // Re-sync persisted PIN at startup in case UserDefaults changed while server was stopped.
+        accessPIN = Self.loadOrCreateAccessPIN()
 
         guard let hostAddress = Self.localWiFiIPv4Address() else {
             isWiFiConnected = false
@@ -86,7 +110,7 @@ final class GalleryWebServer: ObservableObject {
 
             isRunning = true
             self.hostAddress = hostAddress
-            browseURL = "https://\(hostAddress)"
+            browseURL = "http://\(hostAddress)"
             acquireScreenAwakeLockIfNeeded()
         } catch {
             stop()
@@ -198,30 +222,46 @@ final class GalleryWebServer: ObservableObject {
             return
         }
 
+        if request.path.hasPrefix("/media/") {
+            let rangeValue = request.headers["range"] ?? "none"
+            Self.logger.info("Media request path=\(request.path, privacy: .public) method=\(request.method, privacy: .public) tls=\(String(isTLS), privacy: .public) range=\(rangeValue, privacy: .public)")
+        }
+
         guard request.method == "GET" || request.method == "HEAD" else {
             sendTextResponse(statusCode: 405, reasonPhrase: "Method Not Allowed", text: "Method not allowed.", method: request.method, on: connection)
             return
         }
 
         if !isTLS {
-            sendRedirectResponse(to: "https://\(hostAddress)\(request.pathAndQuery)", method: request.method, on: connection)
+            sendRedirectResponse(
+                to: "https://\(hostAddress)\(request.pathAndQuery)",
+                method: request.method,
+                statusCode: 301,
+                reasonPhrase: "Moved Permanently",
+                on: connection
+            )
             return
         }
 
-        route(request: request, on: connection)
+        route(request: request, isTLS: isTLS, on: connection)
     }
 
-    private func route(request: HTTPRequest, on connection: NWConnection) {
-        if request.path == "/auth" {
-            handleAuthenticationRequest(request: request, on: connection)
+    private func route(request: HTTPRequest, isTLS: Bool, on connection: NWConnection) {
+        if request.path == Self.authPath || request.path == Self.legacyAuthPath {
+            handleAuthenticationRequest(request: request, isTLS: isTLS, on: connection)
             return
         }
 
         guard isAuthorized(request: request) else {
             if request.path == "/" {
-                sendAccessPINPage(message: nil, method: request.method, on: connection)
+                sendAccessPINPage(message: nil, method: request.method, isTLS: isTLS, on: connection)
             } else {
-                sendRedirectResponse(to: "/", method: request.method, on: connection)
+                sendRedirectResponse(
+                    to: "/",
+                    method: request.method,
+                    headers: ["Set-Cookie": Self.clearAuthenticationCookieHeader(secure: isTLS)],
+                    on: connection
+                )
             }
             return
         }
@@ -256,7 +296,7 @@ final class GalleryWebServer: ObservableObject {
         }
     }
 
-    private func handleAuthenticationRequest(request: HTTPRequest, on connection: NWConnection) {
+    private func handleAuthenticationRequest(request: HTTPRequest, isTLS: Bool, on connection: NWConnection) {
         let rawPIN = request.queryItems["pin"] ?? ""
         let candidatePIN = rawPIN.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -264,12 +304,16 @@ final class GalleryWebServer: ObservableObject {
             sendAccessPINPage(
                 message: "Enter a valid 4-digit PIN.",
                 method: request.method,
+                isTLS: isTLS,
                 on: connection
             )
             return
         }
 
-        guard candidatePIN == accessPIN else {
+        let isPinMatch = (candidatePIN == accessPIN)
+        Self.logger.info("PIN auth attempt match=\(String(isPinMatch), privacy: .public) tls=\(String(isTLS), privacy: .public)")
+
+        guard isPinMatch else {
             failedAuthAttempts += 1
             let remainingAttempts = max(0, Self.maxFailedAuthAttempts - failedAuthAttempts)
 
@@ -293,6 +337,7 @@ final class GalleryWebServer: ObservableObject {
             sendAccessPINPage(
                 message: "Incorrect PIN. \(remainingAttempts) attempts remaining.",
                 method: request.method,
+                isTLS: isTLS,
                 on: connection
             )
             return
@@ -305,7 +350,9 @@ final class GalleryWebServer: ObservableObject {
         sendRedirectResponse(
             to: "/",
             method: request.method,
-            headers: ["Set-Cookie": Self.authenticationCookieHeader(for: sessionToken)],
+            headers: ["Set-Cookie": Self.authenticationCookieHeader(for: sessionToken, secure: isTLS)],
+            statusCode: 303,
+            reasonPhrase: "See Other",
             on: connection
         )
     }
@@ -315,6 +362,7 @@ final class GalleryWebServer: ObservableObject {
             return false
         }
 
+        var hasSessionCookie = false
         for cookie in cookieHeader.split(separator: ";") {
             let trimmedCookie = cookie.trimmingCharacters(in: .whitespacesAndNewlines)
             guard let separator = trimmedCookie.firstIndex(of: "=") else { continue }
@@ -322,21 +370,30 @@ final class GalleryWebServer: ObservableObject {
             let name = trimmedCookie[..<separator]
             let value = trimmedCookie[trimmedCookie.index(after: separator)...]
             if name == Self.authCookieName {
-                return authorizedSessionTokens.contains(String(value))
+                hasSessionCookie = true
+                if authorizedSessionTokens.contains(String(value)) {
+                    return true
+                }
             }
         }
 
+        if hasSessionCookie {
+            Self.logger.debug("Session cookie present but no active token matched; treating request as unauthorized")
+        }
         return false
     }
 
-    private func sendAccessPINPage(message: String?, method: String, on connection: NWConnection) {
+    private func sendAccessPINPage(message: String?, method: String, isTLS: Bool, on connection: NWConnection) {
         let body = Data(Self.accessPINHTML(message: message, remainingAttempts: Self.maxFailedAuthAttempts - failedAuthAttempts).utf8)
         sendDataResponse(
             statusCode: 200,
             reasonPhrase: "OK",
             headers: [
                 "Content-Type": "text/html; charset=utf-8",
-                "Cache-Control": "no-store"
+                "Cache-Control": "no-store, no-cache, max-age=0",
+                "Pragma": "no-cache",
+                "Expires": "0",
+                "Set-Cookie": Self.clearAuthenticationCookieHeader(secure: isTLS)
             ],
             body: body,
             method: method,
@@ -457,9 +514,16 @@ final class GalleryWebServer: ObservableObject {
 
             let fileSize = Int64(fileSizeValue)
             let contentType = Self.contentType(for: fileURL) ?? fallbackContentType
+            let fileSizeMB = Double(fileSize) / 1_048_576
+            let fileSizeMBString = String(format: "%.1f", fileSizeMB)
+            let rangeValue = rangeHeader ?? "none"
+
+            Self.logger.debug(
+                "Serving file file=\(fileURL.lastPathComponent, privacy: .public) sizeMB=\(fileSizeMBString, privacy: .public) method=\(method, privacy: .public) range=\(rangeValue, privacy: .public) contentType=\(contentType, privacy: .public)"
+            )
 
             if let rangeHeader, let range = Self.byteRange(from: rangeHeader, fileSize: fileSize) {
-                let data = try readRange(range, from: fileURL)
+                let rangeLength = range.upperBound - range.lowerBound + 1
                 let responseHeaders = [
                     "Content-Type": contentType,
                     "Accept-Ranges": "bytes",
@@ -467,12 +531,14 @@ final class GalleryWebServer: ObservableObject {
                     "Cache-Control": "no-store"
                 ]
 
-                sendDataResponse(
+                sendStreamedFileResponse(
+                    fileURL: fileURL,
                     statusCode: 206,
                     reasonPhrase: "Partial Content",
                     headers: responseHeaders,
-                    body: data,
                     method: method,
+                    offset: range.lowerBound,
+                    contentLength: rangeLength,
                     on: connection
                 )
                 return
@@ -495,8 +561,12 @@ final class GalleryWebServer: ObservableObject {
                 return
             }
 
-            let body = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
-            sendDataResponse(
+            Self.logger.warning(
+                "Serving full-body response without Range header (streaming) file=\(fileURL.lastPathComponent, privacy: .public) sizeMB=\(fileSizeMBString, privacy: .public)"
+            )
+
+            sendStreamedFileResponse(
+                fileURL: fileURL,
                 statusCode: 200,
                 reasonPhrase: "OK",
                 headers: [
@@ -504,39 +574,172 @@ final class GalleryWebServer: ObservableObject {
                     "Accept-Ranges": "bytes",
                     "Cache-Control": "no-store"
                 ],
-                body: body,
                 method: method,
+                offset: 0,
+                contentLength: fileSize,
                 on: connection
             )
         } catch {
+            Self.logger.error("File response failed file=\(fileURL.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            logMemoryFootprint("File read failure snapshot")
             sendTextResponse(statusCode: 500, reasonPhrase: "Internal Server Error", text: "Failed to read file.", method: method, on: connection)
         }
     }
 
-    private func readRange(_ range: ClosedRange<Int64>, from fileURL: URL) throws -> Data {
-        let handle = try FileHandle(forReadingFrom: fileURL)
-        defer {
-            try? handle.close()
+    private func sendStreamedFileResponse(
+        fileURL: URL,
+        statusCode: Int,
+        reasonPhrase: String,
+        headers: [String: String],
+        method: String,
+        offset: Int64,
+        contentLength: Int64,
+        on connection: NWConnection
+    ) {
+        if method == "HEAD" {
+            sendDataResponse(
+                statusCode: statusCode,
+                reasonPhrase: reasonPhrase,
+                headers: headers,
+                body: Data(),
+                method: method,
+                explicitContentLength: contentLength,
+                on: connection
+            )
+            return
         }
 
-        try handle.seek(toOffset: UInt64(range.lowerBound))
-        let length = Int(range.upperBound - range.lowerBound + 1)
-        let chunk = try handle.read(upToCount: length) ?? Data()
-        return chunk
+        do {
+            let handle = try FileHandle(forReadingFrom: fileURL)
+            try handle.seek(toOffset: UInt64(offset))
+
+            sendResponseHeaders(
+                statusCode: statusCode,
+                reasonPhrase: reasonPhrase,
+                headers: headers,
+                contentLength: contentLength,
+                on: connection
+            ) { [weak self] sendError in
+                guard let self else {
+                    try? handle.close()
+                    connection.cancel()
+                    return
+                }
+
+                if let sendError {
+                    Self.logger.error("Header send failed file=\(fileURL.lastPathComponent, privacy: .public) error=\(sendError.localizedDescription, privacy: .public)")
+                    try? handle.close()
+                    connection.cancel()
+                    return
+                }
+
+                self.sendFileChunks(
+                    handle: handle,
+                    remainingBytes: contentLength,
+                    fileName: fileURL.lastPathComponent,
+                    on: connection
+                )
+            }
+        } catch {
+            Self.logger.error("Failed to start streaming file=\(fileURL.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            sendTextResponse(statusCode: 500, reasonPhrase: "Internal Server Error", text: "Failed to read file.", method: method, on: connection)
+        }
+    }
+
+    private func sendFileChunks(
+        handle: FileHandle,
+        remainingBytes: Int64,
+        fileName: String,
+        on connection: NWConnection
+    ) {
+        guard remainingBytes > 0 else {
+            try? handle.close()
+            connection.cancel()
+            return
+        }
+
+        let chunkSize = Int(min(Int64(Self.fileStreamChunkSize), remainingBytes))
+
+        do {
+            let chunk = try handle.read(upToCount: chunkSize) ?? Data()
+            if chunk.isEmpty {
+                Self.logger.error("Unexpected EOF while streaming file=\(fileName, privacy: .public) remainingBytes=\(String(remainingBytes), privacy: .public)")
+                try? handle.close()
+                connection.cancel()
+                return
+            }
+
+            connection.send(content: chunk, completion: .contentProcessed { [weak self] sendError in
+                guard self != nil else {
+                    try? handle.close()
+                    connection.cancel()
+                    return
+                }
+
+                if let sendError {
+                    Self.logger.error("Chunk send failed file=\(fileName, privacy: .public) error=\(sendError.localizedDescription, privacy: .public)")
+                    try? handle.close()
+                    connection.cancel()
+                    return
+                }
+
+                self?.sendFileChunks(
+                    handle: handle,
+                    remainingBytes: remainingBytes - Int64(chunk.count),
+                    fileName: fileName,
+                    on: connection
+                )
+            })
+        } catch {
+            Self.logger.error("Chunk read failed file=\(fileName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
+            try? handle.close()
+            connection.cancel()
+        }
+    }
+
+    private func sendResponseHeaders(
+        statusCode: Int,
+        reasonPhrase: String,
+        headers: [String: String],
+        contentLength: Int64,
+        on connection: NWConnection,
+        completion: @escaping (NWError?) -> Void
+    ) {
+        var responseHeaders = headers
+        responseHeaders["Connection"] = "close"
+        responseHeaders["Content-Length"] = String(contentLength)
+
+        var headerText = "HTTP/1.1 \(statusCode) \(reasonPhrase)\r\n"
+        for key in responseHeaders.keys.sorted() {
+            if let value = responseHeaders[key] {
+                headerText += "\(key): \(value)\r\n"
+            }
+        }
+        headerText += "\r\n"
+
+        let headerData = Data(headerText.utf8)
+        connection.send(content: headerData, completion: .contentProcessed { error in
+            completion(error)
+        })
     }
 
     private func sendRedirectResponse(
         to location: String,
         method: String,
         headers: [String: String] = [:],
+        statusCode: Int = 302,
+        reasonPhrase: String = "Found",
         on connection: NWConnection
     ) {
         var redirectHeaders = headers
         redirectHeaders["Location"] = location
+        redirectHeaders["Cache-Control"] = "no-store, no-cache, max-age=0"
+        redirectHeaders["Pragma"] = "no-cache"
+        redirectHeaders["Expires"] = "0"
 
         sendDataResponse(
-            statusCode: 301,
-            reasonPhrase: "Moved Permanently",
+            statusCode: statusCode,
+            reasonPhrase: reasonPhrase,
             headers: redirectHeaders,
             body: Data(),
             method: method,
@@ -596,6 +799,35 @@ final class GalleryWebServer: ObservableObject {
         })
     }
 
+    private func logMemoryFootprint(_ label: String) {
+        guard let bytes = Self.currentMemoryFootprintBytes() else {
+            Self.logger.debug("\(label, privacy: .public) | memory footprint unavailable")
+            return
+        }
+
+        let mbString = String(format: "%.1f", Double(bytes) / 1_048_576)
+        Self.logger.notice("\(label, privacy: .public) | app footprintMB=\(mbString, privacy: .public)")
+    }
+
+    private static func currentMemoryFootprintBytes() -> UInt64? {
+#if canImport(Darwin)
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.stride / MemoryLayout<integer_t>.stride)
+        let kerr: kern_return_t = withUnsafeMutablePointer(to: &info) { infoPointer in
+            infoPointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { intPointer in
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), intPointer, &count)
+            }
+        }
+
+        guard kerr == KERN_SUCCESS else {
+            return nil
+        }
+        return info.phys_footprint
+#else
+        return nil
+#endif
+    }
+
     private func acquireScreenAwakeLockIfNeeded() {
         guard !holdsScreenAwakeLock else { return }
         holdsScreenAwakeLock = true
@@ -629,8 +861,20 @@ final class GalleryWebServer: ObservableObject {
         String(format: "%04d", Int.random(in: 0...9999))
     }
 
-    private static func authenticationCookieHeader(for token: String) -> String {
-        "\(authCookieName)=\(token); Path=/; HttpOnly; Secure; SameSite=Lax"
+    private static func authenticationCookieHeader(for token: String, secure: Bool) -> String {
+        var attributes = "\(authCookieName)=\(token); Path=/; HttpOnly; SameSite=Lax"
+        if secure {
+            attributes += "; Secure"
+        }
+        return attributes
+    }
+
+    private static func clearAuthenticationCookieHeader(secure: Bool) -> String {
+        var attributes = "\(authCookieName)=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+        if secure {
+            attributes += "; Secure"
+        }
+        return attributes
     }
 
     private static func makeHTTPSParameters() throws -> NWParameters {
@@ -1007,10 +1251,42 @@ final class GalleryWebServer: ObservableObject {
   </style>
 </head>
 <body>
+  <script>
+    (async function maybeRedirectToSecureVR() {
+      try {
+        if (window.location.protocol !== 'http:') {
+          return;
+        }
+
+        if (!navigator.xr || typeof navigator.xr.isSessionSupported !== 'function') {
+          return;
+        }
+
+        let xrLooksSupported = false;
+        try {
+          xrLooksSupported = await navigator.xr.isSessionSupported('immersive-vr');
+          if (!xrLooksSupported) {
+            xrLooksSupported = await navigator.xr.isSessionSupported('immersive-ar');
+          }
+        } catch (_) {
+          xrLooksSupported = false;
+        }
+
+        if (!xrLooksSupported) {
+          return;
+        }
+
+        const secureURL = new URL(window.location.href);
+        secureURL.protocol = 'https:';
+        window.location.replace(secureURL.toString());
+      } catch (_) {
+      }
+    })();
+  </script>
   <section class="card">
     <h1>StereoShift Web Share</h1>
     <p class="subtitle">Enter the 4-digit PIN shown in the app to continue.</p>
-    <form method="get" action="/auth" autocomplete="off">
+    <form method="get" action="\(authPath)" autocomplete="off">
       <label for="pin">Access PIN</label>
       <input id="pin" name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" placeholder="0000" autofocus required />
       <button type="submit">Unlock</button>
@@ -1043,6 +1319,8 @@ final class GalleryWebServer: ObservableObject {
     :root {
       --bg: #060b1a;
       --bg2: #0c1630;
+      --bg-accent-a: #1a2a56;
+      --bg-accent-b: #1c1742;
       --card: rgba(16, 26, 52, 0.72);
       --card-border: rgba(130, 165, 255, 0.22);
       --text: #eef3ff;
@@ -1051,6 +1329,65 @@ final class GalleryWebServer: ObservableObject {
       --accent2: #8d6bff;
       --danger: #ff5874;
       --shadow: 0 16px 44px rgba(0, 0, 0, 0.36);
+      --btn-outline-bg: rgba(255, 255, 255, 0.03);
+      --btn-outline-border: rgba(255, 255, 255, 0.2);
+      --thumb-bg: linear-gradient(135deg, rgba(43, 61, 102, .62), rgba(28, 34, 58, .8));
+      --overlay-bg: rgba(2, 6, 16, 0.9);
+      --viewer-bg: rgba(14, 20, 38, 0.92);
+      --viewer-border: rgba(143, 178, 255, 0.25);
+      --viewer-divider: rgba(255, 255, 255, 0.08);
+      --name-text: #dbe6ff;
+      --viewer-title-text: #dce8ff;
+      --viewer-time-text: #c7d7fb;
+      --badge-bg: rgba(7, 12, 26, .75);
+      --badge-border: rgba(255, 255, 255, .18);
+      --badge-text: #eef3ff;
+      --empty-border: rgba(174, 198, 255, .26);
+      --empty-bg: rgba(255, 255, 255, 0.01);
+      --error-text: #ffd8dd;
+      --error-bg: rgba(159, 19, 51, 0.28);
+      --error-border: rgba(255, 115, 140, 0.44);
+      --dialog-backdrop: rgba(3, 7, 18, 0.74);
+      --dialog-bg: rgba(17, 24, 43, 0.96);
+      --dialog-border: rgba(152, 182, 255, 0.35);
+      --dialog-text: #dce8ff;
+    }
+
+    :root[data-theme="light"] {
+      --bg: #eef4ff;
+      --bg2: #dfe9ff;
+      --bg-accent-a: #bcd2ff;
+      --bg-accent-b: #cfd9ff;
+      --card: rgba(255, 255, 255, 0.9);
+      --card-border: rgba(79, 110, 180, 0.25);
+      --text: #13213f;
+      --muted: #4e648f;
+      --accent: #2a96ff;
+      --accent2: #6158ff;
+      --danger: #df2f4d;
+      --shadow: 0 14px 32px rgba(36, 62, 118, 0.16);
+      --btn-outline-bg: rgba(19, 33, 63, 0.03);
+      --btn-outline-border: rgba(66, 90, 145, 0.28);
+      --thumb-bg: linear-gradient(135deg, rgba(151, 177, 235, 0.58), rgba(225, 234, 255, 0.85));
+      --overlay-bg: rgba(122, 138, 174, 0.52);
+      --viewer-bg: rgba(249, 252, 255, 0.98);
+      --viewer-border: rgba(80, 110, 180, 0.26);
+      --viewer-divider: rgba(28, 43, 77, 0.12);
+      --name-text: #1b2d52;
+      --viewer-title-text: #1a2d55;
+      --viewer-time-text: #39517e;
+      --badge-bg: rgba(240, 246, 255, 0.95);
+      --badge-border: rgba(80, 110, 180, 0.35);
+      --badge-text: #1f3560;
+      --empty-border: rgba(91, 122, 191, 0.35);
+      --empty-bg: rgba(255, 255, 255, 0.52);
+      --error-text: #9a1730;
+      --error-bg: rgba(255, 209, 218, 0.74);
+      --error-border: rgba(217, 88, 113, 0.45);
+      --dialog-backdrop: rgba(72, 90, 128, 0.48);
+      --dialog-bg: rgba(255, 255, 255, 0.98);
+      --dialog-border: rgba(80, 110, 180, 0.25);
+      --dialog-text: #20345e;
     }
 
     * { box-sizing: border-box; }
@@ -1059,8 +1396,8 @@ final class GalleryWebServer: ObservableObject {
       margin: 0;
       color: var(--text);
       font-family: "SF Pro Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
-      background: radial-gradient(circle at 18% 10%, #1a2a56 0%, transparent 36%),
-                  radial-gradient(circle at 80% 0%, #1c1742 0%, transparent 34%),
+      background: radial-gradient(circle at 18% 10%, var(--bg-accent-a) 0%, transparent 36%),
+                  radial-gradient(circle at 80% 0%, var(--bg-accent-b) 0%, transparent 34%),
                   linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
       min-height: 100vh;
     }
@@ -1105,6 +1442,33 @@ final class GalleryWebServer: ObservableObject {
       align-items: center;
     }
 
+    .theme-picker {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .theme-picker select {
+      appearance: none;
+      border: 1px solid var(--btn-outline-border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      background: var(--btn-outline-bg);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .theme-picker select:focus {
+      outline: none;
+      border-color: rgba(67, 208, 255, 0.65);
+      box-shadow: 0 0 0 3px rgba(67, 208, 255, 0.2);
+    }
+
     button {
       appearance: none;
       border: 1px solid transparent;
@@ -1125,8 +1489,8 @@ final class GalleryWebServer: ObservableObject {
     }
 
     .btn-outline {
-      background: rgba(255, 255, 255, 0.03);
-      border-color: rgba(255, 255, 255, 0.2);
+      background: var(--btn-outline-bg);
+      border-color: var(--btn-outline-border);
     }
 
     .hint {
@@ -1164,7 +1528,7 @@ final class GalleryWebServer: ObservableObject {
       position: relative;
       width: 100%;
       aspect-ratio: 1 / 1;
-      background: linear-gradient(135deg, rgba(43, 61, 102, .62), rgba(28, 34, 58, .8));
+      background: var(--thumb-bg);
       overflow: hidden;
     }
 
@@ -1183,8 +1547,9 @@ final class GalleryWebServer: ObservableObject {
       border-radius: 999px;
       font-size: 11px;
       font-weight: 700;
-      background: rgba(7, 12, 26, .75);
-      border: 1px solid rgba(255, 255, 255, .18);
+      color: var(--badge-text);
+      background: var(--badge-bg);
+      border: 1px solid var(--badge-border);
       backdrop-filter: blur(8px);
     }
 
@@ -1198,7 +1563,7 @@ final class GalleryWebServer: ObservableObject {
       font-size: 13px;
       line-height: 1.3;
       word-break: break-all;
-      color: #dbe6ff;
+      color: var(--name-text);
     }
 
     .meta .date {
@@ -1212,7 +1577,7 @@ final class GalleryWebServer: ObservableObject {
       display: none;
       place-items: center;
       padding: 18px;
-      background: rgba(2, 6, 16, 0.9);
+      background: var(--overlay-bg);
       z-index: 40;
     }
 
@@ -1222,8 +1587,8 @@ final class GalleryWebServer: ObservableObject {
       width: min(1080px, 100%);
       max-height: calc(100vh - 36px);
       border-radius: 16px;
-      border: 1px solid rgba(143, 178, 255, 0.25);
-      background: rgba(14, 20, 38, 0.92);
+      border: 1px solid var(--viewer-border);
+      background: var(--viewer-bg);
       display: grid;
       grid-template-rows: auto 1fr auto;
       overflow: hidden;
@@ -1235,14 +1600,14 @@ final class GalleryWebServer: ObservableObject {
       align-items: center;
       justify-content: space-between;
       padding: 10px 12px;
-      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      border-bottom: 1px solid var(--viewer-divider);
       gap: 8px;
       flex-wrap: wrap;
     }
 
     .viewer-title {
       font-size: 14px;
-      color: #dce8ff;
+      color: var(--viewer-title-text);
       word-break: break-all;
     }
 
@@ -1254,7 +1619,7 @@ final class GalleryWebServer: ObservableObject {
 
     .viewer-time {
       font-size: 13px;
-      color: #c7d7fb;
+      color: var(--viewer-time-text);
       padding: 8px 12px 10px;
       white-space: nowrap;
       font-variant-numeric: tabular-nums;
@@ -1267,7 +1632,7 @@ final class GalleryWebServer: ObservableObject {
 
     .viewer-body {
       min-height: min(70vh, 700px);
-      background: #010409;
+      background: var(--bg);
       display: grid;
       place-items: center;
       overflow: auto;
@@ -1285,17 +1650,17 @@ final class GalleryWebServer: ObservableObject {
     }
 
     .viewer-foot {
-      border-top: 1px solid rgba(255, 255, 255, 0.08);
+      border-top: 1px solid var(--viewer-divider);
     }
 
     .empty {
       margin-top: 18px;
       color: var(--muted);
       text-align: center;
-      border: 1px dashed rgba(174, 198, 255, .26);
+      border: 1px dashed var(--empty-border);
       border-radius: 12px;
       padding: 24px;
-      background: rgba(255, 255, 255, 0.01);
+      background: var(--empty-bg);
     }
 
     .load-more-wrap {
@@ -1306,9 +1671,9 @@ final class GalleryWebServer: ObservableObject {
 
     .error {
       margin-top: 14px;
-      color: #ffd8dd;
-      background: rgba(159, 19, 51, 0.28);
-      border: 1px solid rgba(255, 115, 140, 0.44);
+      color: var(--error-text);
+      background: var(--error-bg);
+      border: 1px solid var(--error-border);
       padding: 10px 12px;
       border-radius: 10px;
       display: none;
@@ -1321,7 +1686,7 @@ final class GalleryWebServer: ObservableObject {
       align-items: center;
       justify-content: center;
       padding: 20px;
-      background: rgba(3, 7, 18, 0.74);
+      background: var(--dialog-backdrop);
       z-index: 90;
     }
 
@@ -1331,8 +1696,8 @@ final class GalleryWebServer: ObservableObject {
 
     .ui-dialog {
       width: min(560px, 100%);
-      background: rgba(17, 24, 43, 0.96);
-      border: 1px solid rgba(152, 182, 255, 0.35);
+      background: var(--dialog-bg);
+      border: 1px solid var(--dialog-border);
       border-radius: 16px;
       box-shadow: var(--shadow);
       padding: 16px;
@@ -1348,7 +1713,7 @@ final class GalleryWebServer: ObservableObject {
 
     .ui-dialog-message {
       font-size: 14px;
-      color: #dce8ff;
+      color: var(--dialog-text);
       line-height: 1.45;
       white-space: pre-line;
     }
@@ -1374,6 +1739,13 @@ final class GalleryWebServer: ObservableObject {
         <p class="subtitle">Browse your local converted photos and videos.</p>
       </div>
       <div class="actions">
+        <div class="theme-picker">
+          <label for="themeSelector">Theme</label>
+          <select id="themeSelector" aria-label="Theme">
+            <option value="dark" selected>Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
         <button id="refreshButton" class="btn-outline">Refresh</button>
       </div>
     </section>
@@ -1428,7 +1800,10 @@ final class GalleryWebServer: ObservableObject {
     const emptyState = document.getElementById('emptyState');
     const loadMoreButton = document.getElementById('loadMoreButton');
     const refreshButton = document.getElementById('refreshButton');
+    const themeSelector = document.getElementById('themeSelector');
     const errorBanner = document.getElementById('errorBanner');
+
+    const themeStorageKey = 'stereoshift_webshare_theme';
 
     const overlay = document.getElementById('overlay');
     const viewerTitle = document.getElementById('viewerTitle');
@@ -1492,6 +1867,78 @@ final class GalleryWebServer: ObservableObject {
         hideDialog();
       }
     });
+
+    function normalizeTheme(value) {
+      if (value === 'default-dark') {
+        return 'dark';
+      }
+      if (value === 'light' || value === 'dark') {
+        return value;
+      }
+      return 'dark';
+    }
+
+    function applyTheme(themeValue) {
+      const normalized = normalizeTheme(themeValue);
+      document.documentElement.setAttribute('data-theme', normalized);
+      if (themeSelector) {
+        themeSelector.value = normalized;
+      }
+    }
+
+    function loadThemePreference() {
+      try {
+        return normalizeTheme(localStorage.getItem(themeStorageKey));
+      } catch (_) {
+        return 'dark';
+      }
+    }
+
+    function saveThemePreference(themeValue) {
+      try {
+        localStorage.setItem(themeStorageKey, normalizeTheme(themeValue));
+      } catch (_) {
+      }
+    }
+
+    if (themeSelector) {
+      themeSelector.addEventListener('change', () => {
+        const selectedTheme = normalizeTheme(themeSelector.value);
+        applyTheme(selectedTheme);
+        saveThemePreference(selectedTheme);
+      });
+    }
+
+    async function maybeRedirectToSecureVR() {
+      if (window.location.protocol !== 'http:') {
+        return;
+      }
+
+      if (!navigator.xr || typeof navigator.xr.isSessionSupported !== 'function') {
+        return;
+      }
+
+      let xrLooksSupported = false;
+      try {
+        xrLooksSupported = await navigator.xr.isSessionSupported('immersive-vr');
+        if (!xrLooksSupported) {
+          xrLooksSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        }
+      } catch (_) {
+        xrLooksSupported = false;
+      }
+
+      if (!xrLooksSupported) {
+        return;
+      }
+
+      const secureURL = new URL(window.location.href);
+      secureURL.protocol = 'https:';
+      window.location.replace(secureURL.toString());
+    }
+
+    applyTheme(loadThemePreference());
+    maybeRedirectToSecureVR();
 
     function showDialog(message, title = 'Notice') {
       dialogTitle.textContent = title;
@@ -2197,18 +2644,18 @@ final class GalleryWebServer: ObservableObject {
       }
 
       const xrContext = await detectXRContext();
+      if (!xrContext.hasXR || !xrContext.hasSessionSupportCheck) {
+        showDialog('Entering VR requires a VR headset browser. Open this page in your headset browser and try again.', 'XR Unsupported');
+        return;
+      }
+
       if (!xrContext.secureContext) {
         showDialog('WebXR requires HTTPS secure context. Accept the certificate warning, then reload.', 'XR Unsupported');
         return;
       }
 
-      if (!xrContext.hasXR || !xrContext.hasSessionSupportCheck) {
-        showDialog('This browser does not provide WebXR immersive session support. Open this page in a WebXR-enabled VR browser.', 'XR Unsupported');
-        return;
-      }
-
       if (!xrContext.immersiveSupported) {
-        showDialog('This browser reports no immersive VR/AR support for this page.', 'XR Unsupported');
+        showDialog('Entering VR requires a VR headset browser. Open this page in your headset browser and try again.', 'XR Unsupported');
         return;
       }
 
