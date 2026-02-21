@@ -30,6 +30,11 @@ final class AppGalleryLibrary: ObservableObject {
     @Published private(set) var items: [GalleryItem] = []
     private var reloadTask: Task<Void, Never>?
 
+    private static let appGroupIdentifier = "group.com.huanglisen.StereoShift"
+    private static let migrationLock = NSLock()
+    private static var didAttemptLegacyGalleryMigration = false
+    private static var didAttemptLegacyThumbnailMigration = false
+
     init() {
         reload()
     }
@@ -180,37 +185,150 @@ final class AppGalleryLibrary: ObservableObject {
     }
 
     static func galleryDirectory() throws -> URL {
-        let baseDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        guard let baseDirectory else {
-            throw StereoPipelineError.temporaryFileCreationFailed
+        let fileManager = FileManager.default
+        let sharedBaseDirectory = sharedContainerURL()
+        let baseDirectory: URL
+        if let sharedBaseDirectory {
+            baseDirectory = sharedBaseDirectory
+        } else {
+            baseDirectory = try legacyApplicationSupportDirectory()
         }
 
         let directory = baseDirectory
             .appendingPathComponent("StereoShift", isDirectory: true)
             .appendingPathComponent("Gallery", isDirectory: true)
 
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        // If the App Group container became available after users already saved items, move them once.
+        if sharedBaseDirectory != nil {
+            migrateLegacyGalleryIfNeeded(sharedGalleryDirectory: directory)
         }
 
         return directory
     }
 
     static func thumbnailsDirectory() throws -> URL {
-        let baseDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
-        guard let baseDirectory else {
-            throw StereoPipelineError.temporaryFileCreationFailed
+        let fileManager = FileManager.default
+        let sharedBaseDirectory = sharedContainerURL()
+        let baseDirectory: URL
+        if let sharedBaseDirectory {
+            baseDirectory = sharedBaseDirectory
+        } else {
+            baseDirectory = try legacyApplicationSupportDirectory()
         }
 
         let directory = baseDirectory
             .appendingPathComponent("StereoShift", isDirectory: true)
             .appendingPathComponent("GalleryThumbnails", isDirectory: true)
 
-        if !FileManager.default.fileExists(atPath: directory.path) {
-            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        if !fileManager.fileExists(atPath: directory.path) {
+            try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+
+        if sharedBaseDirectory != nil {
+            migrateLegacyThumbnailsIfNeeded(sharedThumbnailDirectory: directory)
         }
 
         return directory
+    }
+
+    private static func sharedContainerURL() -> URL? {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
+    }
+
+    private static func legacyApplicationSupportDirectory() throws -> URL {
+        let baseDirectory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+        guard let baseDirectory else {
+            throw StereoPipelineError.temporaryFileCreationFailed
+        }
+        return baseDirectory
+    }
+
+    private static func legacyGalleryDirectoryURL() -> URL? {
+        guard let baseDirectory = try? legacyApplicationSupportDirectory() else {
+            return nil
+        }
+
+        return baseDirectory
+            .appendingPathComponent("StereoShift", isDirectory: true)
+            .appendingPathComponent("Gallery", isDirectory: true)
+    }
+
+    private static func legacyThumbnailsDirectoryURL() -> URL? {
+        guard let baseDirectory = try? legacyApplicationSupportDirectory() else {
+            return nil
+        }
+
+        return baseDirectory
+            .appendingPathComponent("StereoShift", isDirectory: true)
+            .appendingPathComponent("GalleryThumbnails", isDirectory: true)
+    }
+
+    private static func migrateLegacyGalleryIfNeeded(sharedGalleryDirectory: URL) {
+        migrationLock.lock()
+        defer { migrationLock.unlock() }
+        guard !didAttemptLegacyGalleryMigration else {
+            return
+        }
+
+        didAttemptLegacyGalleryMigration = true
+        guard let legacyDirectory = legacyGalleryDirectoryURL() else {
+            return
+        }
+
+        migrateFiles(from: legacyDirectory, to: sharedGalleryDirectory)
+    }
+
+    private static func migrateLegacyThumbnailsIfNeeded(sharedThumbnailDirectory: URL) {
+        migrationLock.lock()
+        defer { migrationLock.unlock() }
+        guard !didAttemptLegacyThumbnailMigration else {
+            return
+        }
+
+        didAttemptLegacyThumbnailMigration = true
+        guard let legacyDirectory = legacyThumbnailsDirectoryURL() else {
+            return
+        }
+
+        migrateFiles(from: legacyDirectory, to: sharedThumbnailDirectory)
+    }
+
+    private static func migrateFiles(from legacyDirectory: URL, to sharedDirectory: URL) {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: legacyDirectory.path) else {
+            return
+        }
+
+        guard let legacyFiles = try? fileManager.contentsOfDirectory(
+            at: legacyDirectory,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            return
+        }
+
+        for legacyFile in legacyFiles {
+            let destinationURL = sharedDirectory.appendingPathComponent(legacyFile.lastPathComponent, isDirectory: false)
+            guard !fileManager.fileExists(atPath: destinationURL.path) else {
+                continue
+            }
+
+            do {
+                try fileManager.moveItem(at: legacyFile, to: destinationURL)
+            } catch {
+                // Best-effort migration. If move fails (e.g. cross-volume), fall back to copy+delete.
+                do {
+                    try fileManager.copyItem(at: legacyFile, to: destinationURL)
+                    try? fileManager.removeItem(at: legacyFile)
+                } catch {
+                    continue
+                }
+            }
+        }
     }
 
     static func thumbnailURL(forMediaFilename mediaFilename: String) throws -> URL {
