@@ -7,11 +7,12 @@ final class ShareViewController: UIViewController {
     private static let appGroupIdentifier = "group.com.huanglisen.StereoShift"
     private static let logger = Logger(subsystem: "com.huanglisen.StereoShift", category: "ShareExtension")
 
-    private var didStartImport = false
+    private var isFinished = false
     private var importTask: Task<Void, Never>?
 
     private let spinner = UIActivityIndicatorView(style: .large)
     private let messageLabel = UILabel()
+    private let confirmButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
 
     override func viewDidLoad() {
@@ -20,20 +21,29 @@ final class ShareViewController: UIViewController {
         view.backgroundColor = .systemBackground
 
         spinner.hidesWhenStopped = true
-        spinner.startAnimating()
+        spinner.stopAnimating()
 
         messageLabel.font = .preferredFont(forTextStyle: .body)
         messageLabel.adjustsFontForContentSizeCategory = true
         messageLabel.textColor = .label
         messageLabel.numberOfLines = 0
         messageLabel.textAlignment = .center
-        messageLabel.text = "Adding to In-App Gallery…"
+        messageLabel.text = NSLocalizedString("Add to In-App Gallery?", comment: "")
 
-        cancelButton.setTitle("Cancel", for: .normal)
+        confirmButton.setTitle(NSLocalizedString("Confirm", comment: ""), for: .normal)
+        confirmButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        confirmButton.addTarget(self, action: #selector(confirmTapped), for: .touchUpInside)
+
+        cancelButton.setTitle(NSLocalizedString("Cancel", comment: ""), for: .normal)
         cancelButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
 
-        let stack = UIStackView(arrangedSubviews: [spinner, messageLabel, cancelButton])
+        let buttons = UIStackView(arrangedSubviews: [confirmButton, cancelButton])
+        buttons.axis = .horizontal
+        buttons.spacing = 24
+        buttons.alignment = .center
+
+        let stack = UIStackView(arrangedSubviews: [spinner, messageLabel, buttons])
         stack.axis = .vertical
         stack.spacing = 16
         stack.alignment = .center
@@ -50,23 +60,23 @@ final class ShareViewController: UIViewController {
         ])
     }
 
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        guard !didStartImport else { return }
-        didStartImport = true
+    @objc private func confirmTapped() {
+        confirmButton.isEnabled = false
         startImport()
     }
 
     @objc private func cancelTapped() {
         importTask?.cancel()
-        extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+        if isFinished {
+            extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
+        } else {
+            extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
+        }
     }
 
     private func startImport() {
-        let providerCount = inputItemProviders().count
-        if providerCount > 0 {
-            messageLabel.text = "Adding \(providerCount) item(s) to In-App Gallery…"
-        }
+        spinner.startAnimating()
+        messageLabel.text = NSLocalizedString("Importing…", comment: "")
 
         importTask = Task { [weak self] in
             guard let self else { return }
@@ -76,9 +86,13 @@ final class ShareViewController: UIViewController {
                 Self.logger.info("Imported \(imported, privacy: .public) item(s) into shared gallery")
 
                 await MainActor.run {
+                    self.isFinished = true
                     self.spinner.stopAnimating()
                     self.cancelButton.isEnabled = false
-                    self.messageLabel.text = imported > 0 ? "Added to In-App Gallery." : "No supported photos or videos found."
+                    self.confirmButton.isHidden = true
+                    self.messageLabel.text = imported > 0
+                        ? NSLocalizedString("Added to In-App Gallery.", comment: "")
+                        : NSLocalizedString("No supported items found.", comment: "")
                 }
 
                 try? await Task.sleep(nanoseconds: 400_000_000)
@@ -86,9 +100,11 @@ final class ShareViewController: UIViewController {
             } catch {
                 Self.logger.error("Import failed: \(error.localizedDescription, privacy: .public)")
                 await MainActor.run {
+                    self.isFinished = true
                     self.spinner.stopAnimating()
-                    self.cancelButton.setTitle("Close", for: .normal)
-                    self.messageLabel.text = "Failed to add to In-App Gallery."
+                    self.confirmButton.isHidden = true
+                    self.cancelButton.setTitle(NSLocalizedString("Close", comment: ""), for: .normal)
+                    self.messageLabel.text = NSLocalizedString("Failed to add to In-App Gallery.", comment: "")
                 }
             }
         }
@@ -258,4 +274,3 @@ final class ShareViewController: UIViewController {
         }
     }
 }
-
