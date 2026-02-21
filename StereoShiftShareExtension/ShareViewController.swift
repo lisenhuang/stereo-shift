@@ -1,60 +1,97 @@
 import Foundation
 import os
-import Social
+import UIKit
 import UniformTypeIdentifiers
 
-final class ShareViewController: SLComposeServiceViewController {
+final class ShareViewController: UIViewController {
     private static let appGroupIdentifier = "group.com.huanglisen.StereoShift"
     private static let logger = Logger(subsystem: "com.huanglisen.StereoShift", category: "ShareExtension")
+
+    private var didStartImport = false
+    private var importTask: Task<Void, Never>?
+
+    private let spinner = UIActivityIndicatorView(style: .large)
+    private let messageLabel = UILabel()
+    private let cancelButton = UIButton(type: .system)
 
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        title = "StereoShift"
-        placeholder = "Add to In-App Gallery"
+        view.backgroundColor = .systemBackground
 
-        // The system-provided composer includes a text view, but we don't require text input.
-        textView.isEditable = false
-        textView.text = ""
+        spinner.hidesWhenStopped = true
+        spinner.startAnimating()
+
+        messageLabel.font = .preferredFont(forTextStyle: .body)
+        messageLabel.adjustsFontForContentSizeCategory = true
+        messageLabel.textColor = .label
+        messageLabel.numberOfLines = 0
+        messageLabel.textAlignment = .center
+        messageLabel.text = "Adding to In-App Gallery…"
+
+        cancelButton.setTitle("Cancel", for: .normal)
+        cancelButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        cancelButton.addTarget(self, action: #selector(cancelTapped), for: .touchUpInside)
+
+        let stack = UIStackView(arrangedSubviews: [spinner, messageLabel, cancelButton])
+        stack.axis = .vertical
+        stack.spacing = 16
+        stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+
+        view.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -20),
+            messageLabel.widthAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor, multiplier: 0.9),
+        ])
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        // The default button title is "Post". Use a clearer label for this extension.
-        navigationItem.rightBarButtonItem?.title = "Add"
+        guard !didStartImport else { return }
+        didStartImport = true
+        startImport()
     }
 
-    override func isContentValid() -> Bool {
-        true
+    @objc private func cancelTapped() {
+        importTask?.cancel()
+        extensionContext?.cancelRequest(withError: NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError))
     }
 
-    override func didSelectPost() {
-        navigationItem.rightBarButtonItem?.isEnabled = false
-        navigationItem.leftBarButtonItem?.isEnabled = false
+    private func startImport() {
+        let providerCount = inputItemProviders().count
+        if providerCount > 0 {
+            messageLabel.text = "Adding \(providerCount) item(s) to In-App Gallery…"
+        }
 
-        textView.text = "Importing…"
-
-        Task { [weak self] in
+        importTask = Task { [weak self] in
             guard let self else { return }
+
             do {
                 let imported = try await importAllAttachments()
                 Self.logger.info("Imported \(imported, privacy: .public) item(s) into shared gallery")
+
                 await MainActor.run {
-                    self.textView.text = imported > 0 ? "Added to In-App Gallery." : "No supported items found."
+                    self.spinner.stopAnimating()
+                    self.cancelButton.isEnabled = false
+                    self.messageLabel.text = imported > 0 ? "Added to In-App Gallery." : "No supported photos or videos found."
                 }
 
-                // Let the user see the result briefly, then dismiss.
                 try? await Task.sleep(nanoseconds: 400_000_000)
                 extensionContext?.completeRequest(returningItems: [], completionHandler: nil)
             } catch {
                 Self.logger.error("Import failed: \(error.localizedDescription, privacy: .public)")
-                extensionContext?.cancelRequest(withError: error)
+                await MainActor.run {
+                    self.spinner.stopAnimating()
+                    self.cancelButton.setTitle("Close", for: .normal)
+                    self.messageLabel.text = "Failed to add to In-App Gallery."
+                }
             }
         }
-    }
-
-    override func configurationItems() -> [Any]! {
-        []
     }
 
     private enum SharedMediaType {
@@ -85,6 +122,10 @@ final class ShareViewController: SLComposeServiceViewController {
 
         var imported = 0
         for provider in providers {
+            if Task.isCancelled {
+                break
+            }
+
             do {
                 if try await importProvider(provider, to: galleryDirectory) {
                     imported += 1
@@ -178,7 +219,7 @@ final class ShareViewController: SLComposeServiceViewController {
                 }
 
                 do {
-                    let destinationURL = try Self.makeDestinationURL(for: url, mediaType: mediaType, galleryDirectory: galleryDirectory)
+                    let destinationURL = try Self.makeDestinationURL(for: url, typeIdentifier: typeIdentifier, mediaType: mediaType, galleryDirectory: galleryDirectory)
                     try FileManager.default.copyItem(at: url, to: destinationURL)
                     continuation.resume(returning: ())
                 } catch {
@@ -188,23 +229,33 @@ final class ShareViewController: SLComposeServiceViewController {
         }
     }
 
-    private static func makeDestinationURL(for sourceURL: URL, mediaType: SharedMediaType, galleryDirectory: URL) throws -> URL {
-        let fileExtension = normalizedFileExtension(for: sourceURL, mediaType: mediaType)
+    private static func makeDestinationURL(
+        for sourceURL: URL,
+        typeIdentifier: String,
+        mediaType: SharedMediaType,
+        galleryDirectory: URL
+    ) throws -> URL {
+        let fileExtension = normalizedFileExtension(for: sourceURL, typeIdentifier: typeIdentifier, mediaType: mediaType)
         let filename = "\(mediaType.filePrefix)-\(UUID().uuidString).\(fileExtension)"
         return galleryDirectory.appendingPathComponent(filename, isDirectory: false)
     }
 
-    private static func normalizedFileExtension(for sourceURL: URL, mediaType: SharedMediaType) -> String {
+    private static func normalizedFileExtension(for sourceURL: URL, typeIdentifier: String, mediaType: SharedMediaType) -> String {
         let existing = sourceURL.pathExtension.lowercased()
         if !existing.isEmpty {
             return existing
+        }
+
+        if let preferred = UTType(typeIdentifier)?.preferredFilenameExtension {
+            return preferred
         }
 
         switch mediaType {
         case .image:
             return "jpg"
         case .video:
-            return "mp4"
+            return "mov"
         }
     }
 }
+
