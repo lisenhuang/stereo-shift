@@ -47,19 +47,69 @@ All processing runs on-device.
 - Photo output: PNG (saved temporary file + share sheet + save to Photos)
 - Video output: MP4 (H.264), SBS frame width is doubled
 
-Audio is currently omitted in V1 for stability and simpler offline processing.
+Video conversion preserves the original audio track when possible.
 
-## Stereo Algorithm (V1)
+## Depth Pipelines (v2 vs v3)
+
+StereoShift uses the same high-level flow for all depth models:
+
+1. Preprocess the input `CVPixelBuffer` into the model's expected size/format.
+2. Run Core ML inference.
+3. Decode the model output into a normalized depth buffer.
+4. Crop/resize the depth buffer back to the original media dimensions.
+5. Feed the depth buffer into the SBS renderer (shared for v2/v3).
+
+Implementation references:
+
+- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Core/DepthEstimator.swift`
+- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Core/StereoRenderer.swift`
+
+### Depth Anything v2 (Small F16/F32)
+
+Model I/O:
+
+- Input: one image feature (named `image`) as a `CVPixelBuffer` (BGRA).
+  - The generated interface notes: short side ~`518` and the long side should be a multiple of `14`.
+  - `DepthEstimator` will aspect-fit into a model-sized canvas (letterbox) and records a content rect for later crop-back.
+- Output: one image feature named `depth` as a grayscale `CVPixelBuffer` (`kCVPixelFormatType_OneComponent16Half`).
+
+StereoShift postprocess:
+
+- Crop the letterboxed padding away using the recorded content rect, then resize back to the original image/video size.
+- Standardize the resulting depth buffer into a grayscale BGRA `CVPixelBuffer` for downstream rendering.
+
+### Depth Anything v3 (Small F16/F32)
+
+Model I/O:
+
+- Input: one image feature (named `image`) as a `CVPixelBuffer` (BGRA), fixed `518x518`.
+- Output: one `MLMultiArray` (named `var_7994`) with shape `1x518x518` (Float16 or Float32).
+
+StereoShift postprocess:
+
+- Convert the `MLMultiArray` to an 8-bit normalized depth map using percentile clipping to avoid outliers:
+  - F16: 1%..99%
+  - F32: 0.5%..99.5%
+- Invert polarity for v3 so the renderer always uses the convention: larger depth value = closer.
+- Crop/resize depth back to the original size like v2.
+
+## SBS Rendering Pipeline (Shared)
 
 `StereoRenderer` performs:
 
-1. Normalize depth map to [0, 1]
-2. Heuristic near/far orientation correction
-3. Mild box blur to reduce depth noise
-4. Disparity from depth and `3D Strength`
-5. Inverse warp to left/right images
-6. Horizontal fill for edge/disocclusion holes
-7. Concatenate left and right into SBS
+1. Normalize depth to `[0, 1]` at a processing resolution (can be smaller than full-res for speed).
+2. Optional depth refinement:
+   - guided filtering against the RGB guide image (profile-dependent)
+   - bilateral filtering
+   - optional depth-edge smoothing / feathering
+3. Convert the `3D Strength` UI value into a per-eye baseline shift (`baselinePerEye * strength`).
+4. Forward warp RGB into left/right views using a z-buffer for occlusion handling:
+   - integer shift (fast) or subpixel splat (quality), profile-dependent
+5. Fill disocclusion holes:
+   - asymmetric horizontal dilation (pull from the "background direction")
+   - lightweight inpainting passes (radius/profile-dependent)
+6. Optional output edge anti-aliasing + edge supersampling (profile-dependent).
+7. Concatenate left and right into a single side-by-side (SBS) frame.
 
 ## Manual Test Checklist
 
