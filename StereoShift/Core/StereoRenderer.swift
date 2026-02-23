@@ -318,16 +318,92 @@ final class StereoRenderer {
 
     private func makeSBSServerLike(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
         let preset = RefinedServerPreset.forProfile(options.renderProfile)
+        // Use quality params as a fallback for dynamic overrides (e.g. ultraFast profile at high strength).
+        let qualityPreset = RefinedServerPreset.forProfile(.quality)
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
+
+        // Matches the server baseline disparity (per-eye shift) at strength=1.0.
+        let clampedStrength = max(0, min(1.5, strength))
+        let baselinePerEye = max(0, preset.baselinePerEye * clampedStrength)
+        // At higher baselines, depth quantization + forward warping produces visible stair-stepping on edges.
+        // When users push strength high, automatically enable a more edge-faithful pipeline.
+        let needsHighQualityEdges = baselinePerEye >= 40 || clampedStrength >= 1.15
+
+        let effectiveDepthShortSideCap = needsHighQualityEdges
+            ? max(preset.depthShortSideCap, qualityPreset.depthShortSideCap)
+            : preset.depthShortSideCap
+
+        let effectiveGuidedRefinementEnabled = preset.guidedDepthRefinementEnabled || needsHighQualityEdges
+        let effectiveDepthEdgeFeatherEnabled = preset.depthEdgeFeatherEnabled || needsHighQualityEdges
+        let effectiveEdgeFilteringEnabled = preset.edgeFilteringEnabled || (needsHighQualityEdges && options.renderProfile == .ultraFast)
+
+        let effectiveBilateralDiameter = needsHighQualityEdges
+            ? max(preset.bilateralDiameter, qualityPreset.bilateralDiameter)
+            : preset.bilateralDiameter
+        let effectiveBilateralSigmaColor = needsHighQualityEdges
+            ? min(preset.bilateralSigmaColor, qualityPreset.bilateralSigmaColor)
+            : preset.bilateralSigmaColor
+        let effectiveBilateralSigmaSpace = needsHighQualityEdges
+            ? max(preset.bilateralSigmaSpace, qualityPreset.bilateralSigmaSpace)
+            : preset.bilateralSigmaSpace
+
+        let effectiveCannyLow = effectiveEdgeFilteringEnabled
+            ? (preset.cannyLowThreshold > 0 ? preset.cannyLowThreshold : qualityPreset.cannyLowThreshold)
+            : preset.cannyLowThreshold
+        let effectiveCannyHigh = effectiveEdgeFilteringEnabled
+            ? (preset.cannyHighThreshold > 0 ? preset.cannyHighThreshold : qualityPreset.cannyHighThreshold)
+            : preset.cannyHighThreshold
+        let effectiveEdgeKernelSize = effectiveEdgeFilteringEnabled
+            ? max(preset.edgeKernelSize, qualityPreset.edgeKernelSize)
+            : preset.edgeKernelSize
+
+        let effectiveDilationMaxRightOffset = needsHighQualityEdges
+            ? max(preset.dilationMaxRightOffset, qualityPreset.dilationMaxRightOffset)
+            : preset.dilationMaxRightOffset
+        let effectiveInpaintRadius = needsHighQualityEdges
+            ? max(preset.inpaintRadius, qualityPreset.inpaintRadius)
+            : preset.inpaintRadius
+        let effectiveInpaintPasses = needsHighQualityEdges
+            ? max(preset.inpaintPasses, qualityPreset.inpaintPasses)
+            : preset.inpaintPasses
+
+        let effectiveEdgeSupersamplingEnabled = preset.edgeSupersamplingEnabled || needsHighQualityEdges
+        let effectiveEdgeSupersamplingShiftGradientThreshold: Float = {
+            if !effectiveEdgeSupersamplingEnabled { return preset.edgeSupersamplingShiftGradientThreshold }
+            return preset.edgeSupersamplingShiftGradientThreshold > 0
+                ? preset.edgeSupersamplingShiftGradientThreshold
+                : qualityPreset.edgeSupersamplingShiftGradientThreshold
+        }()
+        let effectiveEdgeSupersamplingMaxBlend: Float = {
+            if !effectiveEdgeSupersamplingEnabled { return preset.edgeSupersamplingMaxBlend }
+            return preset.edgeSupersamplingMaxBlend > 0
+                ? preset.edgeSupersamplingMaxBlend
+                : qualityPreset.edgeSupersamplingMaxBlend
+        }()
+
+        let effectiveOutputEdgeAAEnabled = preset.outputEdgeAntiAliasEnabled || needsHighQualityEdges
+        let effectiveOutputEdgeAAThreshold: Float = {
+            if !effectiveOutputEdgeAAEnabled { return preset.outputEdgeAntiAliasThreshold }
+            return preset.outputEdgeAntiAliasThreshold > 0
+                ? preset.outputEdgeAntiAliasThreshold
+                : qualityPreset.outputEdgeAntiAliasThreshold
+        }()
+        let effectiveOutputEdgeAAStrength: Float = {
+            if !effectiveOutputEdgeAAEnabled { return preset.outputEdgeAntiAliasStrength }
+            return preset.outputEdgeAntiAliasStrength > 0
+                ? preset.outputEdgeAntiAliasStrength
+                : qualityPreset.outputEdgeAntiAliasStrength
+        }()
+
         let (depthProcessWidth, depthProcessHeight) = serverDepthProcessingSize(
             width: width,
             height: height,
-            shortSideCap: min(options.depthQuality.shortSide, preset.depthShortSideCap)
+            shortSideCap: min(options.depthQuality.shortSide, effectiveDepthShortSideCap)
         )
 
         let normalizedDepthInput: CVPixelBuffer
-        if preset.guidedDepthRefinementEnabled {
+        if effectiveGuidedRefinementEnabled {
             normalizedDepthInput = try refineDepthBufferIfNeeded(
                 depth: depth,
                 guide: rgb,
@@ -350,24 +426,24 @@ final class StereoRenderer {
             depthMap: depthMap,
             width: depthProcessWidth,
             height: depthProcessHeight,
-            diameter: preset.bilateralDiameter,
-            sigmaColor: preset.bilateralSigmaColor,
-            sigmaSpace: preset.bilateralSigmaSpace
+            diameter: effectiveBilateralDiameter,
+            sigmaColor: effectiveBilateralSigmaColor,
+            sigmaSpace: effectiveBilateralSigmaSpace
         )
-        if preset.edgeFilteringEnabled {
+        if effectiveEdgeFilteringEnabled {
             let edgeMask = cannyEdgeMask(
                 depthMap: depthMap,
                 width: depthProcessWidth,
                 height: depthProcessHeight,
-                lowThreshold: preset.cannyLowThreshold,
-                highThreshold: preset.cannyHighThreshold
+                lowThreshold: effectiveCannyLow,
+                highThreshold: effectiveCannyHigh
             )
             depthMap = smoothDepthAtEdges(
                 depthMap: depthMap,
                 edgeMask: edgeMask,
                 width: depthProcessWidth,
                 height: depthProcessHeight,
-                kernelSize: preset.edgeKernelSize
+                kernelSize: effectiveEdgeKernelSize
             )
         }
 
@@ -380,22 +456,18 @@ final class StereoRenderer {
                 targetHeight: height
             )
         }
-        if preset.depthEdgeFeatherEnabled {
+        if effectiveDepthEdgeFeatherEnabled {
             depthMap = featherDepthDiscontinuities(
                 depthMap: depthMap,
                 width: width,
                 height: height,
-                threshold: preset.depthEdgeFeatherThreshold,
-                maxBlend: preset.depthEdgeFeatherStrength
+                threshold: preset.depthEdgeFeatherThreshold > 0 ? preset.depthEdgeFeatherThreshold : qualityPreset.depthEdgeFeatherThreshold,
+                maxBlend: preset.depthEdgeFeatherStrength > 0 ? preset.depthEdgeFeatherStrength : qualityPreset.depthEdgeFeatherStrength
             )
         }
 
-        // Matches the server baseline disparity (per-eye shift) at strength=1.0.
-        let clampedStrength = max(0, min(1.5, strength))
-        let baselinePerEye = max(0, preset.baselinePerEye * clampedStrength)
-        // At higher baselines, integer warps produce visible stair-stepping on subject edges.
-        // Prefer higher-quality subpixel splatting automatically when 3D strength is high.
-        let highStrengthWarp = baselinePerEye >= 40
+        // Prefer higher-quality subpixel splatting automatically when strength is high.
+        let highStrengthWarp = needsHighQualityEdges
 
         var left = [UInt8](repeating: 0, count: width * height * 4)
         var right = [UInt8](repeating: 0, count: width * height * 4)
@@ -440,14 +512,14 @@ final class StereoRenderer {
                 mask: &leftMask,
                 width: width,
                 height: height,
-                maxRightOffset: preset.dilationMaxRightOffset
+                maxRightOffset: effectiveDilationMaxRightOffset
             )
             asymmetricHorizontalDilationFill(
                 bytes: &right,
                 mask: &rightMask,
                 width: width,
                 height: height,
-                maxRightOffset: preset.dilationMaxRightOffset
+                maxRightOffset: effectiveDilationMaxRightOffset
             )
         }
 
@@ -457,8 +529,8 @@ final class StereoRenderer {
                 mask: &leftMask,
                 width: width,
                 height: height,
-                radius: preset.inpaintRadius,
-                maxPasses: preset.inpaintPasses
+                radius: effectiveInpaintRadius,
+                maxPasses: effectiveInpaintPasses
             )
         }
         if rightMask.contains(0) {
@@ -467,8 +539,8 @@ final class StereoRenderer {
                 mask: &rightMask,
                 width: width,
                 height: height,
-                radius: preset.inpaintRadius,
-                maxPasses: preset.inpaintPasses
+                radius: effectiveInpaintRadius,
+                maxPasses: effectiveInpaintPasses
             )
         }
 
@@ -487,7 +559,7 @@ final class StereoRenderer {
             height: height
         )
 
-        if preset.edgeSupersamplingEnabled {
+        if effectiveEdgeSupersamplingEnabled {
             supersampleWarpEdges(
                 bytes: &left,
                 width: width,
@@ -496,8 +568,8 @@ final class StereoRenderer {
                 depthMap: depthMap,
                 baselinePerEye: baselinePerEye,
                 direction: -1,
-                shiftGradientThreshold: preset.edgeSupersamplingShiftGradientThreshold,
-                maxBlend: preset.edgeSupersamplingMaxBlend
+                shiftGradientThreshold: effectiveEdgeSupersamplingShiftGradientThreshold,
+                maxBlend: effectiveEdgeSupersamplingMaxBlend
             )
             supersampleWarpEdges(
                 bytes: &right,
@@ -507,24 +579,24 @@ final class StereoRenderer {
                 depthMap: depthMap,
                 baselinePerEye: baselinePerEye,
                 direction: 1,
-                shiftGradientThreshold: preset.edgeSupersamplingShiftGradientThreshold,
-                maxBlend: preset.edgeSupersamplingMaxBlend
+                shiftGradientThreshold: effectiveEdgeSupersamplingShiftGradientThreshold,
+                maxBlend: effectiveEdgeSupersamplingMaxBlend
             )
         }
 
-        if preset.outputEdgeAntiAliasEnabled {
+        if effectiveOutputEdgeAAEnabled {
             let shiftMap = depthMap.map { max(0, min(1, $0)) * baselinePerEye }
             // More AA is useful at higher strengths where integer shifts can look jaggier.
             let passes = highStrengthWarp ? 2 : 1
             let blendBoost: Float = highStrengthWarp ? 1.25 : 1.0
-            let dynamicBlend = min(1, preset.outputEdgeAntiAliasStrength * blendBoost * (0.75 + (0.25 * clampedStrength)))
+            let dynamicBlend = min(1, effectiveOutputEdgeAAStrength * blendBoost * (0.75 + (0.25 * clampedStrength)))
             for _ in 0..<passes {
                 antiAliasWarpEdges(
                     bytes: &left,
                     width: width,
                     height: height,
                     shiftMap: shiftMap,
-                    gradientThreshold: preset.outputEdgeAntiAliasThreshold,
+                    gradientThreshold: effectiveOutputEdgeAAThreshold,
                     maxBlend: dynamicBlend
                 )
                 antiAliasWarpEdges(
@@ -532,7 +604,7 @@ final class StereoRenderer {
                     width: width,
                     height: height,
                     shiftMap: shiftMap,
-                    gradientThreshold: preset.outputEdgeAntiAliasThreshold,
+                    gradientThreshold: effectiveOutputEdgeAAThreshold,
                     maxBlend: dynamicBlend
                 )
             }
