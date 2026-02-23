@@ -38,9 +38,9 @@ actor DepthEstimator {
             try model.prediction(from: provider)
         }.value
 
-        let rawDepth = try depthOutput(from: prediction)
-        var depth = try postprocess(depth: rawDepth, metadata: prepared.metadata)
-        depth = try invertDepthIfNeeded(depth, model: depthModel)
+        var rawDepth = try depthOutput(from: prediction)
+        rawDepth = try invertDepthIfNeeded(rawDepth, model: depthModel)
+        let depth = try postprocess(depth: rawDepth, metadata: prepared.metadata)
         return depth
     }
 
@@ -51,18 +51,73 @@ actor DepthEstimator {
 
         let width = CVPixelBufferGetWidth(depth)
         let height = CVPixelBufferGetHeight(depth)
-        let extent = CGRect(x: 0, y: 0, width: width, height: height)
-        let depthImage = CIImage(cvPixelBuffer: depth)
-            .cropped(to: extent)
-            .applyingFilter("CIColorInvert")
+        let format = CVPixelBufferGetPixelFormatType(depth)
 
-        let output = try PixelBufferUtilities.makePixelBuffer(
-            width: width,
-            height: height,
-            pixelFormat: kCVPixelFormatType_32BGRA
-        )
-        ciContext.render(depthImage, to: output, bounds: extent, colorSpace: CGColorSpaceCreateDeviceRGB())
-        return output
+        switch format {
+        case kCVPixelFormatType_OneComponent8:
+            CVPixelBufferLockBaseAddress(depth, [])
+            defer { CVPixelBufferUnlockBaseAddress(depth, []) }
+
+            guard let base = CVPixelBufferGetBaseAddress(depth) else {
+                throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+            }
+
+            let bytesPerRow = CVPixelBufferGetBytesPerRow(depth)
+            let pointer = base.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
+            for y in 0..<height {
+                let row = pointer.advanced(by: y * bytesPerRow)
+                for x in 0..<width {
+                    row[x] = 255 &- row[x]
+                }
+            }
+
+            return depth
+
+        case kCVPixelFormatType_32BGRA:
+            // Avoid `CIColorInvert` here because it also inverts alpha on premultiplied formats, which can
+            // collapse RGB to zero. We only want to invert the grayscale signal and keep alpha opaque.
+            let output = try PixelBufferUtilities.makePixelBuffer(
+                width: width,
+                height: height,
+                pixelFormat: kCVPixelFormatType_32BGRA
+            )
+
+            CVPixelBufferLockBaseAddress(depth, .readOnly)
+            CVPixelBufferLockBaseAddress(output, [])
+            defer {
+                CVPixelBufferUnlockBaseAddress(output, [])
+                CVPixelBufferUnlockBaseAddress(depth, .readOnly)
+            }
+
+            guard
+                let srcBase = CVPixelBufferGetBaseAddress(depth),
+                let dstBase = CVPixelBufferGetBaseAddress(output)
+            else {
+                throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+            }
+
+            let srcBpr = CVPixelBufferGetBytesPerRow(depth)
+            let dstBpr = CVPixelBufferGetBytesPerRow(output)
+            let src = srcBase.bindMemory(to: UInt8.self, capacity: srcBpr * height)
+            let dst = dstBase.bindMemory(to: UInt8.self, capacity: dstBpr * height)
+
+            for y in 0..<height {
+                let srcRow = src.advanced(by: y * srcBpr)
+                let dstRow = dst.advanced(by: y * dstBpr)
+                for x in 0..<width {
+                    let i = x * 4
+                    dstRow[i + 0] = 255 &- srcRow[i + 0] // B
+                    dstRow[i + 1] = 255 &- srcRow[i + 1] // G
+                    dstRow[i + 2] = 255 &- srcRow[i + 2] // R
+                    dstRow[i + 3] = 255                 // A
+                }
+            }
+
+            return output
+
+        default:
+            return depth
+        }
     }
 
     private func loadModel(_ depthModel: DepthModel) throws -> MLModel {
@@ -276,8 +331,11 @@ actor DepthEstimator {
 
             if sample.count >= 4 {
                 sample.sort()
-                let lowIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * 0.01).rounded(.down))))
-                let highIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * 0.99).rounded(.down))))
+                // Float32 models tend to exhibit larger outliers than Float16. Use a wider clip.
+                let lowPercentile: Double = array.dataType == .float32 ? 0.005 : 0.01
+                let highPercentile: Double = array.dataType == .float32 ? 0.995 : 0.99
+                let lowIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * lowPercentile).rounded(.down))))
+                let highIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * highPercentile).rounded(.down))))
                 let low = sample[lowIndex]
                 let high = sample[highIndex]
 
