@@ -1916,8 +1916,10 @@ final class StereoRenderer {
         let safeMaxBlend = max(0, min(1, maxBlend))
         guard safeMaxBlend > 0 else { return }
 
-        // 2x2 jitter around the inverse-warp sample point reduces jaggies without large supersampled buffers.
+        // Jitter around the inverse-warp sample point reduces jaggies without large supersampled buffers.
+        // At higher baselines, jaggies become more noticeable, so increase tap count (still only on edge pixels).
         let jitter: Float = min(0.75, max(0.25, baselinePerEye * 0.009))
+        let useNineTap = baselinePerEye >= 40
         let halfThreshold = safeThreshold * 2
 
         for y in 1..<(height - 1) {
@@ -1940,21 +1942,45 @@ final class StereoRenderer {
                 var sumR: Float = 0
                 var sumA: Float = 0
                 var count: Float = 0
-
-                let positions: [(Float, Float)] = [
-                    (sourceX - jitter, sourceY - jitter),
-                    (sourceX + jitter, sourceY - jitter),
-                    (sourceX - jitter, sourceY + jitter),
-                    (sourceX + jitter, sourceY + jitter)
-                ]
-
-                for (sx, sy) in positions {
-                    if let sample = bilinearSample(from: sourceBytes, width: width, height: height, x: sx, y: sy) {
-                        sumB += Float(sample.0)
-                        sumG += Float(sample.1)
-                        sumR += Float(sample.2)
-                        sumA += Float(sample.3)
-                        count += 1
+                if useNineTap {
+                    // 3x3 jitter grid, center-weighted by sampling center twice.
+                    let positions: [(Float, Float)] = [
+                        (sourceX - jitter, sourceY - jitter),
+                        (sourceX, sourceY - jitter),
+                        (sourceX + jitter, sourceY - jitter),
+                        (sourceX - jitter, sourceY),
+                        (sourceX, sourceY),
+                        (sourceX, sourceY), // center weight
+                        (sourceX + jitter, sourceY),
+                        (sourceX - jitter, sourceY + jitter),
+                        (sourceX, sourceY + jitter),
+                        (sourceX + jitter, sourceY + jitter)
+                    ]
+                    for (sx, sy) in positions {
+                        if let sample = bilinearSample(from: sourceBytes, width: width, height: height, x: sx, y: sy) {
+                            sumB += Float(sample.0)
+                            sumG += Float(sample.1)
+                            sumR += Float(sample.2)
+                            sumA += Float(sample.3)
+                            count += 1
+                        }
+                    }
+                } else {
+                    // 2x2 jitter.
+                    let positions: [(Float, Float)] = [
+                        (sourceX - jitter, sourceY - jitter),
+                        (sourceX + jitter, sourceY - jitter),
+                        (sourceX - jitter, sourceY + jitter),
+                        (sourceX + jitter, sourceY + jitter)
+                    ]
+                    for (sx, sy) in positions {
+                        if let sample = bilinearSample(from: sourceBytes, width: width, height: height, x: sx, y: sy) {
+                            sumB += Float(sample.0)
+                            sumG += Float(sample.1)
+                            sumR += Float(sample.2)
+                            sumA += Float(sample.3)
+                            count += 1
+                        }
                     }
                 }
 
@@ -2074,20 +2100,29 @@ final class StereoRenderer {
                 }
 
                 let offset = (y * rowStride) + (x * 4)
-                let leftOffset = offset - 4
-                let rightOffset = offset + 4
-                let upOffset = offset - rowStride
-                let downOffset = offset + rowStride
+                // 3x3 gaussian-like blur (1 2 1 / 2 4 2 / 1 2 1) = /16
+                let up = offset - rowStride
+                let down = offset + rowStride
+                let left = offset - 4
+                let right = offset + 4
+                let upLeft = up - 4
+                let upRight = up + 4
+                let downLeft = down - 4
+                let downRight = down + 4
 
                 for channel in 0..<4 {
-                    let center = Float(source[offset + channel])
                     let blurred =
-                        (center * 4) +
-                        Float(source[leftOffset + channel]) +
-                        Float(source[rightOffset + channel]) +
-                        Float(source[upOffset + channel]) +
-                        Float(source[downOffset + channel])
-                    let averaged = blurred / 8
+                        Float(source[upLeft + channel]) +
+                        (2 * Float(source[up + channel])) +
+                        Float(source[upRight + channel]) +
+                        (2 * Float(source[left + channel])) +
+                        (4 * Float(source[offset + channel])) +
+                        (2 * Float(source[right + channel])) +
+                        Float(source[downLeft + channel]) +
+                        (2 * Float(source[down + channel])) +
+                        Float(source[downRight + channel])
+                    let averaged = blurred / 16
+                    let center = Float(source[offset + channel])
                     let mixed = (center * (1 - blend)) + (averaged * blend)
                     bytes[offset + channel] = UInt8(max(0, min(255, Int(mixed.rounded()))))
                 }
