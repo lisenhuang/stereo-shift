@@ -393,6 +393,9 @@ final class StereoRenderer {
         // Matches the server baseline disparity (per-eye shift) at strength=1.0.
         let clampedStrength = max(0, min(1.5, strength))
         let baselinePerEye = max(0, preset.baselinePerEye * clampedStrength)
+        // At higher baselines, integer warps produce visible stair-stepping on subject edges.
+        // Prefer higher-quality subpixel splatting automatically when 3D strength is high.
+        let highStrengthWarp = baselinePerEye >= 40
 
         var left = [UInt8](repeating: 0, count: width * height * 4)
         var right = [UInt8](repeating: 0, count: width * height * 4)
@@ -401,7 +404,7 @@ final class StereoRenderer {
         var leftZBuffer = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
         var rightZBuffer = [Float](repeating: -Float.greatestFiniteMagnitude, count: width * height)
 
-        if preset.subpixelWarpEnabled {
+        if preset.subpixelWarpEnabled || highStrengthWarp {
             forwardWarpWithSubpixelShift(
                 sourceBytes: sourceBytes,
                 depthMap: depthMap,
@@ -512,23 +515,27 @@ final class StereoRenderer {
         if preset.outputEdgeAntiAliasEnabled {
             let shiftMap = depthMap.map { max(0, min(1, $0)) * baselinePerEye }
             // More AA is useful at higher strengths where integer shifts can look jaggier.
-            let dynamicBlend = min(1, preset.outputEdgeAntiAliasStrength * (0.75 + (0.25 * clampedStrength)))
-            antiAliasWarpEdges(
-                bytes: &left,
-                width: width,
-                height: height,
-                shiftMap: shiftMap,
-                gradientThreshold: preset.outputEdgeAntiAliasThreshold,
-                maxBlend: dynamicBlend
-            )
-            antiAliasWarpEdges(
-                bytes: &right,
-                width: width,
-                height: height,
-                shiftMap: shiftMap,
-                gradientThreshold: preset.outputEdgeAntiAliasThreshold,
-                maxBlend: dynamicBlend
-            )
+            let passes = highStrengthWarp ? 2 : 1
+            let blendBoost: Float = highStrengthWarp ? 1.25 : 1.0
+            let dynamicBlend = min(1, preset.outputEdgeAntiAliasStrength * blendBoost * (0.75 + (0.25 * clampedStrength)))
+            for _ in 0..<passes {
+                antiAliasWarpEdges(
+                    bytes: &left,
+                    width: width,
+                    height: height,
+                    shiftMap: shiftMap,
+                    gradientThreshold: preset.outputEdgeAntiAliasThreshold,
+                    maxBlend: dynamicBlend
+                )
+                antiAliasWarpEdges(
+                    bytes: &right,
+                    width: width,
+                    height: height,
+                    shiftMap: shiftMap,
+                    gradientThreshold: preset.outputEdgeAntiAliasThreshold,
+                    maxBlend: dynamicBlend
+                )
+            }
         }
 
         return try assembleSBS(left: left, right: right, width: width, height: height)
@@ -1838,7 +1845,7 @@ final class StereoRenderer {
         guard safeMaxBlend > 0 else { return }
 
         // 2x2 jitter around the inverse-warp sample point reduces jaggies without large supersampled buffers.
-        let jitter: Float = min(0.5, max(0.25, baselinePerEye * 0.00715))
+        let jitter: Float = min(0.75, max(0.25, baselinePerEye * 0.009))
         let halfThreshold = safeThreshold * 2
 
         for y in 1..<(height - 1) {
