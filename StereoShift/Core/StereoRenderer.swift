@@ -469,6 +469,17 @@ final class StereoRenderer {
         // Prefer higher-quality subpixel splatting automatically when strength is high.
         let highStrengthWarp = needsHighQualityEdges
 
+        // Build a pixel-space shift map. When strength is high, edge artifacts come primarily from
+        // stair-stepping in the disparity field near depth discontinuities, so we smooth the shift map
+        // with an RGB-guided filter and use it for warping + edge AA.
+        let shouldBuildShiftMap = effectiveEdgeSupersamplingEnabled || effectiveOutputEdgeAAEnabled || needsHighQualityEdges
+        let rawShiftMap: [Float]? = shouldBuildShiftMap
+            ? depthMap.map { max(0, min(1, $0)) * baselinePerEye }
+            : nil
+        let shiftMap: [Float]? = (needsHighQualityEdges && (rawShiftMap != nil))
+            ? guidedSmoothShiftMap(rawShiftMap!, guide: rgb, width: width, height: height, baselinePerEye: baselinePerEye)
+            : rawShiftMap
+
         var left = [UInt8](repeating: 0, count: width * height * 4)
         var right = [UInt8](repeating: 0, count: width * height * 4)
         var leftMask = [UInt8](repeating: 0, count: width * height)
@@ -480,6 +491,7 @@ final class StereoRenderer {
             forwardWarpWithSubpixelShift(
                 sourceBytes: sourceBytes,
                 depthMap: depthMap,
+                shiftMap: shiftMap,
                 width: width,
                 height: height,
                 baselinePerEye: baselinePerEye,
@@ -494,6 +506,7 @@ final class StereoRenderer {
             forwardWarpWithIntegerShift(
                 sourceBytes: sourceBytes,
                 depthMap: depthMap,
+                shiftMap: shiftMap,
                 width: width,
                 height: height,
                 baselinePerEye: baselinePerEye,
@@ -565,8 +578,8 @@ final class StereoRenderer {
                 width: width,
                 height: height,
                 sourceBytes: sourceBytes,
-                depthMap: depthMap,
                 baselinePerEye: baselinePerEye,
+                shiftMap: shiftMap ?? depthMap.map { max(0, min(1, $0)) * baselinePerEye },
                 direction: -1,
                 shiftGradientThreshold: effectiveEdgeSupersamplingShiftGradientThreshold,
                 maxBlend: effectiveEdgeSupersamplingMaxBlend
@@ -576,8 +589,8 @@ final class StereoRenderer {
                 width: width,
                 height: height,
                 sourceBytes: sourceBytes,
-                depthMap: depthMap,
                 baselinePerEye: baselinePerEye,
+                shiftMap: shiftMap ?? depthMap.map { max(0, min(1, $0)) * baselinePerEye },
                 direction: 1,
                 shiftGradientThreshold: effectiveEdgeSupersamplingShiftGradientThreshold,
                 maxBlend: effectiveEdgeSupersamplingMaxBlend
@@ -585,7 +598,7 @@ final class StereoRenderer {
         }
 
         if effectiveOutputEdgeAAEnabled {
-            let shiftMap = depthMap.map { max(0, min(1, $0)) * baselinePerEye }
+            let shiftMap = shiftMap ?? depthMap.map { max(0, min(1, $0)) * baselinePerEye }
             // More AA is useful at higher strengths where integer shifts can look jaggier.
             let passes = highStrengthWarp ? 2 : 1
             let blendBoost: Float = highStrengthWarp ? 1.25 : 1.0
@@ -616,6 +629,7 @@ final class StereoRenderer {
     private func forwardWarpWithIntegerShift(
         sourceBytes: [UInt8],
         depthMap: [Float],
+        shiftMap: [Float]?,
         width: Int,
         height: Int,
         baselinePerEye: Float,
@@ -631,7 +645,8 @@ final class StereoRenderer {
             for x in 0..<width {
                 let sourceIndex = (y * width) + x
                 let depthValue = max(0, min(1, depthMap[sourceIndex]))
-                let shift = Int(depthValue * baselinePerEye)
+                let pixelShift = shiftMap?[sourceIndex] ?? (depthValue * baselinePerEye)
+                let shift = Int(pixelShift.rounded())
 
                 let leftX = min(width - 1, x + shift)
                 let rightX = max(0, x - shift)
@@ -658,6 +673,7 @@ final class StereoRenderer {
     private func forwardWarpWithSubpixelShift(
         sourceBytes: [UInt8],
         depthMap: [Float],
+        shiftMap: [Float]?,
         width: Int,
         height: Int,
         baselinePerEye: Float,
@@ -686,7 +702,7 @@ final class StereoRenderer {
             for x in 0..<width {
                 let sourceIndex = (y * width) + x
                 let depthValue = max(0, min(1, depthMap[sourceIndex]))
-                let shift = depthValue * baselinePerEye
+                let shift = shiftMap?[sourceIndex] ?? (depthValue * baselinePerEye)
                 let sourcePixel = pixel(sourceBytes, width: width, x: x, y: y)
 
                 splatPixelLinear(
@@ -1376,6 +1392,90 @@ final class StereoRenderer {
         return filter.outputImage
     }
 
+    private func guidedSmoothShiftMap(
+        _ shiftMap: [Float],
+        guide: CVPixelBuffer,
+        width: Int,
+        height: Int,
+        baselinePerEye: Float
+    ) -> [Float] {
+        // If baseline is tiny, smoothing is unnecessary and normalizing can amplify noise.
+        guard baselinePerEye > 0.5 else { return shiftMap }
+        guard shiftMap.count == width * height else { return shiftMap }
+
+        guard let filter = CIFilter(name: "CIGuidedFilter") else {
+            return shiftMap
+        }
+
+        do {
+            let input = try PixelBufferUtilities.makePixelBuffer(
+                width: width,
+                height: height,
+                pixelFormat: kCVPixelFormatType_OneComponent8
+            )
+            CVPixelBufferLockBaseAddress(input, [])
+            if let baseAddress = CVPixelBufferGetBaseAddress(input) {
+                let bytesPerRow = CVPixelBufferGetBytesPerRow(input)
+                let ptr = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
+                for y in 0..<height {
+                    let row = ptr.advanced(by: y * bytesPerRow)
+                    for x in 0..<width {
+                        let idx = (y * width) + x
+                        let normalized = max(0, min(1, shiftMap[idx] / baselinePerEye))
+                        row[x] = UInt8(max(0, min(255, Int((normalized * 255).rounded()))))
+                    }
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(input, [])
+
+            let extent = CGRect(x: 0, y: 0, width: width, height: height)
+            let guideImage = CIImage(cvPixelBuffer: guide).cropped(to: extent)
+            let shiftImage = CIImage(cvPixelBuffer: input).cropped(to: extent)
+
+            // Stronger smoothing at higher baselines helps reduce stair-stepping,
+            // but keep radius bounded to avoid flattening important depth boundaries.
+            let baseRadius = CGFloat(max(4, min(18, width / 160)))
+            let radiusBoost = CGFloat(min(8, max(0, (baselinePerEye - 35) * 0.2)))
+            let radius = min(24, baseRadius + radiusBoost)
+            let epsilon: CGFloat = 0.003
+
+            filter.setValue(shiftImage, forKey: kCIInputImageKey)
+            filter.setValue(guideImage, forKey: "inputGuideImage")
+            filter.setValue(radius, forKey: "inputRadius")
+            filter.setValue(epsilon, forKey: "inputEpsilon")
+
+            guard let outputImage = filter.outputImage?.cropped(to: extent) else {
+                return shiftMap
+            }
+
+            let output = try PixelBufferUtilities.makePixelBuffer(
+                width: width,
+                height: height,
+                pixelFormat: kCVPixelFormatType_OneComponent8
+            )
+            ciContext.render(outputImage, to: output, bounds: extent, colorSpace: CGColorSpaceCreateDeviceGray())
+
+            CVPixelBufferLockBaseAddress(output, .readOnly)
+            defer { CVPixelBufferUnlockBaseAddress(output, .readOnly) }
+            guard let outBase = CVPixelBufferGetBaseAddress(output) else { return shiftMap }
+
+            let outBPR = CVPixelBufferGetBytesPerRow(output)
+            let outPtr = outBase.bindMemory(to: UInt8.self, capacity: outBPR * height)
+
+            var smoothed = [Float](repeating: 0, count: shiftMap.count)
+            for y in 0..<height {
+                let row = outPtr.advanced(by: y * outBPR)
+                for x in 0..<width {
+                    let idx = (y * width) + x
+                    smoothed[idx] = (Float(row[x]) / 255) * baselinePerEye
+                }
+            }
+            return smoothed
+        } catch {
+            return shiftMap
+        }
+    }
+
     private func makePersonMask(from guide: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> CVPixelBuffer? {
         if #available(iOS 15.0, macOS 12.0, *) {
             let request = VNGeneratePersonSegmentationRequest()
@@ -1902,14 +2002,14 @@ final class StereoRenderer {
         width: Int,
         height: Int,
         sourceBytes: [UInt8],
-        depthMap: [Float],
         baselinePerEye: Float,
+        shiftMap: [Float],
         direction: Float,
         shiftGradientThreshold: Float,
         maxBlend: Float
     ) {
         guard width > 2, height > 2 else { return }
-        guard depthMap.count == width * height else { return }
+        guard shiftMap.count == width * height else { return }
         guard sourceBytes.count == width * height * 4 else { return }
 
         let safeThreshold = max(0.0001, shiftGradientThreshold)
@@ -1925,15 +2025,14 @@ final class StereoRenderer {
         for y in 1..<(height - 1) {
             for x in 1..<(width - 1) {
                 let index = (y * width) + x
-                let gx = abs(depthMap[index + 1] - depthMap[index - 1]) * baselinePerEye
-                let gy = abs(depthMap[index + width] - depthMap[index - width]) * baselinePerEye
+                let gx = abs(shiftMap[index + 1] - shiftMap[index - 1])
+                let gy = abs(shiftMap[index + width] - shiftMap[index - width])
                 let edgeScore = max(gx, gy)
                 guard edgeScore > safeThreshold else {
                     continue
                 }
 
-                let depthValue = max(0, min(1, depthMap[index]))
-                let shift = depthValue * baselinePerEye
+                let shift = shiftMap[index]
                 let sourceX = Float(x) + (direction * shift)
                 let sourceY = Float(y)
 
