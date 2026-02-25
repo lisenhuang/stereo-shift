@@ -421,7 +421,9 @@ struct VideoFlowView: View {
 
         let processor = pipeline.videoProcessor
         let appliedStrength = strength
-        let appliedOptions = stereo3DOptions
+        var appliedOptions = stereo3DOptions
+        appliedOptions.depthModel = .depthAnythingV2SmallF16
+        appliedOptions.renderProfile = .ultraFast
         let usingSpatialMode = inputMode == .spatial
         let shouldLimitDuration = !usingSpatialMode && limitToFirstTenSeconds && (sourceVideoDurationSeconds ?? .infinity) > 10.0
         let maxDurationSeconds = shouldLimitDuration ? 10.0 : nil
@@ -613,72 +615,14 @@ struct VideoFlowView: View {
     private var controlsCard: some View {
         VStack(spacing: 14) {
             if inputMode == .regular2D {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Depth Model")
-                        .font(.headline)
+                Text("Ultra Fast")
+                    .font(.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Picker("Depth Model", selection: $stereo3DOptions.depthModel) {
-                        Text("V2 F16").tag(DepthModel.depthAnythingV2SmallF16)
-                        Text("V2 F32")
-                            .tag(DepthModel.depthAnythingV2SmallF32)
-                            .disabled(!DepthModel.depthAnythingV2SmallF32.isAvailableInBundle)
-                        Text("V3 F16")
-                            .tag(DepthModel.depthAnythingV3SmallF16)
-                            .disabled(!DepthModel.depthAnythingV3SmallF16.isAvailableInBundle)
-                        Text("V3 F32")
-                            .tag(DepthModel.depthAnythingV3SmallF32)
-                            .disabled(!DepthModel.depthAnythingV3SmallF32.isAvailableInBundle)
-                    }
-                    .pickerStyle(.segmented)
-
-                    Text("F16 is faster and smaller memory use. F32 may improve precision but is usually slower. V3 is an alternative depth model to compare quality and speed.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if !DepthModel.depthAnythingV2SmallF32.isAvailableInBundle {
-                        Text("Small F32 model package is not installed.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    if !DepthModel.depthAnythingV3SmallF16.isAvailableInBundle {
-                        Text("V3 Small F16 model package is not installed.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    if !DepthModel.depthAnythingV3SmallF32.isAvailableInBundle {
-                        Text("V3 Small F32 model package is not installed.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    Text("Render Profile")
-                        .font(.headline)
-                        .padding(.top, 4)
-
-                    Picker("Render Profile", selection: $stereo3DOptions.renderProfile) {
-                        Text("Ultra Fast").tag(StereoRenderProfile.ultraFast)
-                        Text("Quality").tag(StereoRenderProfile.quality)
-                    }
-                    .pickerStyle(.segmented)
-
-                    if stereo3DOptions.renderProfile == .quality {
-                        Text("Quality mode reduces edge jaggies with edge supersampling and stronger edge/hole processing. It is slower.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Text("Ultra Fast mode prioritizes speed with lighter processing, but can show more edge artifacts.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
+                Text("Fast on-device pipeline. At higher 3D Strength, StereoShift automatically enables extra edge processing to reduce jaggies.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                 HStack {
                     Text("3D Strength")
@@ -708,17 +652,10 @@ struct VideoFlowView: View {
                     Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)
                 }
 
-                if stereo3DOptions.renderProfile == .quality {
-                    Text("Uses quality depth rendering: higher-res depth map, guided refinement, stronger bilateral + edge-aware smoothing, z-buffer warp, edge supersampling AA, and stronger hole filling. Baseline disparity is 35px at strength=1.0.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text("Uses fast depth rendering: min/max depth normalization, light bilateral smoothing, integer z-buffer warp, and quick hole filling. Baseline disparity is 35px at strength=1.0.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                Text("Baseline disparity is 35px at strength=1.0.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)

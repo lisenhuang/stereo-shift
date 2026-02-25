@@ -45,79 +45,9 @@ actor DepthEstimator {
     }
 
     private func invertDepthIfNeeded(_ depth: CVPixelBuffer, model: DepthModel) throws -> CVPixelBuffer {
-        // Depth Anything v3 Small's depth polarity is inverted relative to our v2 models.
-        // Standardize here so the rest of the pipeline always treats larger depth values as "closer".
-        guard model == .depthAnythingV3SmallF16 || model == .depthAnythingV3SmallF32 else { return depth }
-
-        let width = CVPixelBufferGetWidth(depth)
-        let height = CVPixelBufferGetHeight(depth)
-        let format = CVPixelBufferGetPixelFormatType(depth)
-
-        switch format {
-        case kCVPixelFormatType_OneComponent8:
-            CVPixelBufferLockBaseAddress(depth, [])
-            defer { CVPixelBufferUnlockBaseAddress(depth, []) }
-
-            guard let base = CVPixelBufferGetBaseAddress(depth) else {
-                throw StereoPipelineError.pixelBufferBaseAddressUnavailable
-            }
-
-            let bytesPerRow = CVPixelBufferGetBytesPerRow(depth)
-            let pointer = base.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
-            for y in 0..<height {
-                let row = pointer.advanced(by: y * bytesPerRow)
-                for x in 0..<width {
-                    row[x] = 255 &- row[x]
-                }
-            }
-
-            return depth
-
-        case kCVPixelFormatType_32BGRA:
-            // Avoid `CIColorInvert` here because it also inverts alpha on premultiplied formats, which can
-            // collapse RGB to zero. We only want to invert the grayscale signal and keep alpha opaque.
-            let output = try PixelBufferUtilities.makePixelBuffer(
-                width: width,
-                height: height,
-                pixelFormat: kCVPixelFormatType_32BGRA
-            )
-
-            CVPixelBufferLockBaseAddress(depth, .readOnly)
-            CVPixelBufferLockBaseAddress(output, [])
-            defer {
-                CVPixelBufferUnlockBaseAddress(output, [])
-                CVPixelBufferUnlockBaseAddress(depth, .readOnly)
-            }
-
-            guard
-                let srcBase = CVPixelBufferGetBaseAddress(depth),
-                let dstBase = CVPixelBufferGetBaseAddress(output)
-            else {
-                throw StereoPipelineError.pixelBufferBaseAddressUnavailable
-            }
-
-            let srcBpr = CVPixelBufferGetBytesPerRow(depth)
-            let dstBpr = CVPixelBufferGetBytesPerRow(output)
-            let src = srcBase.bindMemory(to: UInt8.self, capacity: srcBpr * height)
-            let dst = dstBase.bindMemory(to: UInt8.self, capacity: dstBpr * height)
-
-            for y in 0..<height {
-                let srcRow = src.advanced(by: y * srcBpr)
-                let dstRow = dst.advanced(by: y * dstBpr)
-                for x in 0..<width {
-                    let i = x * 4
-                    dstRow[i + 0] = 255 &- srcRow[i + 0] // B
-                    dstRow[i + 1] = 255 &- srcRow[i + 1] // G
-                    dstRow[i + 2] = 255 &- srcRow[i + 2] // R
-                    dstRow[i + 3] = 255                 // A
-                }
-            }
-
-            return output
-
-        default:
-            return depth
-        }
+        // Only Depth Anything v2 Small F16 is packaged. Keep hook for future model variants.
+        _ = model
+        return depth
     }
 
     private func loadModel(_ depthModel: DepthModel) throws -> MLModel {
@@ -430,12 +360,7 @@ actor DepthEstimator {
         let sy = CGFloat(modelSizes.scaled.height) / sourceImage.extent.height
         var scaled = sourceImage.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
 
-        // Depth Anything v3 Small is typically preprocessed without padding in the reference implementation.
-        // Our Core ML conversion uses a fixed-size square input, so we must pad. Replicating edge pixels
-        // avoids introducing black borders that can hurt depth quality.
-        if depthModel == .depthAnythingV3SmallF16 || depthModel == .depthAnythingV3SmallF32 {
-            scaled = scaled.clampedToExtent()
-        }
+        // No model-specific preprocessing needed for the packaged model.
 
         let offsetX = CGFloat(modelSizes.model.width - modelSizes.scaled.width) * 0.5
         let offsetY = CGFloat(modelSizes.model.height - modelSizes.scaled.height) * 0.5

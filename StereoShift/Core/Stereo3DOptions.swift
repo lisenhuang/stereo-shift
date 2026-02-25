@@ -2,20 +2,11 @@ import Foundation
 
 enum DepthModel: String, CaseIterable, Sendable {
     case depthAnythingV2SmallF16 = "DepthAnythingV2SmallF16"
-    case depthAnythingV2SmallF32 = "DepthAnythingV2SmallF32"
-    case depthAnythingV3SmallF16 = "DepthAnythingV3SmallF16"
-    case depthAnythingV3SmallF32 = "DepthAnythingV3SmallF32"
 
     var displayName: String {
         switch self {
         case .depthAnythingV2SmallF16:
             return "Depth Anything v2 Small F16"
-        case .depthAnythingV2SmallF32:
-            return "Depth Anything v2 Small F32"
-        case .depthAnythingV3SmallF16:
-            return "Depth Anything v3 Small F16"
-        case .depthAnythingV3SmallF32:
-            return "Depth Anything v3 Small F32"
         }
     }
 
@@ -26,26 +17,6 @@ enum DepthModel: String, CaseIterable, Sendable {
                 "DepthAnythingV2SmallF16",
                 "DepthAnythingV2SmallFP16",
                 "coreml-depth-anything-v2-small"
-            ]
-        case .depthAnythingV2SmallF32:
-            return [
-                "DepthAnythingV2SmallF32",
-                "DepthAnythingV2SmallFP32",
-                "coreml-depth-anything-v2-small-f32",
-                "coreml-depth-anything-v2-small-fp32"
-            ]
-        case .depthAnythingV3SmallF16:
-            return [
-                "DepthAnythingV3SmallF16",
-                "DepthAnythingV3SmallFP16",
-                "coreml-depth-anything-v3-small"
-            ]
-        case .depthAnythingV3SmallF32:
-            return [
-                "DepthAnythingV3SmallF32",
-                "DepthAnythingV3SmallFP32",
-                "coreml-depth-anything-v3-small-f32",
-                "coreml-depth-anything-v3-small-fp32"
             ]
         }
     }
@@ -137,6 +108,8 @@ struct Stereo3DOptions: Hashable, Sendable {
     var generationMethod: StereoGenerationMethod = .serverLike
     // User-selectable model. F16 remains the default.
     var depthModel: DepthModel = .depthAnythingV2SmallF16
+    // Always keep Ultra Fast as the user-facing default. The renderer can still auto-enable
+    // additional edge processing internally at high strength.
     var renderProfile: StereoRenderProfile = .ultraFast
     var depthQuality: DepthQuality = .quality
     var renderEngine: StereoRenderEngine = .cpu
