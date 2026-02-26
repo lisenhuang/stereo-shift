@@ -184,19 +184,35 @@ struct GalleryView: View {
                         }
                         .buttonStyle(.bordered)
                         .disabled(selectedItemIDs.isEmpty || isDeletingSelection)
-                    } else {
-                        Button("Select") {
-                            isSelecting = true
-                            selectedItemIDs.removeAll()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
 
-                        Button("Clear All", role: .destructive) {
-                            showClearAllConfirmation = true
+                        Button {
+                            galleryLibrary.reload()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.headline)
+                                .padding(10)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+                        .disabled(isDeletingSelection)
+                    } else {
+                        Menu {
+                            Button("Select") {
+                                isSelecting = true
+                                selectedItemIDs.removeAll()
+                            }
+                            .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+
+                            Button("Clear All", role: .destructive) {
+                                showClearAllConfirmation = true
+                            }
+                            .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.headline)
+                                .padding(10)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isClearingAll || isImporting || isDeletingSelection)
 
                         Button {
                             galleryLibrary.reload()

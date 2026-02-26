@@ -615,15 +615,6 @@ struct PhotoFlowView: View {
     private var controlsCard: some View {
         VStack(spacing: 14) {
             if inputMode == .regular2D {
-                Text("Ultra Fast")
-                    .font(.headline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                Text("Fast on-device pipeline. At higher 3D Strength, StereoShift automatically enables extra edge processing to reduce jaggies.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
                 HStack {
                     Text("3D Strength")
                         .font(.headline)
@@ -647,11 +638,6 @@ struct PhotoFlowView: View {
 
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                     .disabled(true)
-
-                Text("Baseline disparity is 35px at strength=1.0.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)
