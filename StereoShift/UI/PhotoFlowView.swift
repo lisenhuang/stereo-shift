@@ -34,11 +34,6 @@ struct PhotoFlowView: View {
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var generateTask: Task<Void, Never>?
-    @State private var rerenderTask: Task<Void, Never>?
-    @State private var isRerendering = false
-    @State private var cachedRGBBuffer: CVPixelBuffer?
-    @State private var cachedDepthBuffer: CVPixelBuffer?
-    @State private var cachedDepthModel: DepthModel?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -98,7 +93,7 @@ struct PhotoFlowView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isSaving || isGenerating || isRerendering)
+                    .disabled(isSaving || isGenerating)
 
                     Button(action: saveOutputToPhotos) {
                         Group {
@@ -111,7 +106,7 @@ struct PhotoFlowView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isSaving || isGenerating || isRerendering)
+                    .disabled(isSaving || isGenerating)
 
                     if supportsDesktopFileImport {
                         Button(action: saveOutputToDisk) {
@@ -119,7 +114,7 @@ struct PhotoFlowView: View {
                                 .frame(maxWidth: .infinity, alignment: .center)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(isSaving || isGenerating || isRerendering)
+                        .disabled(isSaving || isGenerating)
                     }
 
                     Button {
@@ -129,7 +124,7 @@ struct PhotoFlowView: View {
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(isGenerating || isSaving || isRerendering)
+                    .disabled(isGenerating || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputFileURL])
@@ -171,7 +166,6 @@ struct PhotoFlowView: View {
             updateScreenAwakeLock(isActive: false)
             selectionTask?.cancel()
             generateTask?.cancel()
-            rerenderTask?.cancel()
             onProcessingStateChanged(false)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
@@ -285,7 +279,6 @@ struct PhotoFlowView: View {
     private func resetForSourceModeChange() {
         selectionTask?.cancel()
         generateTask?.cancel()
-        rerenderTask?.cancel()
 
         selectedItem = nil
         sourceImage = nil
@@ -301,7 +294,6 @@ struct PhotoFlowView: View {
 
     private func loadSelectedPhoto(_ item: PhotosPickerItem?) {
         selectionTask?.cancel()
-        rerenderTask?.cancel()
 
         guard let item else {
             sourceImage = nil
@@ -370,7 +362,6 @@ struct PhotoFlowView: View {
 
     private func loadSelectedPhotoFile(_ url: URL) {
         selectionTask?.cancel()
-        rerenderTask?.cancel()
         isLoadingSelection = true
 
         selectionTask = Task {
@@ -426,7 +417,6 @@ struct PhotoFlowView: View {
 
     private func generateSBSPhoto() {
         generateTask?.cancel()
-        rerenderTask?.cancel()
         isGenerating = true
 
         if inputMode == .spatial {
@@ -506,9 +496,6 @@ struct PhotoFlowView: View {
                 }
 
                 await MainActor.run {
-                    cachedRGBBuffer = rgbBuffer
-                    cachedDepthBuffer = depthBuffer
-                    cachedDepthModel = appliedOptions.depthModel
                     outputImage = output
                     outputFileURL = fileURL
                     saveMessageKey = nil
@@ -531,71 +518,7 @@ struct PhotoFlowView: View {
     }
 
     private func clearRenderCache() {
-        rerenderTask?.cancel()
-        rerenderTask = nil
-        isRerendering = false
-        cachedRGBBuffer = nil
-        cachedDepthBuffer = nil
-        cachedDepthModel = nil
-    }
-
-    private func rerenderSBSWithCachedDepthIfPossible() {
-        guard inputMode == .regular2D else { return }
-        guard !isGenerating, !isSaving else { return }
-        guard let rgbBuffer = cachedRGBBuffer, let depthBuffer = cachedDepthBuffer else { return }
-        guard cachedDepthModel == .depthAnythingV2SmallF16 else { return }
-        guard outputImage != nil else { return }
-
-        rerenderTask?.cancel()
-        isRerendering = true
-
-        let renderer = pipeline.stereoRenderer
-        let appliedStrength = strength
-        var appliedOptions = stereo3DOptions
-        appliedOptions.depthModel = .depthAnythingV2SmallF16
-        appliedOptions.renderProfile = .ultraFast
-        let jpegQuality: Float = 0.90
-        let oldFileURL = outputFileURL
-
-        rerenderTask = Task.detached(priority: .userInitiated) {
-            do {
-                try Task.checkCancellation()
-                let outputBuffer = try renderer.makeSBS(
-                    from: rgbBuffer,
-                    depth: depthBuffer,
-                    strength: appliedStrength,
-                    options: appliedOptions
-                )
-                let output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
-                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
-
-                if Task.isCancelled {
-                    TempFiles.removeItemIfExists(at: fileURL)
-                    return
-                }
-
-                await MainActor.run {
-                    if let oldFileURL {
-                        TempFiles.removeItemIfExists(at: oldFileURL)
-                    }
-                    outputImage = output
-                    outputFileURL = fileURL
-                    saveMessageKey = nil
-                    isRerendering = false
-                }
-            } catch {
-                if Task.isCancelled {
-                    await MainActor.run {
-                        isRerendering = false
-                    }
-                    return
-                }
-                await MainActor.run {
-                    isRerendering = false
-                    errorMessage = error.localizedDescription
-                }
-            }
-        }
+        // No-op: strength changes no longer trigger automatic regeneration.
     }
 
     private func cancelGenerating() {
@@ -719,12 +642,7 @@ struct PhotoFlowView: View {
                         get: { Double(strength) },
                         set: { strength = Float($0) }
                     ),
-                    in: 0.1...1.5,
-                    onEditingChanged: { editing in
-                        if !editing {
-                            rerenderSBSWithCachedDepthIfPossible()
-                        }
-                    }
+                    in: 0.1...1.5
                 )
 
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
