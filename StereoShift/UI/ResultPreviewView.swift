@@ -132,53 +132,52 @@ private struct FullscreenPreviewView: View {
     @State private var player: AVPlayer?
 
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .topTrailing) {
-                Color.black.ignoresSafeArea()
+        ZStack(alignment: .topTrailing) {
+            Color.black.ignoresSafeArea()
 
-                Group {
-                    if let previewImage = previewUIImage {
-                        ZoomableImageView(image: previewImage)
-                    } else if case let .video(url) = media {
-                        VideoPlayer(player: player)
-                            .onAppear {
-                                player = FullscreenVideoPlaybackCenter.shared.player(for: url)
-                                player?.actionAtItemEnd = .none
-                                player?.play()
-                            }
-                            .onChange(of: url) { _, newURL in
-                                player = FullscreenVideoPlaybackCenter.shared.player(for: newURL)
-                                player?.actionAtItemEnd = .none
-                                player?.play()
-                            }
-                            .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
-                                guard let currentItem = player?.currentItem else { return }
-                                guard let endedItem = notification.object as? AVPlayerItem, endedItem == currentItem else { return }
-                                player?.seek(to: .zero)
-                                player?.play()
-                            }
-                    } else {
-                        unavailable
-                    }
+            Group {
+                if let previewImage = previewUIImage {
+                    ZoomableImageView(image: previewImage)
+                } else if case let .video(url) = media {
+                    VideoPlayer(player: player)
+                        .onAppear {
+                            player = FullscreenVideoPlaybackCenter.shared.player(for: url)
+                            player?.actionAtItemEnd = .none
+                            player?.play()
+                        }
+                        .onChange(of: url) { _, newURL in
+                            player = FullscreenVideoPlaybackCenter.shared.player(for: newURL)
+                            player?.actionAtItemEnd = .none
+                            player?.play()
+                        }
+                        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
+                            guard let currentItem = player?.currentItem else { return }
+                            guard let endedItem = notification.object as? AVPlayerItem, endedItem == currentItem else { return }
+                            player?.seek(to: .zero)
+                            player?.play()
+                        }
+                } else {
+                    unavailable
                 }
-                .frame(width: geometry.size.width, alignment: .center)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-
-                Button {
-                    player?.pause()
-                    player?.seek(to: .zero)
-                    FullscreenVideoPlaybackCenter.shared.stopAndReset()
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                        .padding(12)
-                        .background(Color.black.opacity(0.5), in: Circle())
-                }
-                .padding(.top, 18)
-                .padding(.trailing, 18)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .ignoresSafeArea()
+
+            Button {
+                player?.pause()
+                player?.seek(to: .zero)
+                FullscreenVideoPlaybackCenter.shared.stopAndReset()
+                dismiss()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.headline)
+                    .foregroundStyle(.white)
+                    .padding(12)
+                    .background(Color.black.opacity(0.5), in: Circle())
+            }
+            .zIndex(10)
+            .padding(12)
+            .safeAreaPadding([.top, .trailing])
         }
     }
 
