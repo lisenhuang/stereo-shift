@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreImage
 import ImageIO
 import PhotosUI
 import SwiftUI
@@ -21,6 +22,7 @@ struct GalleryView: View {
     @State private var showVideoSubscriptionSheet = false
     @State private var errorMessage: String?
     @State private var visibleItemCount = 0
+    @State private var isShowingQRCodeSheet = false
 
     private static let gridCardWidth: CGFloat = 170
     private static let gridCardHeight: CGFloat = 210
@@ -103,6 +105,11 @@ struct GalleryView: View {
         )
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
+        }
+        .sheet(isPresented: $isShowingQRCodeSheet) {
+            if let qrURLString {
+                WebShareQRCodeSheet(urlString: qrURLString)
+            }
         }
         .sheet(isPresented: $showVideoSubscriptionSheet) {
             VideoSubscriptionPaywallView(subscriptionManager: subscriptionManager)
@@ -220,6 +227,16 @@ struct GalleryView: View {
                             Text(verbatim: hostAddress)
                                 .font(.subheadline.monospaced())
                                 .foregroundStyle(.secondary)
+                            Button {
+                                isShowingQRCodeSheet = true
+                            } label: {
+                                Image(systemName: "qrcode")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.leading, 4)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Show QR Code")
                         }
                         .textSelection(.enabled)
 
@@ -260,6 +277,12 @@ struct GalleryView: View {
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var qrURLString: String? {
+        guard webServer.isRunning, let hostAddress = webServer.hostAddress else { return nil }
+        // Use http in QR to avoid certificate prompts on scan; server redirects to https and keeps query.
+        return "http://\(hostAddress)?code=\(webServer.accessPIN)"
     }
 
     private var emptyState: some View {
@@ -530,6 +553,62 @@ private struct GalleryGridItemView: View {
         .padding(10)
         .frame(maxWidth: .infinity, minHeight: cardHeight, maxHeight: cardHeight, alignment: .topLeading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct WebShareQRCodeSheet: View {
+    let urlString: String
+
+    @Environment(\.dismiss) private var dismiss
+    private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                if let image = qrUIImage(from: urlString) {
+                    Image(uiImage: image)
+                        .resizable()
+                        .interpolation(.none)
+                        .scaledToFit()
+                        .frame(maxWidth: 280, maxHeight: 280)
+                        .padding(.top, 8)
+                }
+
+                Text(urlString)
+                    .font(.footnote.monospaced())
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 16)
+
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 20)
+            .navigationTitle("Web Share QR")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func qrUIImage(from text: String) -> UIImage? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        guard let filter = CIFilter(name: "CIQRCodeGenerator") else { return nil }
+        filter.setValue(data, forKey: "inputMessage")
+        filter.setValue("M", forKey: "inputCorrectionLevel")
+        guard var output = filter.outputImage else { return nil }
+
+        // Scale QR up so it stays sharp when rendered in SwiftUI.
+        output = output.transformed(by: CGAffineTransform(scaleX: 10, y: 10))
+
+        guard let cgImage = ciContext.createCGImage(output, from: output.extent) else { return nil }
+        return UIImage(cgImage: cgImage)
     }
 }
 

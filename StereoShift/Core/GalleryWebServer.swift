@@ -252,6 +252,13 @@ final class GalleryWebServer: ObservableObject {
             return
         }
 
+        // Allow PIN auth via `?code=1234` so a QR code can deep-link into an authorized session.
+        // This is evaluated before the cookie check so first-time visitors can skip manual PIN entry.
+        if let code = request.queryItems["code"], !code.isEmpty, !isAuthorized(request: request) {
+            handlePINAttempt(candidatePIN: code, method: request.method, isTLS: isTLS, on: connection)
+            return
+        }
+
         guard isAuthorized(request: request) else {
             if request.path == "/" {
                 sendAccessPINPage(message: nil, method: request.method, isTLS: isTLS, on: connection)
@@ -298,12 +305,16 @@ final class GalleryWebServer: ObservableObject {
 
     private func handleAuthenticationRequest(request: HTTPRequest, isTLS: Bool, on connection: NWConnection) {
         let rawPIN = request.queryItems["pin"] ?? ""
+        handlePINAttempt(candidatePIN: rawPIN, method: request.method, isTLS: isTLS, on: connection)
+    }
+
+    private func handlePINAttempt(candidatePIN rawPIN: String, method: String, isTLS: Bool, on connection: NWConnection) {
         let candidatePIN = rawPIN.trimmingCharacters(in: .whitespacesAndNewlines)
 
         guard candidatePIN.count == 4, candidatePIN.allSatisfy(\.isNumber) else {
             sendAccessPINPage(
                 message: "Enter a valid 4-digit PIN.",
-                method: request.method,
+                method: method,
                 isTLS: isTLS,
                 on: connection
             )
@@ -322,7 +333,7 @@ final class GalleryWebServer: ObservableObject {
                     statusCode: 403,
                     reasonPhrase: "Forbidden",
                     text: "Too many incorrect PIN attempts. Web Share has stopped.",
-                    method: request.method,
+                    method: method,
                     on: connection
                 )
 
@@ -336,7 +347,7 @@ final class GalleryWebServer: ObservableObject {
 
             sendAccessPINPage(
                 message: "Incorrect PIN. \(remainingAttempts) attempts remaining.",
-                method: request.method,
+                method: method,
                 isTLS: isTLS,
                 on: connection
             )
@@ -349,7 +360,7 @@ final class GalleryWebServer: ObservableObject {
 
         sendRedirectResponse(
             to: "/",
-            method: request.method,
+            method: method,
             headers: ["Set-Cookie": Self.authenticationCookieHeader(for: sessionToken, secure: isTLS)],
             statusCode: 303,
             reasonPhrase: "See Other",
