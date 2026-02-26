@@ -11,6 +11,8 @@ struct GalleryView: View {
     @ObservedObject var webServer: GalleryWebServer
     @ObservedObject var subscriptionManager: SubscriptionManager
     @State private var selectedItem: GalleryItem?
+    @State private var isSelecting = false
+    @State private var selectedItemIDs: Set<String> = []
     @State private var importPickerItems: [PhotosPickerItem] = []
     @State private var showAddFromPhotosPrompt = false
     @State private var isShowingPhotoImportPicker = false
@@ -19,6 +21,8 @@ struct GalleryView: View {
     @State private var importMessageKey: LocalizedStringKey?
     @State private var isClearingAll = false
     @State private var showClearAllConfirmation = false
+    @State private var isDeletingSelection = false
+    @State private var showDeleteSelectionConfirmation = false
     @State private var showVideoSubscriptionSheet = false
     @State private var errorMessage: String?
     @State private var visibleItemCount = 0
@@ -52,12 +56,18 @@ struct GalleryView: View {
                     LazyVGrid(columns: columns, spacing: Self.gridSpacing) {
                         ForEach(visibleItems) { item in
                             Button {
-                                selectedItem = item
+                                if isSelecting {
+                                    toggleSelection(for: item)
+                                } else {
+                                    selectedItem = item
+                                }
                             } label: {
                                 GalleryGridItemView(
                                     item: item,
                                     thumbnailSide: Self.gridThumbnailSide,
-                                    cardHeight: Self.gridCardHeight
+                                    cardHeight: Self.gridCardHeight,
+                                    showsSelection: isSelecting,
+                                    isSelected: selectedItemIDs.contains(item.id)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -81,6 +91,7 @@ struct GalleryView: View {
         }
         .onChange(of: galleryLibrary.items.count) { _, _ in
             syncVisibleItemCount()
+            pruneSelectionIfNeeded()
         }
         .onChange(of: importPickerItems) { _, newValue in
             importFromPhotos(newValue)
@@ -139,6 +150,14 @@ struct GalleryView: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .alert("Delete selected items?", isPresented: $showDeleteSelectionConfirmation) {
+            Button("Delete", role: .destructive) {
+                deleteSelectedItems()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will remove the selected items from In-App Gallery.")
+        }
     }
 
     private var header: some View {
@@ -153,21 +172,42 @@ struct GalleryView: View {
                 }
                 Spacer()
                 HStack(spacing: 8) {
-                    Button("Clear All", role: .destructive) {
-                        showClearAllConfirmation = true
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting)
+                    if isSelecting {
+                        Button("Cancel") {
+                            exitSelectionMode()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isDeletingSelection)
 
-                    Button {
-                        galleryLibrary.reload()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.headline)
-                            .padding(10)
+                        Button("Delete", role: .destructive) {
+                            showDeleteSelectionConfirmation = true
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(selectedItemIDs.isEmpty || isDeletingSelection)
+                    } else {
+                        Button("Select") {
+                            isSelecting = true
+                            selectedItemIDs.removeAll()
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+
+                        Button("Clear All", role: .destructive) {
+                            showClearAllConfirmation = true
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+
+                        Button {
+                            galleryLibrary.reload()
+                        } label: {
+                            Image(systemName: "arrow.clockwise")
+                                .font(.headline)
+                                .padding(10)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isClearingAll || isImporting || isDeletingSelection)
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(isClearingAll || isImporting)
                 }
             }
 
@@ -179,7 +219,7 @@ struct GalleryView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isClearingAll || isImporting)
+                .disabled(isClearingAll || isImporting || isSelecting || isDeletingSelection)
 
                 if supportsDiskImport {
                     Button {
@@ -189,7 +229,7 @@ struct GalleryView: View {
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isClearingAll || isImporting)
+                    .disabled(isClearingAll || isImporting || isSelecting || isDeletingSelection)
                 }
             }
 
@@ -214,6 +254,8 @@ struct GalleryView: View {
                 .disabled(
                     isClearingAll ||
                     isImporting ||
+                    isSelecting ||
+                    isDeletingSelection ||
                     (!webServer.isWiFiConnected && !webServer.isRunning)
                 )
 
@@ -360,11 +402,64 @@ struct GalleryView: View {
                 try await galleryLibrary.clearAll()
                 await MainActor.run {
                     selectedItem = nil
+                    exitSelectionMode()
                     isClearingAll = false
                 }
             } catch {
                 await MainActor.run {
                     isClearingAll = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func toggleSelection(for item: GalleryItem) {
+        if selectedItemIDs.contains(item.id) {
+            selectedItemIDs.remove(item.id)
+        } else {
+            selectedItemIDs.insert(item.id)
+        }
+    }
+
+    private func pruneSelectionIfNeeded() {
+        guard !selectedItemIDs.isEmpty else { return }
+        let ids = Set(galleryLibrary.items.map(\.id))
+        selectedItemIDs = selectedItemIDs.intersection(ids)
+        if selectedItemIDs.isEmpty && isSelecting {
+            // Keep selection mode on, but with an empty selection.
+        }
+    }
+
+    private func exitSelectionMode() {
+        isSelecting = false
+        selectedItemIDs.removeAll()
+        isDeletingSelection = false
+        showDeleteSelectionConfirmation = false
+    }
+
+    private func deleteSelectedItems() {
+        guard !selectedItemIDs.isEmpty else { return }
+        isDeletingSelection = true
+        importMessageKey = nil
+
+        let idsToDelete = selectedItemIDs
+        Task {
+            do {
+                // Delete in reverse chronological order (matches UI order).
+                let itemsToDelete = galleryLibrary.items.filter { idsToDelete.contains($0.id) }
+                for item in itemsToDelete {
+                    try await galleryLibrary.delete(item)
+                }
+
+                await MainActor.run {
+                    isDeletingSelection = false
+                    exitSelectionMode()
+                    importMessageKey = "Deleted."
+                }
+            } catch {
+                await MainActor.run {
+                    isDeletingSelection = false
                     errorMessage = error.localizedDescription
                 }
             }
@@ -523,6 +618,8 @@ private struct GalleryGridItemView: View {
     let item: GalleryItem
     let thumbnailSide: CGFloat
     let cardHeight: CGFloat
+    let showsSelection: Bool
+    let isSelected: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -532,6 +629,15 @@ private struct GalleryGridItemView: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .strokeBorder(Color.secondary.opacity(0.2))
+                }
+                .overlay(alignment: .topTrailing) {
+                    if showsSelection {
+                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                            .font(.title3)
+                            .symbolRenderingMode(.palette)
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary, Color(.systemBackground))
+                            .padding(6)
+                    }
                 }
 
             if item.type == .image {
@@ -552,6 +658,12 @@ private struct GalleryGridItemView: View {
         .padding(10)
         .frame(maxWidth: .infinity, minHeight: cardHeight, maxHeight: cardHeight, alignment: .topLeading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            if showsSelection && isSelected {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.65), lineWidth: 2)
+            }
+        }
     }
 }
 
