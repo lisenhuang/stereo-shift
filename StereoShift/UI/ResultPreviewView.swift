@@ -1,3 +1,4 @@
+import AVFoundation
 import AVKit
 import SwiftUI
 import UIKit
@@ -67,13 +68,13 @@ struct ResultPreviewView: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 if allowsFullscreenPreview {
-                    isShowingFullscreen = true
+                    openFullscreen()
                 }
             }
             .overlay {
                 if allowsFullscreenPreview {
                     Button {
-                        isShowingFullscreen = true
+                        openFullscreen()
                     } label: {
                         Color.clear
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -89,7 +90,7 @@ struct ResultPreviewView: View {
             .overlay(alignment: .topTrailing) {
                 if allowsFullscreenPreview {
                     Button {
-                        isShowingFullscreen = true
+                        openFullscreen()
                     } label: {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
                             .font(.subheadline.weight(.semibold))
@@ -103,9 +104,15 @@ struct ResultPreviewView: View {
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .fullScreenCover(isPresented: $isShowingFullscreen) {
+        .fullScreenCover(isPresented: $isShowingFullscreen, onDismiss: {
+            FullscreenVideoPlaybackCenter.shared.stopAndReset()
+        }) {
             FullscreenPreviewView(media: media)
         }
+    }
+
+    private func openFullscreen() {
+        isShowingFullscreen = true
     }
 
     private var previewUnavailableView: some View {
@@ -135,22 +142,14 @@ private struct FullscreenPreviewView: View {
                     } else if case let .video(url) = media {
                         VideoPlayer(player: player)
                             .onAppear {
-                                if player?.currentItem == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
-                                    player = AVPlayer(url: url)
-                                }
+                                player = FullscreenVideoPlaybackCenter.shared.player(for: url)
                                 player?.actionAtItemEnd = .none
                                 player?.play()
                             }
                             .onChange(of: url) { _, newURL in
-                                if player?.currentItem == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != newURL {
-                                    player = AVPlayer(url: newURL)
-                                }
+                                player = FullscreenVideoPlaybackCenter.shared.player(for: newURL)
                                 player?.actionAtItemEnd = .none
                                 player?.play()
-                            }
-                            .onDisappear {
-                                player?.pause()
-                                player?.seek(to: .zero)
                             }
                             .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
                                 guard let currentItem = player?.currentItem else { return }
@@ -166,6 +165,9 @@ private struct FullscreenPreviewView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
 
                 Button {
+                    player?.pause()
+                    player?.seek(to: .zero)
+                    FullscreenVideoPlaybackCenter.shared.stopAndReset()
                     dismiss()
                 } label: {
                     Image(systemName: "xmark")
@@ -201,6 +203,31 @@ private struct FullscreenPreviewView: View {
     }
 }
 
+private final class FullscreenVideoPlaybackCenter {
+    static let shared = FullscreenVideoPlaybackCenter()
+
+    private let sharedPlayer = AVPlayer()
+    private var activeURL: URL?
+
+    private init() {}
+
+    func player(for url: URL) -> AVPlayer {
+        if activeURL != url {
+            sharedPlayer.pause()
+            sharedPlayer.replaceCurrentItem(with: AVPlayerItem(url: url))
+            activeURL = url
+        }
+        return sharedPlayer
+    }
+
+    func stopAndReset() {
+        sharedPlayer.pause()
+        sharedPlayer.seek(to: .zero)
+        sharedPlayer.replaceCurrentItem(with: nil)
+        activeURL = nil
+    }
+}
+
 private struct ZoomableImageView: UIViewRepresentable {
     let image: UIImage
 
@@ -209,7 +236,7 @@ private struct ZoomableImageView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UIScrollView {
-        let scrollView = UIScrollView()
+        let scrollView = FittingScrollView()
         scrollView.backgroundColor = .clear
         scrollView.delegate = context.coordinator
         scrollView.minimumZoomScale = 1.0
@@ -218,38 +245,109 @@ private struct ZoomableImageView: UIViewRepresentable {
         scrollView.bouncesZoom = true
         scrollView.showsVerticalScrollIndicator = false
         scrollView.showsHorizontalScrollIndicator = false
+        scrollView.contentInsetAdjustmentBehavior = .never
 
         let imageView = UIImageView(image: image)
         imageView.contentMode = .scaleAspectFit
-        imageView.frame = scrollView.bounds
-        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        imageView.frame = CGRect(origin: .zero, size: image.size)
         imageView.isUserInteractionEnabled = true
         scrollView.addSubview(imageView)
+        scrollView.contentSize = image.size
 
         let doubleTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDoubleTap(_:)))
         doubleTap.numberOfTapsRequired = 2
         scrollView.addGestureRecognizer(doubleTap)
 
         context.coordinator.imageView = imageView
+        context.coordinator.imageSize = image.size
+
+        // Initial fit must happen after the first layout pass; otherwise bounds can be incorrect
+        // and the image appears too large until a rotation triggers a re-layout.
+        scrollView.onLayout = { [weak coordinator = context.coordinator] sv in
+            coordinator?.handleLayout(of: sv)
+        }
         return scrollView
     }
 
     func updateUIView(_ scrollView: UIScrollView, context: Context) {
         context.coordinator.imageView?.image = image
-        if scrollView.zoomScale < scrollView.minimumZoomScale || scrollView.zoomScale > scrollView.maximumZoomScale {
-            scrollView.setZoomScale(1.0, animated: false)
+        if context.coordinator.imageSize != image.size {
+            context.coordinator.imageSize = image.size
+            context.coordinator.imageView?.frame = CGRect(origin: .zero, size: image.size)
+            scrollView.contentSize = image.size
+            context.coordinator.updateZoomScalesAndFit(scrollView, resetZoom: true)
+            return
         }
+
+        // Bounds changes are handled by `layoutSubviews` to ensure we also respond to the first
+        // real layout (when bounds become non-zero).
+
+        if scrollView.zoomScale < scrollView.minimumZoomScale || scrollView.zoomScale > scrollView.maximumZoomScale {
+            scrollView.setZoomScale(scrollView.minimumZoomScale, animated: false)
+        }
+
         context.coordinator.centerImage(in: scrollView)
+    }
+
+    private final class FittingScrollView: UIScrollView {
+        var onLayout: ((UIScrollView) -> Void)?
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            onLayout?(self)
+        }
     }
 
     final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
+        var imageSize: CGSize = .zero
+        var lastBoundsSize: CGSize = .zero
+        var didInitialFit = false
 
         func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             imageView
         }
 
         func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            centerImage(in: scrollView)
+        }
+
+        func handleLayout(of scrollView: UIScrollView) {
+            let boundsSize = scrollView.bounds.size
+            guard boundsSize.width > 0, boundsSize.height > 0 else { return }
+
+            let needsFit = !didInitialFit || lastBoundsSize != boundsSize
+            guard needsFit else { return }
+
+            updateZoomScalesAndFit(scrollView, resetZoom: true)
+            didInitialFit = true
+        }
+
+        func updateZoomScalesAndFit(_ scrollView: UIScrollView, resetZoom: Bool) {
+            if imageSize.width <= 0 || imageSize.height <= 0 {
+                imageSize = imageView?.image?.size ?? .zero
+                if imageSize.width <= 0 || imageSize.height <= 0 {
+                    return
+                }
+            }
+
+            let boundsSize = scrollView.bounds.size
+            guard boundsSize.width > 0, boundsSize.height > 0 else { return }
+
+            let widthScale = boundsSize.width / imageSize.width
+            let heightScale = boundsSize.height / imageSize.height
+            // Fit-to-screen but never upscale past 1.0 (so the image is never larger than the screen).
+            let minScale = min(1.0, min(widthScale, heightScale))
+            let maxScale = max(minScale * 6.0, minScale + 0.01)
+
+            scrollView.minimumZoomScale = minScale
+            scrollView.maximumZoomScale = maxScale
+
+            if resetZoom || scrollView.zoomScale < minScale || scrollView.zoomScale > maxScale {
+                scrollView.zoomScale = minScale
+            }
+
+            lastBoundsSize = boundsSize
             centerImage(in: scrollView)
         }
 
