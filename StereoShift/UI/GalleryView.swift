@@ -83,6 +83,46 @@ struct GalleryView: View {
         // Avoid a janky large-title collapse/expand transition while scrolling this grid.
         .navigationTitle("In-App Gallery")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if isSelecting {
+                    Button("Cancel") {
+                        exitSelectionMode()
+                    }
+                    .disabled(isDeletingSelection)
+
+                    Button {
+                        showDeleteSelectionConfirmation = true
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .disabled(selectedItemIDs.isEmpty || isDeletingSelection)
+                } else {
+                    Menu {
+                        Button("Select") {
+                            isSelecting = true
+                            selectedItemIDs.removeAll()
+                        }
+                        .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+
+                        Button("Clear All", role: .destructive) {
+                            showClearAllConfirmation = true
+                        }
+                        .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .disabled(isClearingAll || isImporting || isDeletingSelection)
+
+                    Button {
+                        galleryLibrary.reload()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .disabled(isClearingAll || isImporting || isDeletingSelection)
+                }
+            }
+        }
         .refreshable {
             galleryLibrary.reload()
         }
@@ -171,60 +211,6 @@ struct GalleryView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                HStack(spacing: 8) {
-                    if isSelecting {
-                        Button("Cancel") {
-                            exitSelectionMode()
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isDeletingSelection)
-
-                        Button("Delete", role: .destructive) {
-                            showDeleteSelectionConfirmation = true
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(selectedItemIDs.isEmpty || isDeletingSelection)
-
-                        Button {
-                            galleryLibrary.reload()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.headline)
-                                .padding(10)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isDeletingSelection)
-                    } else {
-                        Menu {
-                            Button("Select") {
-                                isSelecting = true
-                                selectedItemIDs.removeAll()
-                            }
-                            .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
-
-                            Button("Clear All", role: .destructive) {
-                                showClearAllConfirmation = true
-                            }
-                            .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
-                        } label: {
-                            Image(systemName: "ellipsis.circle")
-                                .font(.headline)
-                                .padding(10)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isClearingAll || isImporting || isDeletingSelection)
-
-                        Button {
-                            galleryLibrary.reload()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.headline)
-                                .padding(10)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isClearingAll || isImporting || isDeletingSelection)
-                    }
-                }
             }
 
             HStack(spacing: 8) {
