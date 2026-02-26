@@ -233,11 +233,21 @@ final class GalleryWebServer: ObservableObject {
         }
 
         if !isTLS {
-            sendRedirectResponse(
-                to: "https://\(hostAddress)\(request.pathAndQuery)",
+            // Do not auto-redirect HTTP to HTTPS. Browsers will show a certificate warning on first HTTPS
+            // visit (self-signed local cert), so explain the trade-off and let users continue explicitly.
+            let httpsURL = "https://\(hostAddress)\(request.pathAndQuery)"
+            let html = Data(Self.httpUpgradeHTML(httpsURL: httpsURL).utf8)
+            sendDataResponse(
+                statusCode: 200,
+                reasonPhrase: "OK",
+                headers: [
+                    "Content-Type": "text/html; charset=utf-8",
+                    "Cache-Control": "no-store, no-cache, max-age=0",
+                    "Pragma": "no-cache",
+                    "Expires": "0"
+                ],
+                body: html,
                 method: request.method,
-                statusCode: 301,
-                reasonPhrase: "Moved Permanently",
                 on: connection
             )
             return
@@ -1160,6 +1170,47 @@ final class GalleryWebServer: ObservableObject {
       --shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
     }
 
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #eef4ff;
+        --bg2: #dfe9ff;
+        --card: rgba(255, 255, 255, 0.92);
+        --card-border: rgba(79, 110, 180, 0.25);
+        --text: #13213f;
+        --muted: #4e648f;
+        --accent: #2a96ff;
+        --accent2: #6158ff;
+        --danger: #df2f4d;
+        --shadow: 0 14px 32px rgba(36, 62, 118, 0.16);
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #060b1a;
+      --bg2: #0c1630;
+      --card: rgba(16, 26, 52, 0.86);
+      --card-border: rgba(130, 165, 255, 0.26);
+      --text: #eef3ff;
+      --muted: #a9bbe7;
+      --accent: #43d0ff;
+      --accent2: #8d6bff;
+      --danger: #ff8297;
+      --shadow: 0 18px 42px rgba(0, 0, 0, 0.38);
+    }
+
+    :root[data-theme="light"] {
+      --bg: #eef4ff;
+      --bg2: #dfe9ff;
+      --card: rgba(255, 255, 255, 0.92);
+      --card-border: rgba(79, 110, 180, 0.25);
+      --text: #13213f;
+      --muted: #4e648f;
+      --accent: #2a96ff;
+      --accent2: #6158ff;
+      --danger: #df2f4d;
+      --shadow: 0 14px 32px rgba(36, 62, 118, 0.16);
+    }
+
     * { box-sizing: border-box; }
 
     body {
@@ -1170,8 +1221,8 @@ final class GalleryWebServer: ObservableObject {
       padding: 18px;
       color: var(--text);
       font-family: "SF Pro Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
-      background: radial-gradient(circle at 18% 10%, #1a2a56 0%, transparent 36%),
-                  radial-gradient(circle at 80% 0%, #1c1742 0%, transparent 34%),
+      background: radial-gradient(circle at 18% 10%, rgba(26, 42, 86, 0.8) 0%, transparent 36%),
+                  radial-gradient(circle at 80% 0%, rgba(28, 23, 66, 0.8) 0%, transparent 34%),
                   linear-gradient(180deg, var(--bg) 0%, var(--bg2) 100%);
     }
 
@@ -1259,43 +1310,81 @@ final class GalleryWebServer: ObservableObject {
       border-radius: 10px;
       font-size: 13px;
     }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .theme {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+      user-select: none;
+    }
+
+    select {
+      appearance: none;
+      border: 1px solid rgba(146, 175, 247, 0.34);
+      background: rgba(11, 17, 35, 0.12);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: 12px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    select:focus {
+      border-color: rgba(108, 202, 255, 0.72);
+      box-shadow: 0 0 0 3px rgba(67, 208, 255, 0.2);
+    }
   </style>
 </head>
 <body>
   <script>
-    (async function maybeRedirectToSecureVR() {
+    (function initTheme() {
       try {
-        if (window.location.protocol !== 'http:') {
-          return;
+        const key = 'stereoshift_theme_auth';
+        const saved = localStorage.getItem(key) || 'system';
+        const select = document.getElementById('theme');
+        if (select) {
+          select.value = saved;
+          select.addEventListener('change', () => {
+            const value = select.value || 'system';
+            localStorage.setItem(key, value);
+            apply(value);
+          });
         }
+        apply(saved);
 
-        if (!navigator.xr || typeof navigator.xr.isSessionSupported !== 'function') {
-          return;
-        }
-
-        let xrLooksSupported = false;
-        try {
-          xrLooksSupported = await navigator.xr.isSessionSupported('immersive-vr');
-          if (!xrLooksSupported) {
-            xrLooksSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        function apply(value) {
+          if (value === 'system') {
+            document.documentElement.removeAttribute('data-theme');
+            return;
           }
-        } catch (_) {
-          xrLooksSupported = false;
+          document.documentElement.setAttribute('data-theme', value);
         }
-
-        if (!xrLooksSupported) {
-          return;
-        }
-
-        const secureURL = new URL(window.location.href);
-        secureURL.protocol = 'https:';
-        window.location.replace(secureURL.toString());
-      } catch (_) {
-      }
+      } catch (_) {}
     })();
   </script>
   <section class="card">
-    <h1>StereoShift Web Share</h1>
+    <div class="topbar">
+      <h1>StereoShift Web Share</h1>
+      <div class="theme">
+        <span>Theme</span>
+        <select id="theme" aria-label="Theme">
+          <option value="system">System</option>
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+        </select>
+      </div>
+    </div>
     <p class="subtitle">Enter the 4-digit PIN shown in the app to continue.</p>
     <form method="get" action="\(authPath)" autocomplete="off">
       <label for="pin">Access PIN</label>
@@ -1304,6 +1393,185 @@ final class GalleryWebServer: ObservableObject {
     </form>
     <p class="hint">\(remainingAttempts) attempts remaining before Web Share stops.</p>
     \(messageHTML)
+  </section>
+</body>
+</html>
+"""
+    }
+
+    private static func httpUpgradeHTML(httpsURL: String) -> String {
+        let safeURL = escapeHTML(httpsURL)
+        return """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>StereoShift Web Share</title>
+  <style>
+    :root {
+      --bg: #0b0f1a;
+      --card: rgba(18, 24, 40, 0.92);
+      --border: rgba(255, 255, 255, 0.16);
+      --text: #eef3ff;
+      --muted: rgba(238, 243, 255, 0.72);
+      --accent: #43d0ff;
+      --shadow: 0 18px 44px rgba(0, 0, 0, 0.44);
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #f2f6ff;
+        --card: rgba(255, 255, 255, 0.96);
+        --border: rgba(42, 63, 106, 0.18);
+        --text: #13213f;
+        --muted: rgba(19, 33, 63, 0.68);
+        --accent: #2a96ff;
+        --shadow: 0 16px 36px rgba(36, 62, 118, 0.16);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      font-family: "SF Pro Text", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at 18% 10%, rgba(67, 208, 255, 0.18) 0%, transparent 40%),
+                  radial-gradient(circle at 78% 0%, rgba(141, 107, 255, 0.16) 0%, transparent 38%),
+                  linear-gradient(180deg, var(--bg) 0%, rgba(2, 6, 16, 1) 100%);
+    }
+    .card {
+      width: min(720px, 100%);
+      padding: 22px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+    h1 {
+      margin: 0 0 10px;
+      font-size: clamp(20px, 2.8vw, 28px);
+      font-weight: 760;
+      letter-spacing: 0.2px;
+    }
+    p { margin: 0; line-height: 1.5; color: var(--muted); }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .mock {
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.18);
+      overflow: hidden;
+    }
+    .warn-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 720;
+      color: var(--text);
+      margin-bottom: 10px;
+    }
+    .triangle {
+      width: 0;
+      height: 0;
+      border-left: 14px solid transparent;
+      border-right: 14px solid transparent;
+      border-bottom: 26px solid #ff5a72;
+      position: relative;
+      filter: drop-shadow(0 8px 18px rgba(255, 90, 114, 0.28));
+    }
+    .triangle:after {
+      content: "!";
+      position: absolute;
+      left: -3px;
+      top: 3px;
+      font-size: 16px;
+      font-weight: 900;
+      color: white;
+    }
+    .steps {
+      margin-top: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .step {
+      display: grid;
+      grid-template-columns: 26px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+    .badge {
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      background: rgba(67, 208, 255, 0.18);
+      border: 1px solid rgba(67, 208, 255, 0.36);
+      color: var(--text);
+      font-weight: 760;
+      font-size: 13px;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+    a.button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 12px 16px;
+      border-radius: 12px;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 700;
+      background: linear-gradient(130deg, #1fb5ff 0%, #7664ff 100%);
+      box-shadow: 0 8px 24px rgba(31, 181, 255, 0.28);
+    }
+    .url {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      color: var(--muted);
+      word-break: break-all;
+      border: 1px solid rgba(255,255,255,0.14);
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(0,0,0,0.14);
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <h1>StereoShift Web Share</h1>
+    <p>VR/AR viewing requires a secure (HTTPS) page. StereoShift uses a locally generated certificate, so your browser may show a warning the first time.</p>
+    <div class="grid">
+      <div class="mock" role="img" aria-label="Certificate warning instructions">
+        <div class="warn-title">
+          <span class="triangle" aria-hidden="true"></span>
+          <span>Your connection is not private</span>
+        </div>
+        <p>This is expected for local IP sharing. To continue, open Advanced, then proceed to the site.</p>
+        <div class="steps">
+          <div class="step"><div class="badge">1</div><div><p>Tap <strong>Advanced</strong> (or similar) on the warning page.</p></div></div>
+          <div class="step"><div class="badge">2</div><div><p>Tap <strong>Proceed</strong> to continue to the HTTPS site (it may say “unsafe”).</p></div></div>
+        </div>
+      </div>
+      <div class="url">\(safeURL)</div>
+    </div>
+    <div class="actions">
+      <a class="button" href="\(safeURL)">Open Secure Web Share</a>
+    </div>
   </section>
 </body>
 </html>
