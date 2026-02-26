@@ -214,7 +214,6 @@ struct GalleryView: View {
                 .disabled(
                     isClearingAll ||
                     isImporting ||
-                    (galleryLibrary.items.isEmpty && !webServer.isRunning) ||
                     (!webServer.isWiFiConnected && !webServer.isRunning)
                 )
 
