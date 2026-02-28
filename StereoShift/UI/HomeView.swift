@@ -25,7 +25,7 @@ struct HomeView: View {
     @StateObject private var subscriptionManager = SubscriptionManager()
     @State private var mode: Mode = .photo
     @State private var inputMode: InputMediaMode = .regular2D
-    @State private var strength: Float = 0.9
+    @State private var strength: Float = 0.60
     @State private var sbsLayoutEnabled = true
     @State private var stereo3DOptions = Stereo3DOptions()
     @State private var isProcessing = false

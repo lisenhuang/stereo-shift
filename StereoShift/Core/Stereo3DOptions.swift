@@ -2,17 +2,11 @@ import Foundation
 
 enum DepthModel: String, CaseIterable, Sendable {
     case depthAnythingV2SmallF16 = "DepthAnythingV2SmallF16"
-    case depthAnything518 = "depthanything518"
-    case depthAnything280 = "depthanything280"
 
     var displayName: String {
         switch self {
         case .depthAnythingV2SmallF16:
             return "Depth Anything v2 Small F16"
-        case .depthAnything518:
-            return "Depth Anything 518 (Quality)"
-        case .depthAnything280:
-            return "Depth Anything 280 (Fast)"
         }
     }
 
@@ -24,10 +18,6 @@ enum DepthModel: String, CaseIterable, Sendable {
                 "DepthAnythingV2SmallFP16",
                 "coreml-depth-anything-v2-small"
             ]
-        case .depthAnything518:
-            return ["depthanything518"]
-        case .depthAnything280:
-            return ["depthanything280"]
         }
     }
 
