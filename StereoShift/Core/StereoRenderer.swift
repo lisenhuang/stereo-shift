@@ -169,6 +169,21 @@ final class StereoRenderer {
     }
 
     func makeSBS(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
+        // Metal GPU path — matches Spatial Media Toolkit pipeline. Falls back to CPU if unavailable.
+        if options.renderEngine == .metal, let metalRenderer = MetalStereoRenderer.shared {
+            let width = CVPixelBufferGetWidth(rgb)
+            let clampedStrength = max(0, min(1.5, strength))
+            let preset = RefinedServerPreset.forProfile(options.renderProfile)
+            let maxShift = preset.baselinePerEye * clampedStrength
+            return try metalRenderer.makeSBS(
+                from: rgb,
+                depth: depth,
+                maxShift: maxShift,
+                depthFilterRadius: 3.0,
+                depthFilterIncrement: 1.0
+            )
+        }
+
         if options.generationMethod == .serverLike {
             return try makeSBSServerLike(from: rgb, depth: depth, strength: strength, options: options)
         }

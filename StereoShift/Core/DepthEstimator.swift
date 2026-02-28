@@ -23,7 +23,7 @@ actor DepthEstimator {
     func predictDepth(pixelBuffer: CVPixelBuffer) async throws -> CVPixelBuffer {
         try await predictDepth(
             pixelBuffer: pixelBuffer,
-            model: .depthAnythingV2SmallF16,
+            model: .depthAnything518,
             quality: .quality
         )
     }

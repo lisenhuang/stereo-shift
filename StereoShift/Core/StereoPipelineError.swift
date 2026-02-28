@@ -27,11 +27,12 @@ enum StereoPipelineError: LocalizedError {
     case embeddedDepthUnavailable
     case temporaryFileCreationFailed
     case photoLibraryAccessDenied
+    case metalDeviceUnavailable
 
     var errorDescription: String? {
         switch self {
         case .modelNotFound:
-            return "Depth model is missing. Add DepthAnythingV2SmallF16.mlpackage to StereoShift/Resources and try again."
+            return "Depth model is missing. Add the required .mlmodelc to StereoShift/Resources and try again."
         case .modelInputNotFound:
             return "Model input could not be resolved."
         case .modelOutputNotFound:
@@ -80,6 +81,8 @@ enum StereoPipelineError: LocalizedError {
             return "Unable to create a temporary file."
         case .photoLibraryAccessDenied:
             return "Photo library permission is required to save output."
+        case .metalDeviceUnavailable:
+            return "Metal GPU is not available on this device."
         }
     }
 }

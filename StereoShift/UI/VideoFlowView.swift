@@ -422,7 +422,9 @@ struct VideoFlowView: View {
         let processor = pipeline.videoProcessor
         let appliedStrength = strength
         var appliedOptions = stereo3DOptions
-        appliedOptions.depthModel = .depthAnythingV2SmallF16
+        appliedOptions.depthModel = .depthAnything280
+        appliedOptions.depthQuality = .fast
+        appliedOptions.renderEngine = .metal
         appliedOptions.renderProfile = .ultraFast
         let usingSpatialMode = inputMode == .spatial
         let shouldLimitDuration = !usingSpatialMode && limitToFirstTenSeconds && (sourceVideoDurationSeconds ?? .infinity) > 10.0

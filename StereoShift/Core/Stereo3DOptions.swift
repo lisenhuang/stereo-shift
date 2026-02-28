@@ -1,23 +1,24 @@
 import Foundation
 
 enum DepthModel: String, CaseIterable, Sendable {
-    case depthAnythingV2SmallF16 = "DepthAnythingV2SmallF16"
+    case depthAnything518 = "depthanything518"
+    case depthAnything280 = "depthanything280"
 
     var displayName: String {
         switch self {
-        case .depthAnythingV2SmallF16:
-            return "Depth Anything v2 Small F16"
+        case .depthAnything518:
+            return "Depth Anything 518 (Quality)"
+        case .depthAnything280:
+            return "Depth Anything 280 (Fast)"
         }
     }
 
     var resourceNameCandidates: [String] {
         switch self {
-        case .depthAnythingV2SmallF16:
-            return [
-                "DepthAnythingV2SmallF16",
-                "DepthAnythingV2SmallFP16",
-                "coreml-depth-anything-v2-small"
-            ]
+        case .depthAnything518:
+            return ["depthanything518"]
+        case .depthAnything280:
+            return ["depthanything280"]
         }
     }
 
@@ -60,12 +61,14 @@ enum DepthModel: String, CaseIterable, Sendable {
 }
 
 enum DepthQuality: Int, CaseIterable, Sendable {
+    case fast = 280
     case quality = 518
 
     var shortSide: Int { rawValue }
 }
 
 enum StereoRenderEngine: String, CaseIterable, Sendable {
+    case metal
     case cpu
     case ciKernel
 }
@@ -106,13 +109,12 @@ enum StereoRenderProfile: String, CaseIterable, Sendable {
 struct Stereo3DOptions: Hashable, Sendable {
     // Keep using server-like generation (simple min/max depth normalize + integer pixel shifts).
     var generationMethod: StereoGenerationMethod = .serverLike
-    // User-selectable model. F16 remains the default.
-    var depthModel: DepthModel = .depthAnythingV2SmallF16
+    var depthModel: DepthModel = .depthAnything518
     // Always keep Ultra Fast as the user-facing default. The renderer can still auto-enable
     // additional edge processing internally at high strength.
     var renderProfile: StereoRenderProfile = .ultraFast
     var depthQuality: DepthQuality = .quality
-    var renderEngine: StereoRenderEngine = .cpu
+    var renderEngine: StereoRenderEngine = .metal
     var depthTuning: DepthTuning = .classic
     var viewSynthesis: StereoViewSynthesis = .inverseWarp
     var depthRefinement: DepthRefinement = .none

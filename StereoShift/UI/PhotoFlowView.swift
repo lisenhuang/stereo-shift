@@ -468,7 +468,8 @@ struct PhotoFlowView: View {
         let depthEstimator = pipeline.depthEstimator
         let appliedStrength = strength
         var appliedOptions = stereo3DOptions
-        appliedOptions.depthModel = .depthAnythingV2SmallF16
+        appliedOptions.depthModel = .depthAnything518
+        appliedOptions.renderEngine = .metal
         appliedOptions.renderProfile = .ultraFast
 
         generateTask = Task.detached(priority: .userInitiated) {
