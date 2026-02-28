@@ -12,7 +12,7 @@ All processing runs on-device.
 - Swift + SwiftUI
 - Core ML (`apple/coreml-depth-anything-v2-small`, Small F16)
 - AVFoundation reader/writer pipeline
-- CPU stereo warp + lightweight hole fill
+- Metal GPU-accelerated stereo rendering pipeline
 
 ## Project Layout
 
@@ -93,23 +93,30 @@ StereoShift postprocess:
 - Invert polarity for v3 so the renderer always uses the convention: larger depth value = closer.
 - Crop/resize depth back to the original size like v2.
 
-## SBS Rendering Pipeline (Shared)
+## SBS Rendering Pipeline (Metal GPU)
 
-`StereoRenderer` performs:
+StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The pipeline consists of four compute passes executed in a single command buffer:
 
-1. Normalize depth to `[0, 1]` at a processing resolution (can be smaller than full-res for speed).
-2. Optional depth refinement:
-   - guided filtering against the RGB guide image (profile-dependent)
-   - bilateral filtering
-   - optional depth-edge smoothing / feathering
-3. Convert the `3D Strength` UI value into a per-eye baseline shift (`baselinePerEye * strength`).
-4. Forward warp RGB into left/right views using a z-buffer for occlusion handling:
-   - integer shift (fast) or subpixel splat (quality), profile-dependent
-5. Fill disocclusion holes:
-   - asymmetric horizontal dilation (pull from the "background direction")
-   - lightweight inpainting passes (radius/profile-dependent)
-6. Optional output edge anti-aliasing + edge supersampling (profile-dependent).
-7. Concatenate left and right into a single side-by-side (SBS) frame.
+1. **Depth Max Filter** (`depthMaxFilter` kernel): Dilates foreground depth values into background regions using a max-pool operation within a configurable radius. This pre-fills occlusion areas so the subsequent warp has valid depth everywhere, preventing holes.
+
+2. **Stereo Warp — Left Eye** (`stereoWarpMetal` kernel, direction = -1): Inverse warps the source image using the filtered depth map. Each output pixel samples depth (3×3 neighborhood average for stability), computes a horizontal shift proportional to depth × maxShift, and bilinear-samples the source at the shifted coordinate.
+
+3. **Stereo Warp — Right Eye** (`stereoWarpMetal` kernel, direction = +1): Same inverse warp in the opposite direction to produce the right eye view.
+
+4. **Compose SBS** (`composeSBS` kernel): Copies left and right eye textures side-by-side into a double-width output texture.
+
+Key implementation details:
+
+- All passes use Metal compute kernels dispatched via `MTLComputeCommandEncoder`
+- CVPixelBuffer ↔ MTLTexture conversion uses `CVMetalTextureCache` for zero-copy GPU access
+- The `maxShift` parameter (baseline disparity) is derived from `baselinePerEye × 3D Strength`
+- CPU and CIKernel render engines are preserved as fallbacks if Metal is unavailable
+
+Implementation references:
+
+- `StereoShift/Core/StereoShaders.metal` — Metal compute kernels
+- `StereoShift/Core/MetalStereoRenderer.swift` — GPU pipeline manager
+- `StereoShift/Core/StereoRenderer.swift` — render engine routing
 
 ## Manual Test Checklist
 
