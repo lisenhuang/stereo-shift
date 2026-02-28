@@ -1,11 +1,14 @@
 import Foundation
 
 enum DepthModel: String, CaseIterable, Sendable {
+    case depthAnythingV2SmallF16 = "DepthAnythingV2SmallF16"
     case depthAnything518 = "depthanything518"
     case depthAnything280 = "depthanything280"
 
     var displayName: String {
         switch self {
+        case .depthAnythingV2SmallF16:
+            return "Depth Anything v2 Small F16"
         case .depthAnything518:
             return "Depth Anything 518 (Quality)"
         case .depthAnything280:
@@ -15,6 +18,12 @@ enum DepthModel: String, CaseIterable, Sendable {
 
     var resourceNameCandidates: [String] {
         switch self {
+        case .depthAnythingV2SmallF16:
+            return [
+                "DepthAnythingV2SmallF16",
+                "DepthAnythingV2SmallFP16",
+                "coreml-depth-anything-v2-small"
+            ]
         case .depthAnything518:
             return ["depthanything518"]
         case .depthAnything280:
@@ -109,7 +118,7 @@ enum StereoRenderProfile: String, CaseIterable, Sendable {
 struct Stereo3DOptions: Hashable, Sendable {
     // Keep using server-like generation (simple min/max depth normalize + integer pixel shifts).
     var generationMethod: StereoGenerationMethod = .serverLike
-    var depthModel: DepthModel = .depthAnything518
+    var depthModel: DepthModel = .depthAnythingV2SmallF16
     // Always keep Ultra Fast as the user-facing default. The renderer can still auto-enable
     // additional edge processing internally at high strength.
     var renderProfile: StereoRenderProfile = .ultraFast
