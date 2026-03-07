@@ -43,6 +43,7 @@ final class VideoProcessor {
 
         let naturalSize = try await videoTrack.load(.naturalSize)
         let preferredTransform = try await videoTrack.load(.preferredTransform)
+        let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
         let orientedSize = Self.orientedSize(naturalSize: naturalSize, preferredTransform: preferredTransform)
         let processingSize = Self.processingSize(for: orientedSize, maxDimension: 720)
 
@@ -53,7 +54,24 @@ final class VideoProcessor {
         let readerOutputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        let readerOutput = AVAssetReaderTrackOutput(track: videoTrack, outputSettings: readerOutputSettings)
+        let readerComposition = AVMutableVideoComposition()
+        readerComposition.renderSize = orientedSize
+        let frameRate = nominalFrameRate > 0 ? Double(nominalFrameRate) : 30.0
+        readerComposition.frameDuration = CMTime(seconds: 1.0 / frameRate, preferredTimescale: 600)
+
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        layerInstruction.setTransform(preferredTransform, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        readerComposition.instructions = [instruction]
+
+        let readerOutput = AVAssetReaderVideoCompositionOutput(
+            videoTracks: [videoTrack],
+            videoSettings: readerOutputSettings
+        )
+        readerOutput.videoComposition = readerComposition
         readerOutput.alwaysCopiesSampleData = false
 
         guard reader.canAdd(readerOutput) else {
@@ -126,7 +144,7 @@ final class VideoProcessor {
                 }
                 let preparedFrame = try makeUprightAndScaledBuffer(
                     from: imageBuffer,
-                    transform: preferredTransform,
+                    transform: .identity,
                     targetSize: processingSize
                 )
 
