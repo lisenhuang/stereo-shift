@@ -103,7 +103,7 @@ struct VideoFlowView: View {
                     }
 
                     Button {
-                        showShareSheet = true
+                        presentShareSheet()
                     } label: {
                         Label("Share", systemImage: "square.and.arrow.up")
                             .frame(maxWidth: .infinity)
@@ -141,10 +141,6 @@ struct VideoFlowView: View {
             loadSelectedVideo(newValue)
         }
         .onChange(of: inputMode) { _, _ in
-            resetForSourceModeChange()
-        }
-        .onChange(of: subscriptionManager.canAccessVideo) { _, newValue in
-            guard !newValue else { return }
             resetForSourceModeChange()
         }
         .onChange(of: isProcessing) { _, newValue in
@@ -245,7 +241,7 @@ struct VideoFlowView: View {
     }
 
     private var canGenerate: Bool {
-        guard sourceVideoURL != nil, !isProcessing, !isVideoLocked else { return false }
+        guard sourceVideoURL != nil, !isProcessing else { return false }
         if inputMode == .spatial, !supportsSpatialPicker {
             return false
         }
@@ -253,10 +249,6 @@ struct VideoFlowView: View {
             return sbsLayoutEnabled
         }
         return true
-    }
-
-    private var isVideoLocked: Bool {
-        !subscriptionManager.canAccessVideo
     }
 
     private var progressTitleText: Text {
@@ -299,12 +291,6 @@ struct VideoFlowView: View {
                 TempFiles.removeItemIfExists(at: oldOutput)
             }
             outputVideoURL = nil
-            return
-        }
-
-        guard !isVideoLocked else {
-            onRequireSubscription()
-            selectedItem = nil
             return
         }
 
@@ -359,10 +345,6 @@ struct VideoFlowView: View {
     }
 
     private func loadSelectedVideoFile(_ url: URL) {
-        guard !isVideoLocked else {
-            onRequireSubscription()
-            return
-        }
         selectionTask?.cancel()
         sourceVideoURL = nil
         sourceVideoDurationSeconds = nil
@@ -409,10 +391,6 @@ struct VideoFlowView: View {
     }
 
     private func generateSBSVideo() {
-        guard !isVideoLocked else {
-            onRequireSubscription()
-            return
-        }
         guard let sourceVideoURL else { return }
 
         processingTask?.cancel()
@@ -500,6 +478,10 @@ struct VideoFlowView: View {
     }
 
     private func saveOutputToInAppGallery() {
+        guard canExportOutput else {
+            onRequireSubscription()
+            return
+        }
         guard let outputVideoURL else { return }
         isSaving = true
         saveMessageKey = nil
@@ -521,6 +503,10 @@ struct VideoFlowView: View {
     }
 
     private func saveOutputToPhotos() {
+        guard canExportOutput else {
+            onRequireSubscription()
+            return
+        }
         guard let outputVideoURL else { return }
         isSaving = true
         saveMessageKey = nil
@@ -561,6 +547,19 @@ struct VideoFlowView: View {
         return nsError.domain == NSCocoaErrorDomain && nsError.code == NSUserCancelledError
     }
 
+    private var canExportOutput: Bool {
+        subscriptionManager.canAccessVideo
+    }
+
+    private func presentShareSheet() {
+        guard canExportOutput else {
+            onRequireSubscription()
+            return
+        }
+
+        showShareSheet = true
+    }
+
     private func formatTime(_ seconds: Double) -> String {
         guard seconds.isFinite else { return "--:--" }
         let total = max(0, Int(seconds.rounded()))
@@ -597,7 +596,7 @@ struct VideoFlowView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
+            .disabled(isProcessing || (inputMode == .spatial && !supportsSpatialPicker))
 
             if supportsDesktopFileImport {
                 Button {
@@ -608,7 +607,7 @@ struct VideoFlowView: View {
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.large)
-                .disabled(isProcessing || isVideoLocked || (inputMode == .spatial && !supportsSpatialPicker))
+                .disabled(isProcessing || (inputMode == .spatial && !supportsSpatialPicker))
             }
         }
     }

@@ -88,6 +88,15 @@ struct HomeView: View {
                 .navigationTitle("StereoShift")
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
+                        if !subscriptionManager.canAccessVideo {
+                            Button {
+                                showVideoSubscriptionSheet = true
+                            } label: {
+                                Label("Upgrade", systemImage: "crown.fill")
+                            }
+                            .disabled(isProcessing)
+                        }
+
                         themeMenu
                         languageMenu
 
@@ -150,29 +159,7 @@ struct HomeView: View {
         Binding {
             mode
         } set: { newValue in
-            guard newValue == .video else {
-                mode = newValue
-                return
-            }
-
-            if subscriptionManager.canAccessVideo {
-                mode = .video
-                return
-            }
-
-            if !subscriptionManager.hasResolvedEntitlements {
-                Task { @MainActor in
-                    await subscriptionManager.refreshEntitlements()
-                    if subscriptionManager.canAccessVideo {
-                        mode = .video
-                    } else {
-                        showVideoSubscriptionSheet = true
-                    }
-                }
-                return
-            }
-
-            showVideoSubscriptionSheet = true
+            mode = newValue
         }
     }
 
