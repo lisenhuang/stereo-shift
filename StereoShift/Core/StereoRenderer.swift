@@ -90,6 +90,13 @@ final class StereoRenderer {
         }
     }
 
+    /// Per-video state for rendering a sequence of frames. Owned by the caller (one per
+    /// `processVideo`) so concurrent or restarted conversions never share mutable state.
+    final class VideoTemporalSession {
+        fileprivate var depthStatsEMA: (lo: Float, hi: Float, median: Float)?
+        fileprivate var metalFailed = false
+    }
+
     private let depthEstimator: DepthEstimator
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
     private var kernelWarpIsHealthy = true
@@ -169,19 +176,94 @@ final class StereoRenderer {
     }
 
     func makeSBS(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
-        // Metal GPU path — matches Spatial Media Toolkit pipeline. Falls back to CPU if unavailable.
-        if options.renderEngine == .metal, let metalRenderer = MetalStereoRenderer.shared {
+        try makeSBS(from: rgb, depth: depth, strength: strength, options: options, session: nil)
+    }
+
+    /// Creates fresh per-video state. Call once before rendering a video's frames via
+    /// `makeSBSVideoFrame` so stats from a previous (or concurrent) video don't leak in.
+    func beginVideoTemporalSession() -> VideoTemporalSession {
+        VideoTemporalSession()
+    }
+
+    /// Renders one video frame. Identical to `makeSBS(from:depth:strength:options:)` except
+    /// depth normalization statistics are exponentially smoothed across frames (via the
+    /// session) to prevent the depth scale and convergence plane from pumping frame to frame.
+    func makeSBSVideoFrame(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions, session: VideoTemporalSession) throws -> CVPixelBuffer {
+        try makeSBS(from: rgb, depth: depth, strength: strength, options: options, session: session)
+    }
+
+    private func makeSBS(
+        from rgb: CVPixelBuffer,
+        depth: CVPixelBuffer,
+        strength: Float,
+        options: Stereo3DOptions,
+        session: VideoTemporalSession?
+    ) throws -> CVPixelBuffer {
+        // Metal GPU path — joint-bilateral depth refine, disparity-scaled dilation,
+        // convergence-plane warp.
+        if options.renderEngine == .metal,
+           !(session?.metalFailed ?? false),
+           let metalRenderer = MetalStereoRenderer.shared {
             let width = CVPixelBufferGetWidth(rgb)
             let clampedStrength = max(0, min(1.5, strength))
             let preset = RefinedServerPreset.forProfile(options.renderProfile)
-            let maxShift = preset.baselinePerEye * clampedStrength
-            return try metalRenderer.makeSBS(
-                from: rgb,
-                depth: depth,
-                maxShift: maxShift,
-                depthFilterRadius: 3.0,
-                depthFilterIncrement: 1.0
-            )
+
+            var stats = metalDepthStats(for: depth)
+            if let session {
+                if let previous = session.depthStatsEMA {
+                    // The depth model normalizes each frame independently, so stats jump
+                    // legitimately when the nearest/farthest object changes. Damp small
+                    // frame-to-frame changes to kill histogram jitter, but SNAP on large
+                    // jumps (scene cuts / objects entering) rather than crushing depth for
+                    // the several frames an EMA would take to catch up.
+                    let alpha: Float = 0.4
+                    let jump = max(abs(stats.lo - previous.lo), abs(stats.hi - previous.hi))
+                    if jump <= 0.12 {
+                        stats = (
+                            lo: previous.lo + ((stats.lo - previous.lo) * alpha),
+                            hi: previous.hi + ((stats.hi - previous.hi) * alpha),
+                            median: previous.median + ((stats.median - previous.median) * alpha)
+                        )
+                    }
+                }
+                session.depthStatsEMA = stats
+            }
+
+            // Disparity proportional to frame width so any resolution yields the same
+            // perceived depth; capped for comfort. Scaled down for shallow-depth scenes
+            // so percentile normalization doesn't stretch depth-map quantization noise
+            // into visible wobble on nearly-flat content (skies, walls, far landscapes).
+            let range = max(stats.hi - stats.lo, 0.0001)
+            let rangeConfidence = min(1, range / 0.25)
+            let widthScale = Float(width) / 1440
+            let maxShift = min(preset.baselinePerEye * clampedStrength * widthScale, Float(width) * 0.025) * rangeConfidence
+
+            // Put the zero-parallax plane near the scene's median depth so content
+            // straddles the screen instead of floating entirely in front of it.
+            let convergence = min(0.7, max(0.3, (stats.median - stats.lo) / range))
+
+            do {
+                return try metalRenderer.makeSBS(
+                    from: rgb,
+                    depth: depth,
+                    parameters: MetalStereoParameters(
+                        maxShift: maxShift,
+                        convergence: convergence,
+                        depthMin: stats.lo,
+                        depthMax: stats.hi
+                    )
+                )
+            } catch {
+                // Mid-video: latch onto the CPU path for the rest of the clip so one
+                // video never mixes two stereo looks (video frames are capped at 1080p,
+                // safe for the CPU path). Photos: re-throw — the full-resolution CPU path
+                // could OOM on 48MP/panoramas, and a single image has no continuity need.
+                if let session {
+                    session.metalFailed = true
+                } else {
+                    throw error
+                }
+            }
         }
 
         if options.generationMethod == .serverLike {
@@ -229,6 +311,71 @@ final class StereoRenderer {
         options.depthTuning = tuning
         options.renderEngine = engine
         return try makeSBS(from: rgb, depth: depth, strength: strength, options: options)
+    }
+
+    /// Percentile depth statistics (2%, 50%, 98%) from a downsampled histogram of the
+    /// depth buffer. Used to normalize depth on the GPU and place the convergence plane.
+    private func metalDepthStats(for depthBuffer: CVPixelBuffer) -> (lo: Float, hi: Float, median: Float) {
+        let fallback: (lo: Float, hi: Float, median: Float) = (0, 1, 0.5)
+        let sourceWidth = CVPixelBufferGetWidth(depthBuffer)
+        let sourceHeight = CVPixelBufferGetHeight(depthBuffer)
+        guard sourceWidth > 0, sourceHeight > 0 else { return fallback }
+
+        let analysisWidth = max(16, min(128, sourceWidth))
+        let analysisHeight = max(16, min(128, sourceHeight))
+
+        var image = CIImage(cvPixelBuffer: depthBuffer)
+        if CVPixelBufferGetPixelFormatType(depthBuffer) != kCVPixelFormatType_OneComponent8 {
+            image = image.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.0])
+        }
+        let sx = CGFloat(analysisWidth) / CGFloat(sourceWidth)
+        let sy = CGFloat(analysisHeight) / CGFloat(sourceHeight)
+        let analysisRect = CGRect(x: 0, y: 0, width: analysisWidth, height: analysisHeight)
+        let sampled = image
+            .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+            .cropped(to: analysisRect)
+
+        guard let analysisBuffer = try? PixelBufferUtilities.makePixelBuffer(
+            width: analysisWidth,
+            height: analysisHeight,
+            pixelFormat: kCVPixelFormatType_OneComponent8
+        ) else { return fallback }
+
+        ciContext.render(sampled, to: analysisBuffer, bounds: analysisRect, colorSpace: CGColorSpaceCreateDeviceGray())
+
+        CVPixelBufferLockBaseAddress(analysisBuffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(analysisBuffer, .readOnly) }
+
+        guard let baseAddress = CVPixelBufferGetBaseAddress(analysisBuffer) else { return fallback }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(analysisBuffer)
+        let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * analysisHeight)
+
+        var histogram = [Int](repeating: 0, count: 256)
+        for y in 0..<analysisHeight {
+            let row = pointer.advanced(by: y * bytesPerRow)
+            for x in 0..<analysisWidth {
+                histogram[Int(row[x])] += 1
+            }
+        }
+
+        let total = analysisWidth * analysisHeight
+        let (lowBin, highBin) = histogramPercentiles(
+            histogram,
+            lowTarget: Int((Double(total) * 0.02).rounded(.down)),
+            highTarget: Int((Double(total) * 0.98).rounded(.down))
+        )
+        let (medianBin, _) = histogramPercentiles(
+            histogram,
+            lowTarget: total / 2,
+            highTarget: total / 2
+        )
+
+        guard highBin > lowBin else { return fallback }
+        return (
+            lo: Float(lowBin) / 255,
+            hi: Float(highBin) / 255,
+            median: Float(medianBin) / 255
+        )
     }
 
     private func makeSBSUsingCPUInverseWarp(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, tuning: DepthTuning) throws -> CVPixelBuffer {

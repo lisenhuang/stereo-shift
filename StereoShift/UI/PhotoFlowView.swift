@@ -488,7 +488,7 @@ struct PhotoFlowView: View {
                     options: appliedOptions
                 )
                 let output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
-                let jpegQuality: Float = 0.90
+                let jpegQuality: Float = 0.95
                 let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
 
                 if Task.isCancelled {

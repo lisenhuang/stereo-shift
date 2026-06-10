@@ -45,7 +45,7 @@ final class VideoProcessor {
         let preferredTransform = try await videoTrack.load(.preferredTransform)
         let nominalFrameRate = try await videoTrack.load(.nominalFrameRate)
         let orientedSize = Self.orientedSize(naturalSize: naturalSize, preferredTransform: preferredTransform)
-        let processingSize = Self.processingSize(for: orientedSize, maxDimension: 720)
+        let processingSize = Self.processingSize(for: orientedSize, maxDimension: 1080)
 
         let outputURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-video", fileExtension: "mp4")
         TempFiles.removeItemIfExists(at: outputURL)
@@ -83,12 +83,15 @@ final class VideoProcessor {
         let outputWidth = Int(processingSize.width) * 2
         let outputHeight = Int(processingSize.height)
 
+        // Scale bitrate with output pixel rate (~0.1 bits/pixel) so the doubled-width
+        // SBS frame isn't starved at higher resolutions.
+        let videoBitrate = max(6_000_000, Int(Double(outputWidth * outputHeight) * frameRate * 0.1))
         let videoOutputSettings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: outputWidth,
             AVVideoHeightKey: outputHeight,
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 6_000_000,
+                AVVideoAverageBitRateKey: videoBitrate,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel
             ]
         ]
@@ -125,6 +128,7 @@ final class VideoProcessor {
             var cachedDepth: CVPixelBuffer?
             let cadence = max(1, options.videoDepthCadence.rawValue)
             let smoothingAlpha = max(0, min(1, options.videoDepthSmoothing))
+            let temporalSession = renderer.beginVideoTemporalSession()
 
             while reader.status == .reading {
                 try Task.checkCancellation()
@@ -176,11 +180,12 @@ final class VideoProcessor {
                 guard let depthForFrame = cachedDepth else {
                     throw StereoPipelineError.modelOutputNotFound
                 }
-                let stereoFrame = try renderer.makeSBS(
+                let stereoFrame = try renderer.makeSBSVideoFrame(
                     from: preparedFrame,
                     depth: depthForFrame,
                     strength: strength,
-                    options: options
+                    options: options,
+                    session: temporalSession
                 )
 
                 try await append(

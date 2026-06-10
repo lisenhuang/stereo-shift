@@ -2,10 +2,23 @@ import CoreVideo
 import Foundation
 import Metal
 
+/// Parameters for one SBS render. Depth min/max are percentile bounds of the raw depth
+/// map (computed on the CPU from a downsampled histogram); the GPU normalizes depth to
+/// [0, 1] with them so every image uses the full disparity budget consistently.
+struct MetalStereoParameters {
+    var maxShift: Float
+    var convergence: Float
+    var depthMin: Float
+    var depthMax: Float
+    var depthGamma: Float = 1.0
+}
+
 final class MetalStereoRenderer {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
-    private let depthMaxPipeline: MTLComputePipelineState
+    private let depthRefinePipeline: MTLComputePipelineState
+    private let depthDilatePipeline: MTLComputePipelineState
+    private let depthGaussianPipeline: MTLComputePipelineState
     private let stereoWarpPipeline: MTLComputePipelineState
     private let composeSBSPipeline: MTLComputePipelineState
     private var textureCache: CVMetalTextureCache?
@@ -26,15 +39,19 @@ final class MetalStereoRenderer {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        guard let depthMaxFn = library.makeFunction(name: "depthMaxFilter"),
-              let stereoWarpFn = library.makeFunction(name: "stereoWarpMetal"),
+        guard let depthRefineFn = library.makeFunction(name: "depthRefine"),
+              let depthDilateFn = library.makeFunction(name: "depthDilateAxis"),
+              let depthGaussianFn = library.makeFunction(name: "depthGaussianAxis"),
+              let stereoWarpFn = library.makeFunction(name: "stereoWarp"),
               let composeFn = library.makeFunction(name: "composeSBS") else {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
         self.device = device
         self.commandQueue = queue
-        self.depthMaxPipeline = try device.makeComputePipelineState(function: depthMaxFn)
+        self.depthRefinePipeline = try device.makeComputePipelineState(function: depthRefineFn)
+        self.depthDilatePipeline = try device.makeComputePipelineState(function: depthDilateFn)
+        self.depthGaussianPipeline = try device.makeComputePipelineState(function: depthGaussianFn)
         self.stereoWarpPipeline = try device.makeComputePipelineState(function: stereoWarpFn)
         self.composeSBSPipeline = try device.makeComputePipelineState(function: composeFn)
 
@@ -43,24 +60,23 @@ final class MetalStereoRenderer {
         self.textureCache = cache
     }
 
-    /// Produces an SBS stereo pair from an RGB image and its depth map using Metal GPU acceleration.
-    /// Matches the Spatial Media Toolkit pipeline: depth max filter → inverse warp × 2 → SBS compose.
+    /// Produces an SBS stereo pair from an RGB image and its depth map using Metal GPU
+    /// acceleration. Pipeline: joint-bilateral depth refine → separable max-dilate →
+    /// separable Gaussian feather → iterative inverse warp × 2 → SBS compose.
     func makeSBS(
         from rgb: CVPixelBuffer,
         depth: CVPixelBuffer,
-        maxShift: Float,
-        depthFilterRadius: Float = 3.0,
-        depthFilterIncrement: Float = 1.0
+        parameters: MetalStereoParameters
     ) throws -> CVPixelBuffer {
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
+        let maxShift = max(0, parameters.maxShift)
 
-        // Create textures from pixel buffers
-        let sourceTexture = try makeTexture(from: rgb, pixelFormat: .bgra8Unorm, usage: [.shaderRead])
-        let depthTexture = try makeTexture(from: depth, pixelFormat: .bgra8Unorm, usage: [.shaderRead])
+        let sourceTexture = try makeTexture(from: rgb, pixelFormat: .bgra8Unorm)
+        let rawDepthTexture = try makeTexture(from: depth, pixelFormat: depthTexturePixelFormat(for: depth))
 
-        // Intermediate textures
-        let filteredDepthTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .r32Float, usage: [.shaderRead, .shaderWrite])
+        let depthA = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthB = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
         let leftTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
         let rightTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
         let sbsTexture = try makeEmptyTexture(width: width * 2, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
@@ -69,42 +85,66 @@ final class MetalStereoRenderer {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        // Pass 1: Depth max filter — dilate foreground depth to prevent occlusion holes
-        encodeDepthMaxFilter(
+        // The depth map comes from a ~518px model inference upscaled to full resolution,
+        // so its edges are blurry and misaligned with image edges. The joint bilateral
+        // window must span that upsampling blur.
+        let refineRadius = max(3, min(10, width / 450))
+        let refineStep = refineRadius > 5 ? 2 : 1
+        encodeDepthRefine(
             commandBuffer: commandBuffer,
-            inDepth: depthTexture,
-            outDepth: filteredDepthTexture,
-            radius: depthFilterRadius,
-            increment: depthFilterIncrement,
+            source: sourceTexture,
+            depth: rawDepthTexture,
+            output: depthA,
+            radius: refineRadius,
+            sampleStep: refineStep,
+            sigmaSpatial: Float(refineRadius) * 0.6,
+            sigmaColor: 0.1,
+            minDepth: parameters.depthMin,
+            invRange: 1 / max(parameters.depthMax - parameters.depthMin, 0.0001),
+            gamma: parameters.depthGamma,
             width: width,
             height: height
         )
 
-        // Pass 2: Stereo warp left eye (direction = -1, shift source left for left eye)
+        // Dilation must cover the disparity difference across a silhouette, so it scales
+        // with maxShift. Horizontal dominates because disocclusions are horizontal.
+        let dilateHRadius = max(2, min(48, Int((maxShift * 0.6).rounded())))
+        let dilateHStep = dilateHRadius > 20 ? 2 : 1
+        let dilateVRadius = max(1, min(6, Int((maxShift * 0.1).rounded())))
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, width: width, height: height)
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, width: width, height: height)
+
+        let smoothSigma = max(1.0, min(6.0, maxShift * 0.15))
+        let smoothRadius = min(15, Int((smoothSigma * 2.5).rounded(.up)))
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+
+        let edgeTaper = max(8, maxShift * parameters.convergence * 2)
         encodeStereoWarp(
             commandBuffer: commandBuffer,
             source: sourceTexture,
-            depth: filteredDepthTexture,
+            depth: depthA,
             output: leftTexture,
             direction: -1.0,
             maxShift: maxShift,
+            convergence: parameters.convergence,
+            edgeTaper: edgeTaper,
             width: width,
             height: height
         )
-
-        // Pass 3: Stereo warp right eye (direction = +1, shift source right for right eye)
         encodeStereoWarp(
             commandBuffer: commandBuffer,
             source: sourceTexture,
-            depth: filteredDepthTexture,
+            depth: depthA,
             output: rightTexture,
             direction: 1.0,
             maxShift: maxShift,
+            convergence: parameters.convergence,
+            edgeTaper: edgeTaper,
             width: width,
             height: height
         )
 
-        // Pass 4: Compose SBS
         encodeComposeSBS(
             commandBuffer: commandBuffer,
             left: leftTexture,
@@ -121,30 +161,94 @@ final class MetalStereoRenderer {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        // Read back from SBS texture to CVPixelBuffer
         return try readTexture(sbsTexture, width: width * 2, height: height)
     }
 
     // MARK: - Encoder helpers
 
-    private func encodeDepthMaxFilter(
+    private func encodeDepthRefine(
         commandBuffer: MTLCommandBuffer,
-        inDepth: MTLTexture,
-        outDepth: MTLTexture,
-        radius: Float,
-        increment: Float,
+        source: MTLTexture,
+        depth: MTLTexture,
+        output: MTLTexture,
+        radius: Int,
+        sampleStep: Int,
+        sigmaSpatial: Float,
+        sigmaColor: Float,
+        minDepth: Float,
+        invRange: Float,
+        gamma: Float,
         width: Int,
         height: Int
     ) {
         guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
-        encoder.setComputePipelineState(depthMaxPipeline)
-        encoder.setTexture(inDepth, index: 0)
-        encoder.setTexture(outDepth, index: 1)
-        var r = radius
-        var inc = increment
-        encoder.setBytes(&r, length: MemoryLayout<Float>.size, index: 0)
-        encoder.setBytes(&inc, length: MemoryLayout<Float>.size, index: 1)
-        dispatchThreads(encoder: encoder, pipeline: depthMaxPipeline, width: width, height: height)
+        encoder.setComputePipelineState(depthRefinePipeline)
+        encoder.setTexture(source, index: 0)
+        encoder.setTexture(depth, index: 1)
+        encoder.setTexture(output, index: 2)
+        var r = Int32(radius)
+        var step = Int32(sampleStep)
+        var sigS = sigmaSpatial
+        var sigC = sigmaColor
+        var minD = minDepth
+        var invR = invRange
+        var g = gamma
+        encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 0)
+        encoder.setBytes(&step, length: MemoryLayout<Int32>.size, index: 1)
+        encoder.setBytes(&sigS, length: MemoryLayout<Float>.size, index: 2)
+        encoder.setBytes(&sigC, length: MemoryLayout<Float>.size, index: 3)
+        encoder.setBytes(&minD, length: MemoryLayout<Float>.size, index: 4)
+        encoder.setBytes(&invR, length: MemoryLayout<Float>.size, index: 5)
+        encoder.setBytes(&g, length: MemoryLayout<Float>.size, index: 6)
+        dispatchThreads(encoder: encoder, pipeline: depthRefinePipeline, width: width, height: height)
+        encoder.endEncoding()
+    }
+
+    private func encodeDepthDilate(
+        commandBuffer: MTLCommandBuffer,
+        input: MTLTexture,
+        output: MTLTexture,
+        axis: SIMD2<Int32>,
+        radius: Int,
+        sampleStep: Int,
+        width: Int,
+        height: Int
+    ) {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+        encoder.setComputePipelineState(depthDilatePipeline)
+        encoder.setTexture(input, index: 0)
+        encoder.setTexture(output, index: 1)
+        var a = axis
+        var r = Int32(radius)
+        var step = Int32(sampleStep)
+        encoder.setBytes(&a, length: MemoryLayout<SIMD2<Int32>>.size, index: 0)
+        encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 1)
+        encoder.setBytes(&step, length: MemoryLayout<Int32>.size, index: 2)
+        dispatchThreads(encoder: encoder, pipeline: depthDilatePipeline, width: width, height: height)
+        encoder.endEncoding()
+    }
+
+    private func encodeDepthGaussian(
+        commandBuffer: MTLCommandBuffer,
+        input: MTLTexture,
+        output: MTLTexture,
+        axis: SIMD2<Int32>,
+        radius: Int,
+        sigma: Float,
+        width: Int,
+        height: Int
+    ) {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+        encoder.setComputePipelineState(depthGaussianPipeline)
+        encoder.setTexture(input, index: 0)
+        encoder.setTexture(output, index: 1)
+        var a = axis
+        var r = Int32(radius)
+        var s = sigma
+        encoder.setBytes(&a, length: MemoryLayout<SIMD2<Int32>>.size, index: 0)
+        encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 1)
+        encoder.setBytes(&s, length: MemoryLayout<Float>.size, index: 2)
+        dispatchThreads(encoder: encoder, pipeline: depthGaussianPipeline, width: width, height: height)
         encoder.endEncoding()
     }
 
@@ -155,6 +259,8 @@ final class MetalStereoRenderer {
         output: MTLTexture,
         direction: Float,
         maxShift: Float,
+        convergence: Float,
+        edgeTaper: Float,
         width: Int,
         height: Int
     ) {
@@ -165,8 +271,12 @@ final class MetalStereoRenderer {
         encoder.setTexture(output, index: 2)
         var dir = direction
         var shift = maxShift
+        var conv = convergence
+        var taper = edgeTaper
         encoder.setBytes(&dir, length: MemoryLayout<Float>.size, index: 0)
         encoder.setBytes(&shift, length: MemoryLayout<Float>.size, index: 1)
+        encoder.setBytes(&conv, length: MemoryLayout<Float>.size, index: 2)
+        encoder.setBytes(&taper, length: MemoryLayout<Float>.size, index: 3)
         dispatchThreads(encoder: encoder, pipeline: stereoWarpPipeline, width: width, height: height)
         encoder.endEncoding()
     }
@@ -210,7 +320,20 @@ final class MetalStereoRenderer {
 
     // MARK: - Texture helpers
 
-    private func makeTexture(from pixelBuffer: CVPixelBuffer, pixelFormat: MTLPixelFormat, usage: MTLTextureUsage) throws -> MTLTexture {
+    private func depthTexturePixelFormat(for pixelBuffer: CVPixelBuffer) -> MTLPixelFormat {
+        switch CVPixelBufferGetPixelFormatType(pixelBuffer) {
+        case kCVPixelFormatType_OneComponent8:
+            return .r8Unorm
+        case kCVPixelFormatType_OneComponent16Half:
+            return .r16Float
+        case kCVPixelFormatType_OneComponent32Float:
+            return .r32Float
+        default:
+            return .bgra8Unorm
+        }
+    }
+
+    private func makeTexture(from pixelBuffer: CVPixelBuffer, pixelFormat: MTLPixelFormat) throws -> MTLTexture {
         guard let cache = textureCache else {
             throw StereoPipelineError.metalDeviceUnavailable
         }

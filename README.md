@@ -95,21 +95,24 @@ StereoShift postprocess:
 
 ## SBS Rendering Pipeline (Metal GPU)
 
-StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The pipeline consists of four compute passes executed in a single command buffer:
+StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The pipeline consists of eight compute passes executed in a single command buffer:
 
-1. **Depth Max Filter** (`depthMaxFilter` kernel): Dilates foreground depth values into background regions using a max-pool operation within a configurable radius. This pre-fills occlusion areas so the subsequent warp has valid depth everywhere, preventing holes.
+1. **Depth Refine** (`depthRefine` kernel): Joint bilateral filter on the depth map using the RGB frame as the guide. Because depth comes from a ~518px model inference upscaled to full resolution, its edges are blurry and misaligned with image edges; this pass snaps depth discontinuities to image contours, eliminating warp halos. The same pass normalizes depth to [0, 1] using 2%/98% percentile bounds (computed on the CPU from a downsampled histogram) so every image uses the full disparity budget.
 
-2. **Stereo Warp — Left Eye** (`stereoWarpMetal` kernel, direction = -1): Inverse warps the source image using the filtered depth map. Each output pixel samples depth (3×3 neighborhood average for stability), computes a horizontal shift proportional to depth × maxShift, and bilinear-samples the source at the shifted coordinate.
+2. **Depth Dilate H + V** (`depthDilateAxis` kernel, two passes): Separable max-filter dilation of near depth into the background. The horizontal radius scales with `maxShift` so the dilated band always covers the disocclusion width; the vertical radius is small. This prevents foreground edge ghosting in the warp.
 
-3. **Stereo Warp — Right Eye** (`stereoWarpMetal` kernel, direction = +1): Same inverse warp in the opposite direction to produce the right eye view.
+3. **Depth Feather H + V** (`depthGaussianAxis` kernel, two passes): Separable Gaussian blur sized relative to `maxShift`, converting the hard dilated depth step into a smooth ramp so disocclusions stretch instead of tearing.
 
-4. **Compose SBS** (`composeSBS` kernel): Copies left and right eye textures side-by-side into a double-width output texture.
+4. **Stereo Warp — Left/Right Eye** (`stereoWarp` kernel, direction = ∓1): Fixed-point iterative inverse warp. Disparity is computed around a convergence plane — `disparity = (depth − convergence) × maxShift` — placed at the scene's median depth, so content straddles the screen plane instead of floating entirely in front of it. Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
+
+5. **Compose SBS** (`composeSBS` kernel): Copies left and right eye textures side-by-side into a double-width output texture.
 
 Key implementation details:
 
 - All passes use Metal compute kernels dispatched via `MTLComputeCommandEncoder`
 - CVPixelBuffer ↔ MTLTexture conversion uses `CVMetalTextureCache` for zero-copy GPU access
-- The `maxShift` parameter (baseline disparity) is derived from `baselinePerEye × 3D Strength`
+- `maxShift` is derived from `baselinePerEye × 3D Strength × (width / 1440)` — proportional to frame width so all resolutions get the same perceived depth — and capped at 2.5% of width for comfort
+- For video, depth normalization statistics are exponentially smoothed across frames (`StereoRenderer.makeSBSVideoFrame`) to prevent depth-scale flicker
 - CPU and CIKernel render engines are preserved as fallbacks if Metal is unavailable
 
 Implementation references:
