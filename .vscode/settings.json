@@ -1,0 +1,10 @@
+{
+  "github.copilot.chat.commitMessageGeneration.instructions": [
+    {
+      "text": "Generate comprehensive Git commit messages. Use Conventional Commits format: <type>(<scope>): <summary>. The summary must be concise and under 72 characters. Add a body when the change is not trivial. In the body, explain why the change was made, what changed, and the impact. Mention affected modules, APIs, UI behaviour, config, tests, migrations, or breaking changes when relevant. Avoid vague messages like 'update', 'fix bug', 'changes', or 'minor improvements'."
+    },
+    {
+      "text": "Use one of these commit types: feat, fix, refactor, docs, test, chore, perf, style, build, ci. If there are multiple important changes, use bullet points in the commit body."
+    }
+  ]
+}
