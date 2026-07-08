@@ -1,5 +1,6 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D से 3D साइड-बाय-साइड (SBS)";
+"3D preview is unavailable for this photo." = "इस फ़ोटो के लिए 3D पूर्वावलोकन उपलब्ध नहीं है।";
 "3D Strength" = "3D ताकत";
 "Add from Disk" = "डिस्क से जोड़ें";
 "Add from Photos" = "फोटो से जोड़ें";
@@ -22,6 +23,7 @@
 "Connect to Wi-Fi to start Web Share." = "वेब शेयर शुरू करने के लिए Wi-Fi से जुड़ें।";
 "Done" = "पूरा";
 "Dark" = "डार्क";
+"Drag to look around" = "चारों ओर देखने के लिए खींचें";
 "English" = "अंग्रेज़ी";
 "Error" = "त्रुटि";
 "Estimating depth and rendering stereo views." = "डेप्थ का अनुमान लगाकर स्टीरियो व्यू रेंडर किए जा रहे हैं।";
@@ -37,6 +39,7 @@
 "Importing…" = "इंपोर्ट हो रहा है…";
 "Language" = "भाषा";
 "Light" = "लाइट";
+"Live 3D Preview" = "लाइव 3D पूर्वावलोकन";
 "Loading photo…" = "फोटो लोड हो रही है…";
 "Loading video…" = "वीडियो लोड हो रहा है…";
 "Mode" = "मोड";
@@ -62,6 +65,7 @@
 "Pick Spatial Video from Files" = "फ़ाइलों से स्पैशियल वीडियो चुनें";
 "Pick Video" = "वीडियो चुनें";
 "Pick Video from Files" = "फ़ाइलों से वीडियो चुनें";
+"Preparing 3D preview…" = "3D पूर्वावलोकन तैयार हो रहा है…";
 "Preview" = "प्रीव्यू";
 "Preview unavailable" = "प्रीव्यू उपलब्ध नहीं";
 "Purchase is pending approval." = "खरीदारी स्वीकृति की प्रतीक्षा में है।";
@@ -80,7 +84,6 @@
 "Saving…" = "सेव हो रहा है…";
 "Separating stereo views and building SBS output." = "स्टीरियो व्यू अलग करके SBS आउटपुट बनाया जा रहा है।";
 "Share" = "शेयर";
-"Side-by-Side (SBS)" = "साइड-बाय-साइड (SBS)";
 "Something went wrong." = "कुछ गलत हो गया।";
 "Spatial" = "स्पैशियल";
 "Spatial media is converted by separating left and right views. The depth model is not used." = "स्पैशियल मीडिया को बाएं और दाएं व्यू अलग करके बदला जाता है। डेप्थ मॉडल का उपयोग नहीं होता।";
@@ -92,6 +95,7 @@
 "Strong" = "तेज";
 "Subtle" = "हल्का";
 "Terms of Use (EULA)" = "उपयोग की शर्तें (EULA)";
+"Tilt your phone to look around" = "चारों ओर देखने के लिए फ़ोन झुकाएँ";
 "Web share URL:" = "वेब शेयर URL:";
 "Web Share requires Wi-Fi connection." = "वेब शेयर के लिए Wi-Fi कनेक्शन जरूरी है।";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "वेब शेयर शुरू करें, फिर VR/AR ब्राउज़र में खोलकर SBS फोटो और वीडियो 3D में देखें।";

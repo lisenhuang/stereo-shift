@@ -7,7 +7,6 @@ struct VideoFlowView: View {
     let pipeline: StereoPipeline
     @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
-    @Binding var sbsLayoutEnabled: Bool
     @Binding var stereo3DOptions: Stereo3DOptions
     @ObservedObject var subscriptionManager: SubscriptionManager
     @ObservedObject var galleryLibrary: AppGalleryLibrary
@@ -244,9 +243,6 @@ struct VideoFlowView: View {
         guard sourceVideoURL != nil, !isProcessing else { return false }
         if inputMode == .spatial, !supportsSpatialPicker {
             return false
-        }
-        if inputMode == .regular2D {
-            return sbsLayoutEnabled
         }
         return true
     }
@@ -635,9 +631,6 @@ struct VideoFlowView: View {
                     ),
                     in: 0.1...1.5
                 )
-
-                Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
-                    .disabled(true)
 
                 if (sourceVideoDurationSeconds ?? 0) > 10 {
                     Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)

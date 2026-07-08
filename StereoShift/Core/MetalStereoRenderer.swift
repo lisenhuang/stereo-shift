@@ -85,39 +85,16 @@ final class MetalStereoRenderer {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        // The depth map comes from a ~518px model inference upscaled to full resolution,
-        // so its edges are blurry and misaligned with image edges. The joint bilateral
-        // window must span that upsampling blur.
-        let refineRadius = max(3, min(10, width / 450))
-        let refineStep = refineRadius > 5 ? 2 : 1
-        encodeDepthRefine(
+        encodeDepthPreparation(
             commandBuffer: commandBuffer,
             source: sourceTexture,
-            depth: rawDepthTexture,
-            output: depthA,
-            radius: refineRadius,
-            sampleStep: refineStep,
-            sigmaSpatial: Float(refineRadius) * 0.6,
-            sigmaColor: 0.1,
-            minDepth: parameters.depthMin,
-            invRange: 1 / max(parameters.depthMax - parameters.depthMin, 0.0001),
-            gamma: parameters.depthGamma,
+            rawDepth: rawDepthTexture,
+            depthA: depthA,
+            depthB: depthB,
+            parameters: parameters,
             width: width,
             height: height
         )
-
-        // Dilation must cover the disparity difference across a silhouette, so it scales
-        // with maxShift. Horizontal dominates because disocclusions are horizontal.
-        let dilateHRadius = max(2, min(48, Int((maxShift * 0.6).rounded())))
-        let dilateHStep = dilateHRadius > 20 ? 2 : 1
-        let dilateVRadius = max(1, min(6, Int((maxShift * 0.1).rounded())))
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, width: width, height: height)
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, width: width, height: height)
-
-        let smoothSigma = max(1.0, min(6.0, maxShift * 0.15))
-        let smoothRadius = min(15, Int((smoothSigma * 2.5).rounded(.up)))
-        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
-        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
 
         let edgeTaper = max(8, maxShift * parameters.convergence * 2)
         encodeStereoWarp(
@@ -164,7 +141,184 @@ final class MetalStereoRenderer {
         return try readTexture(sbsTexture, width: width * 2, height: height)
     }
 
+    // MARK: - Motion-parallax preview
+
+    /// A prepared context for the real-time motion-parallax preview. The expensive depth
+    /// passes (refine → dilate → feather) run once at creation; each preview frame is
+    /// then a single `stereoWarp` dispatch at an eye offset in [-1, 1], where -1 and +1
+    /// reproduce the exported SBS left and right eyes exactly.
+    final class ParallaxPreviewSession {
+        let width: Int
+        let height: Int
+        let device: MTLDevice
+        /// Holds the novel view written by the most recent `encodeNovelView` call.
+        let outputTexture: MTLTexture
+
+        private let renderer: MetalStereoRenderer
+        private let sourceTexture: MTLTexture
+        private let refinedDepthTexture: MTLTexture
+        private let maxShift: Float
+        private let convergence: Float
+        private let edgeTaper: Float
+
+        fileprivate init(
+            renderer: MetalStereoRenderer,
+            sourceTexture: MTLTexture,
+            refinedDepthTexture: MTLTexture,
+            outputTexture: MTLTexture,
+            width: Int,
+            height: Int,
+            maxShift: Float,
+            convergence: Float,
+            edgeTaper: Float
+        ) {
+            self.renderer = renderer
+            self.device = renderer.device
+            self.sourceTexture = sourceTexture
+            self.refinedDepthTexture = refinedDepthTexture
+            self.outputTexture = outputTexture
+            self.width = width
+            self.height = height
+            self.maxShift = maxShift
+            self.convergence = convergence
+            self.edgeTaper = edgeTaper
+        }
+
+        func makeCommandBuffer() -> MTLCommandBuffer? {
+            renderer.commandQueue.makeCommandBuffer()
+        }
+
+        /// Encodes one novel view at `direction` (clamped to [-1, 1]) into `outputTexture`.
+        func encodeNovelView(direction: Float, commandBuffer: MTLCommandBuffer) {
+            renderer.encodeStereoWarp(
+                commandBuffer: commandBuffer,
+                source: sourceTexture,
+                depth: refinedDepthTexture,
+                output: outputTexture,
+                direction: max(-1, min(1, direction)),
+                maxShift: maxShift,
+                convergence: convergence,
+                edgeTaper: edgeTaper,
+                width: width,
+                height: height
+            )
+        }
+    }
+
+    /// Runs the depth preparation passes once (same parameters as `makeSBS`, so the
+    /// preview matches the exported stereo geometry) and returns a session that renders
+    /// novel views with a single warp dispatch per frame. The session owns copies of
+    /// everything it needs; the pixel buffers are not retained past this call.
+    func makeParallaxPreviewSession(
+        rgb: CVPixelBuffer,
+        depth: CVPixelBuffer,
+        parameters: MetalStereoParameters
+    ) throws -> ParallaxPreviewSession {
+        let width = CVPixelBufferGetWidth(rgb)
+        let height = CVPixelBufferGetHeight(rgb)
+        let maxShift = max(0, parameters.maxShift)
+
+        let wrappedSource = try makeTexture(from: rgb, pixelFormat: .bgra8Unorm)
+        let rawDepthTexture = try makeTexture(from: depth, pixelFormat: depthTexturePixelFormat(for: depth))
+
+        let depthA = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthB = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let ownedSource = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
+        let outputTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer() else {
+            throw StereoPipelineError.metalDeviceUnavailable
+        }
+
+        encodeDepthPreparation(
+            commandBuffer: commandBuffer,
+            source: wrappedSource,
+            rawDepth: rawDepthTexture,
+            depthA: depthA,
+            depthB: depthB,
+            parameters: parameters,
+            width: width,
+            height: height
+        )
+
+        // Copy the source into a texture the session owns so the caller's pixel buffer
+        // (and its texture-cache wrapper) doesn't have to stay alive across preview frames.
+        if let blit = commandBuffer.makeBlitCommandEncoder() {
+            blit.copy(from: wrappedSource, to: ownedSource)
+            blit.endEncoding()
+        }
+
+        commandBuffer.commit()
+        commandBuffer.waitUntilCompleted()
+
+        if commandBuffer.status == .error {
+            throw StereoPipelineError.metalDeviceUnavailable
+        }
+
+        return ParallaxPreviewSession(
+            renderer: self,
+            sourceTexture: ownedSource,
+            refinedDepthTexture: depthA,
+            outputTexture: outputTexture,
+            width: width,
+            height: height,
+            maxShift: maxShift,
+            convergence: parameters.convergence,
+            edgeTaper: max(8, maxShift * parameters.convergence * 2)
+        )
+    }
+
     // MARK: - Encoder helpers
+
+    /// Encodes the shared depth preparation: joint-bilateral refine → separable
+    /// max-dilate → separable Gaussian feather. The final depth lands in `depthA`;
+    /// `depthB` is ping-pong scratch.
+    private func encodeDepthPreparation(
+        commandBuffer: MTLCommandBuffer,
+        source: MTLTexture,
+        rawDepth: MTLTexture,
+        depthA: MTLTexture,
+        depthB: MTLTexture,
+        parameters: MetalStereoParameters,
+        width: Int,
+        height: Int
+    ) {
+        let maxShift = max(0, parameters.maxShift)
+
+        // The depth map comes from a ~518px model inference upscaled to full resolution,
+        // so its edges are blurry and misaligned with image edges. The joint bilateral
+        // window must span that upsampling blur.
+        let refineRadius = max(3, min(10, width / 450))
+        let refineStep = refineRadius > 5 ? 2 : 1
+        encodeDepthRefine(
+            commandBuffer: commandBuffer,
+            source: source,
+            depth: rawDepth,
+            output: depthA,
+            radius: refineRadius,
+            sampleStep: refineStep,
+            sigmaSpatial: Float(refineRadius) * 0.6,
+            sigmaColor: 0.1,
+            minDepth: parameters.depthMin,
+            invRange: 1 / max(parameters.depthMax - parameters.depthMin, 0.0001),
+            gamma: parameters.depthGamma,
+            width: width,
+            height: height
+        )
+
+        // Dilation must cover the disparity difference across a silhouette, so it scales
+        // with maxShift. Horizontal dominates because disocclusions are horizontal.
+        let dilateHRadius = max(2, min(48, Int((maxShift * 0.6).rounded())))
+        let dilateHStep = dilateHRadius > 20 ? 2 : 1
+        let dilateVRadius = max(1, min(6, Int((maxShift * 0.1).rounded())))
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, width: width, height: height)
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, width: width, height: height)
+
+        let smoothSigma = max(1.0, min(6.0, maxShift * 0.15))
+        let smoothRadius = min(15, Int((smoothSigma * 2.5).rounded(.up)))
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+    }
 
     private func encodeDepthRefine(
         commandBuffer: MTLCommandBuffer,

@@ -1,5 +1,6 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D를 3D 나란히(SBS)로 변환";
+"3D preview is unavailable for this photo." = "이 사진에서는 3D 미리보기를 사용할 수 없습니다.";
 "3D Strength" = "3D 강도";
 "Add from Disk" = "디스크에서 추가";
 "Add from Photos" = "사진 앱에서 추가";
@@ -22,6 +23,7 @@
 "Connect to Wi-Fi to start Web Share." = "웹 공유를 시작하려면 Wi-Fi에 연결하세요.";
 "Done" = "완료";
 "Dark" = "다크";
+"Drag to look around" = "드래그하여 둘러보세요";
 "English" = "영어";
 "Error" = "오류";
 "Estimating depth and rendering stereo views." = "깊이를 추정하고 스테레오 뷰를 렌더링하는 중입니다.";
@@ -37,6 +39,7 @@
 "Importing…" = "가져오는 중…";
 "Language" = "언어";
 "Light" = "라이트";
+"Live 3D Preview" = "라이브 3D 미리보기";
 "Loading photo…" = "사진 불러오는 중…";
 "Loading video…" = "동영상 불러오는 중…";
 "Mode" = "모드";
@@ -62,6 +65,7 @@
 "Pick Spatial Video from Files" = "파일에서 공간 동영상 선택";
 "Pick Video" = "동영상 선택";
 "Pick Video from Files" = "파일에서 동영상 선택";
+"Preparing 3D preview…" = "3D 미리보기 준비 중…";
 "Preview" = "미리보기";
 "Preview unavailable" = "미리보기를 사용할 수 없습니다";
 "Purchase is pending approval." = "구매가 승인 대기 중입니다.";
@@ -80,7 +84,6 @@
 "Saving…" = "저장 중…";
 "Separating stereo views and building SBS output." = "좌우 뷰를 분리해 SBS 출력을 만드는 중입니다.";
 "Share" = "공유";
-"Side-by-Side (SBS)" = "나란히(SBS)";
 "Something went wrong." = "문제가 발생했습니다.";
 "Spatial" = "공간";
 "Spatial media is converted by separating left and right views. The depth model is not used." = "공간 미디어는 좌우 뷰를 분리해 변환하며, 깊이 모델은 사용하지 않습니다.";
@@ -92,6 +95,7 @@
 "Strong" = "강함";
 "Subtle" = "약함";
 "Terms of Use (EULA)" = "이용 약관(EULA)";
+"Tilt your phone to look around" = "휴대폰을 기울여 둘러보세요";
 "Web share URL:" = "웹 공유 주소:";
 "Web Share requires Wi-Fi connection." = "웹 공유를 사용하려면 Wi-Fi 연결이 필요합니다.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "웹 공유를 시작한 뒤 VR/AR 브라우저에서 이미지와 동영상을 열어 SBS를 3D로 볼 수 있습니다.";

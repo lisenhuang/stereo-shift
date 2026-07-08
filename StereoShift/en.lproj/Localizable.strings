@@ -1,5 +1,6 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D to 3D Side-by-Side";
+"3D preview is unavailable for this photo." = "3D preview is unavailable for this photo.";
 "3D Strength" = "3D Strength";
 "Add from Disk" = "Add from Disk";
 "Add from Photos" = "Add from Photos";
@@ -22,6 +23,7 @@
 "Connect to Wi-Fi to start Web Share." = "Connect to Wi-Fi to start Web Share.";
 "Done" = "Done";
 "Dark" = "Dark";
+"Drag to look around" = "Drag to look around";
 "English" = "English";
 "Error" = "Error";
 "Estimating depth and rendering stereo views." = "Estimating depth and rendering stereo views.";
@@ -37,6 +39,7 @@
 "Importing…" = "Importing…";
 "Language" = "Language";
 "Light" = "Light";
+"Live 3D Preview" = "Live 3D Preview";
 "Loading photo…" = "Loading photo…";
 "Loading video…" = "Loading video…";
 "Mode" = "Mode";
@@ -62,6 +65,7 @@
 "Pick Spatial Video from Files" = "Pick Spatial Video from Files";
 "Pick Video" = "Pick Video";
 "Pick Video from Files" = "Pick Video from Files";
+"Preparing 3D preview…" = "Preparing 3D preview…";
 "Preview" = "Preview";
 "Preview unavailable" = "Preview unavailable";
 "Purchase is pending approval." = "Purchase is pending approval.";
@@ -81,7 +85,6 @@
 "Saving…" = "Saving…";
 "Separating stereo views and building SBS output." = "Separating stereo views and building SBS output.";
 "Share" = "Share";
-"Side-by-Side (SBS)" = "Side-by-Side (SBS)";
 "Something went wrong." = "Something went wrong.";
 "Spatial" = "Spatial";
 "Spatial media is converted by separating left and right views. The depth model is not used." = "Spatial media is converted by separating left and right views. The depth model is not used.";
@@ -93,6 +96,7 @@
 "Strong" = "Strong";
 "Subtle" = "Subtle";
 "Terms of Use (EULA)" = "Terms of Use (EULA)";
+"Tilt your phone to look around" = "Tilt your phone to look around";
 "Web share URL:" = "Web share URL:";
 "Web Share requires Wi-Fi connection." = "Web Share requires Wi-Fi connection.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Start Web Share, then open it in a VR/AR browser to view SBS photos and videos in 3D.";

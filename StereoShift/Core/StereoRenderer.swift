@@ -205,8 +205,6 @@ final class StereoRenderer {
            !(session?.metalFailed ?? false),
            let metalRenderer = MetalStereoRenderer.shared {
             let width = CVPixelBufferGetWidth(rgb)
-            let clampedStrength = max(0, min(1.5, strength))
-            let preset = RefinedServerPreset.forProfile(options.renderProfile)
 
             var stats = metalDepthStats(for: depth)
             if let session {
@@ -229,29 +227,11 @@ final class StereoRenderer {
                 session.depthStatsEMA = stats
             }
 
-            // Disparity proportional to frame width so any resolution yields the same
-            // perceived depth; capped for comfort. Scaled down for shallow-depth scenes
-            // so percentile normalization doesn't stretch depth-map quantization noise
-            // into visible wobble on nearly-flat content (skies, walls, far landscapes).
-            let range = max(stats.hi - stats.lo, 0.0001)
-            let rangeConfidence = min(1, range / 0.25)
-            let widthScale = Float(width) / 1440
-            let maxShift = min(preset.baselinePerEye * clampedStrength * widthScale, Float(width) * 0.025) * rangeConfidence
-
-            // Put the zero-parallax plane near the scene's median depth so content
-            // straddles the screen instead of floating entirely in front of it.
-            let convergence = min(0.7, max(0.3, (stats.median - stats.lo) / range))
-
             do {
                 return try metalRenderer.makeSBS(
                     from: rgb,
                     depth: depth,
-                    parameters: MetalStereoParameters(
-                        maxShift: maxShift,
-                        convergence: convergence,
-                        depthMin: stats.lo,
-                        depthMax: stats.hi
-                    )
+                    parameters: metalParameters(forWidth: width, stats: stats, strength: strength, profile: options.renderProfile)
                 )
             } catch {
                 // Mid-video: latch onto the CPU path for the rest of the clip so one
@@ -311,6 +291,62 @@ final class StereoRenderer {
         options.depthTuning = tuning
         options.renderEngine = engine
         return try makeSBS(from: rgb, depth: depth, strength: strength, options: options)
+    }
+
+    /// Prepares a real-time motion-parallax preview session for a photo. Reuses the exact
+    /// depth statistics, disparity budget, and convergence formulas of the Metal SBS path,
+    /// so tilting between -1 and +1 sweeps exactly the exported stereo baseline.
+    func makeParallaxPreviewSession(
+        rgb: CVPixelBuffer,
+        depth: CVPixelBuffer,
+        strength: Float,
+        profile: StereoRenderProfile = .ultraFast
+    ) throws -> MetalStereoRenderer.ParallaxPreviewSession {
+        guard let metalRenderer = MetalStereoRenderer.shared else {
+            throw StereoPipelineError.metalDeviceUnavailable
+        }
+
+        let stats = metalDepthStats(for: depth)
+        let parameters = metalParameters(
+            forWidth: CVPixelBufferGetWidth(rgb),
+            stats: stats,
+            strength: strength,
+            profile: profile
+        )
+        return try metalRenderer.makeParallaxPreviewSession(rgb: rgb, depth: depth, parameters: parameters)
+    }
+
+    /// Maps depth statistics and strength to the Metal disparity budget and convergence
+    /// plane. Shared by the SBS render path and the motion-parallax preview so both
+    /// produce the same stereo geometry.
+    private func metalParameters(
+        forWidth width: Int,
+        stats: (lo: Float, hi: Float, median: Float),
+        strength: Float,
+        profile: StereoRenderProfile
+    ) -> MetalStereoParameters {
+        let clampedStrength = max(0, min(1.5, strength))
+        let preset = RefinedServerPreset.forProfile(profile)
+
+        // Disparity proportional to frame width so any resolution yields the same
+        // perceived depth; capped for comfort. Scaled down for shallow-depth scenes
+        // so percentile normalization doesn't stretch depth-map quantization noise
+        // into visible wobble on nearly-flat content (skies, walls, far landscapes).
+        let range = max(stats.hi - stats.lo, 0.0001)
+        let rangeConfidence = min(1, range / 0.25)
+        let widthScale = Float(width) / 1440
+        let maxShift = min(preset.baselinePerEye * clampedStrength * widthScale, Float(width) * 0.025) * rangeConfidence
+
+        // Put the zero-parallax plane near the scene's median depth so content
+        // straddles the screen instead of floating entirely in front of it.
+        let convergence = min(0.7, max(0.3, (stats.median - stats.lo) / range))
+
+        return MetalStereoParameters(
+            maxShift: maxShift,
+            convergence: convergence,
+            depthMin: stats.lo,
+            depthMax: stats.hi
+        )
     }
 
     /// Percentile depth statistics (2%, 50%, 98%) from a downsampled histogram of the

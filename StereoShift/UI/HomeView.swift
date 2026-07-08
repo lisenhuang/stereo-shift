@@ -26,7 +26,6 @@ struct HomeView: View {
     @State private var mode: Mode = .photo
     @State private var inputMode: InputMediaMode = .regular2D
     @State private var strength: Float = 0.80
-    @State private var sbsLayoutEnabled = true
     @State private var stereo3DOptions = Stereo3DOptions()
     @State private var isProcessing = false
     @State private var showVideoSubscriptionSheet = false
@@ -46,7 +45,6 @@ struct HomeView: View {
                                 pipeline: pipeline,
                                 inputMode: $inputMode,
                                 strength: $strength,
-                                sbsLayoutEnabled: $sbsLayoutEnabled,
                                 stereo3DOptions: $stereo3DOptions,
                                 galleryLibrary: galleryLibrary,
                                 onGenerated: {
@@ -61,7 +59,6 @@ struct HomeView: View {
                                 pipeline: pipeline,
                                 inputMode: $inputMode,
                                 strength: $strength,
-                                sbsLayoutEnabled: $sbsLayoutEnabled,
                                 stereo3DOptions: $stereo3DOptions,
                                 subscriptionManager: subscriptionManager,
                                 galleryLibrary: galleryLibrary,

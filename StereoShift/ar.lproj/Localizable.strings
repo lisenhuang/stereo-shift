@@ -1,5 +1,6 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "من 2D إلى 3D جنبًا إلى جنب (SBS)";
+"3D preview is unavailable for this photo." = "المعاينة ثلاثية الأبعاد غير متاحة لهذه الصورة.";
 "3D Strength" = "قوة 3D";
 "Add from Disk" = "إضافة من القرص";
 "Add from Photos" = "إضافة من الصور";
@@ -22,6 +23,7 @@
 "Connect to Wi-Fi to start Web Share." = "اتصل بشبكة Wi-Fi لبدء مشاركة الويب.";
 "Done" = "تم";
 "Dark" = "داكن";
+"Drag to look around" = "اسحب للنظر حولك";
 "English" = "الإنجليزية";
 "Error" = "خطأ";
 "Estimating depth and rendering stereo views." = "جارٍ تقدير العمق وعرض المشاهد المجسمة.";
@@ -37,6 +39,7 @@
 "Importing…" = "جارٍ الاستيراد…";
 "Language" = "اللغة";
 "Light" = "فاتح";
+"Live 3D Preview" = "معاينة ثلاثية الأبعاد مباشرة";
 "Loading photo…" = "جارٍ تحميل الصورة…";
 "Loading video…" = "جارٍ تحميل الفيديو…";
 "Mode" = "الوضع";
@@ -62,6 +65,7 @@
 "Pick Spatial Video from Files" = "اختر فيديو مكاني من الملفات";
 "Pick Video" = "اختر فيديو";
 "Pick Video from Files" = "اختر فيديو من الملفات";
+"Preparing 3D preview…" = "جارٍ تحضير المعاينة ثلاثية الأبعاد…";
 "Preview" = "معاينة";
 "Preview unavailable" = "المعاينة غير متاحة";
 "Purchase is pending approval." = "الشراء بانتظار الموافقة.";
@@ -80,7 +84,6 @@
 "Saving…" = "جارٍ الحفظ…";
 "Separating stereo views and building SBS output." = "جارٍ فصل المشاهد المجسمة وبناء مخرجات SBS.";
 "Share" = "مشاركة";
-"Side-by-Side (SBS)" = "جنبًا إلى جنب (SBS)";
 "Something went wrong." = "حدث خطأ ما.";
 "Spatial" = "مكاني";
 "Spatial media is converted by separating left and right views. The depth model is not used." = "يتم تحويل الوسائط المكانية عبر فصل العرض الأيسر والأيمن. لا يتم استخدام نموذج العمق.";
@@ -92,6 +95,7 @@
 "Strong" = "قوي";
 "Subtle" = "خفيف";
 "Terms of Use (EULA)" = "شروط الاستخدام (EULA)";
+"Tilt your phone to look around" = "قم بإمالة هاتفك للنظر حولك";
 "Web share URL:" = "رابط مشاركة الويب:";
 "Web Share requires Wi-Fi connection." = "مشاركة الويب تتطلب اتصال Wi-Fi.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "ابدأ مشاركة الويب، ثم افتحها في متصفح VR/AR لعرض صور وفيديوهات SBS بنمط 3D.";

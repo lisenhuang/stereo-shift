@@ -1,5 +1,6 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D vers 3D cote a cote (SBS)";
+"3D preview is unavailable for this photo." = "L'apercu 3D n'est pas disponible pour cette photo.";
 "3D Strength" = "Intensite 3D";
 "Add from Disk" = "Ajouter depuis le disque";
 "Add from Photos" = "Ajouter depuis Photos";
@@ -22,6 +23,7 @@
 "Connect to Wi-Fi to start Web Share." = "Connectez-vous au Wi-Fi pour demarrer le partage Web.";
 "Done" = "Termine";
 "Dark" = "Sombre";
+"Drag to look around" = "Faites glisser pour regarder autour";
 "English" = "Anglais";
 "Error" = "Erreur";
 "Estimating depth and rendering stereo views." = "Estimation de la profondeur et rendu des vues stereo.";
@@ -37,6 +39,7 @@
 "Importing…" = "Importation…";
 "Language" = "Langue";
 "Light" = "Clair";
+"Live 3D Preview" = "Apercu 3D en direct";
 "Loading photo…" = "Chargement de la photo…";
 "Loading video…" = "Chargement de la video…";
 "Mode" = "Mode";
@@ -62,6 +65,7 @@
 "Pick Spatial Video from Files" = "Choisir une video spatiale depuis Fichiers";
 "Pick Video" = "Choisir une video";
 "Pick Video from Files" = "Choisir une video depuis Fichiers";
+"Preparing 3D preview…" = "Preparation de l'apercu 3D…";
 "Preview" = "Apercu";
 "Preview unavailable" = "Apercu indisponible";
 "Purchase is pending approval." = "L'achat est en attente d'approbation.";
@@ -80,7 +84,6 @@
 "Saving…" = "Enregistrement…";
 "Separating stereo views and building SBS output." = "Separation des vues stereo et creation de la sortie SBS.";
 "Share" = "Partager";
-"Side-by-Side (SBS)" = "Cote a cote (SBS)";
 "Something went wrong." = "Une erreur s'est produite.";
 "Spatial" = "Spatial";
 "Spatial media is converted by separating left and right views. The depth model is not used." = "Les medias spatiaux sont convertis en separant les vues gauche et droite. Le modele de profondeur n'est pas utilise.";
@@ -92,6 +95,7 @@
 "Strong" = "Fort";
 "Subtle" = "Leger";
 "Terms of Use (EULA)" = "Conditions d'utilisation (EULA)";
+"Tilt your phone to look around" = "Inclinez votre telephone pour regarder autour";
 "Web share URL:" = "URL du partage Web :";
 "Web Share requires Wi-Fi connection." = "Le partage Web necessite une connexion Wi-Fi.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Demarrez le partage Web, puis ouvrez-le dans un navigateur VR/AR pour voir les photos et videos SBS en 3D.";

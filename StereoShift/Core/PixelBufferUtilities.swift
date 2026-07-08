@@ -31,12 +31,29 @@ enum PixelBufferUtilities {
     }
 
     static func makePixelBuffer(from cgImage: CGImage, pixelFormat: OSType = kCVPixelFormatType_32BGRA) throws -> CVPixelBuffer {
+        try makePixelBuffer(from: cgImage, width: cgImage.width, height: cgImage.height, pixelFormat: pixelFormat)
+    }
+
+    /// Renders the image into a BGRA pixel buffer, downscaling (aspect preserved) so the
+    /// longer side is at most `longSideCap`. Returns the buffer at the original size when
+    /// the image is already within the cap.
+    static func makePixelBuffer(from cgImage: CGImage, longSideCap: Int) throws -> CVPixelBuffer {
+        let longSide = max(cgImage.width, cgImage.height)
+        guard longSide > longSideCap, longSide > 0 else {
+            return try makePixelBuffer(from: cgImage)
+        }
+
+        let scale = CGFloat(longSideCap) / CGFloat(longSide)
+        let width = max(1, Int((CGFloat(cgImage.width) * scale).rounded()))
+        let height = max(1, Int((CGFloat(cgImage.height) * scale).rounded()))
+        return try makePixelBuffer(from: cgImage, width: width, height: height, pixelFormat: kCVPixelFormatType_32BGRA)
+    }
+
+    private static func makePixelBuffer(from cgImage: CGImage, width: Int, height: Int, pixelFormat: OSType) throws -> CVPixelBuffer {
         guard pixelFormat == kCVPixelFormatType_32BGRA else {
             throw StereoPipelineError.unsupportedPixelFormat
         }
 
-        let width = cgImage.width
-        let height = cgImage.height
         let pixelBuffer = try makePixelBuffer(width: width, height: height, pixelFormat: pixelFormat)
 
         CVPixelBufferLockBaseAddress(pixelBuffer, [])
@@ -59,6 +76,7 @@ enum PixelBufferUtilities {
             throw StereoPipelineError.graphicsContextCreationFailed
         }
 
+        context.interpolationQuality = .high
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
         return pixelBuffer
     }

@@ -1,5 +1,6 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D 转 3D 并排（SBS）";
+"3D preview is unavailable for this photo." = "此照片无法使用 3D 预览。";
 "3D Strength" = "3D 强度";
 "Add from Disk" = "从磁盘添加";
 "Add from Photos" = "从照片添加";
@@ -22,6 +23,7 @@
 "Connect to Wi-Fi to start Web Share." = "请先连接 Wi-Fi 后再启动网页共享。";
 "Done" = "完成";
 "Dark" = "深色";
+"Drag to look around" = "拖动环视四周";
 "English" = "英语";
 "Error" = "错误";
 "Estimating depth and rendering stereo views." = "正在估计深度并渲染立体视图。";
@@ -37,6 +39,7 @@
 "Importing…" = "导入中…";
 "Language" = "语言";
 "Light" = "浅色";
+"Live 3D Preview" = "实时 3D 预览";
 "Loading photo…" = "正在加载照片…";
 "Loading video…" = "正在加载视频…";
 "Mode" = "模式";
@@ -62,6 +65,7 @@
 "Pick Spatial Video from Files" = "从文件选择空间视频";
 "Pick Video" = "选择视频";
 "Pick Video from Files" = "从文件选择视频";
+"Preparing 3D preview…" = "正在准备 3D 预览…";
 "Preview" = "预览";
 "Preview unavailable" = "无法预览";
 "Purchase is pending approval." = "购买正在等待批准。";
@@ -81,7 +85,6 @@
 "Saving…" = "保存中…";
 "Separating stereo views and building SBS output." = "正在分离左右视图并生成 SBS 输出。";
 "Share" = "分享";
-"Side-by-Side (SBS)" = "并排（SBS）";
 "Something went wrong." = "发生了错误。";
 "Spatial" = "空间";
 "Spatial media is converted by separating left and right views. The depth model is not used." = "空间媒体通过分离左右视图进行转换，不使用深度模型。";
@@ -93,6 +96,7 @@
 "Strong" = "强烈";
 "Subtle" = "轻微";
 "Terms of Use (EULA)" = "使用条款（EULA）";
+"Tilt your phone to look around" = "倾斜手机环视四周";
 "Web share URL:" = "网页共享地址：";
 "Web Share requires Wi-Fi connection." = "网页共享需要连接 Wi-Fi。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "启动网页共享后，可在 VR/AR 浏览器中访问图片和视频，并以 3D 模式观看 SBS。";

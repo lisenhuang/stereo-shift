@@ -7,7 +7,6 @@ struct PhotoFlowView: View {
     let pipeline: StereoPipeline
     @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
-    @Binding var sbsLayoutEnabled: Bool
     @Binding var stereo3DOptions: Stereo3DOptions
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let onGenerated: () -> Void
@@ -19,6 +18,9 @@ struct PhotoFlowView: View {
     @State private var sourceEmbeddedDepth: CVPixelBuffer?
     @State private var outputImage: CGImage?
     @State private var outputFileURL: URL?
+    @State private var previewDepth: CVPixelBuffer?
+    @State private var generatedStrength: Float?
+    @State private var showMotionPreview = false
     @State private var isLoadingSelection = false
     @State private var isGenerating = false
     @State private var isSaving = false
@@ -82,6 +84,25 @@ struct PhotoFlowView: View {
 
             if let outputFileURL {
                 VStack(spacing: 10) {
+                    if let sourceImage, let previewDepth {
+                        Button {
+                            showMotionPreview = true
+                        } label: {
+                            Label("Live 3D Preview", systemImage: "rotate.3d")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isGenerating || isSaving)
+                        .fullScreenCover(isPresented: $showMotionPreview) {
+                            MotionParallaxPreviewView(
+                                sourceImage: sourceImage,
+                                depth: previewDepth,
+                                strength: generatedStrength ?? strength,
+                                renderer: pipeline.stereoRenderer
+                            )
+                        }
+                    }
+
                     Button(action: saveOutputToInAppGallery) {
                         Group {
                             if isSaving {
@@ -260,9 +281,6 @@ struct PhotoFlowView: View {
         if inputMode == .spatial, !supportsSpatialPicker {
             return false
         }
-        if inputMode == .regular2D {
-            return sbsLayoutEnabled
-        }
         return true
     }
 
@@ -286,6 +304,8 @@ struct PhotoFlowView: View {
         sourceEmbeddedDepth = nil
         outputImage = nil
         outputFileURL = nil
+        previewDepth = nil
+        generatedStrength = nil
         saveMessageKey = nil
         isLoadingSelection = false
         showFileImporter = false
@@ -300,6 +320,8 @@ struct PhotoFlowView: View {
             sourceSpatialPair = nil
             outputImage = nil
             outputFileURL = nil
+            previewDepth = nil
+            generatedStrength = nil
             clearRenderCache()
             return
         }
@@ -321,6 +343,8 @@ struct PhotoFlowView: View {
                         sourceEmbeddedDepth = nil
                         outputImage = nil
                         outputFileURL = nil
+                        previewDepth = nil
+                        generatedStrength = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
                         clearRenderCache()
@@ -335,6 +359,8 @@ struct PhotoFlowView: View {
                         sourceEmbeddedDepth = picked.embeddedDepth
                         outputImage = nil
                         outputFileURL = nil
+                        previewDepth = nil
+                        generatedStrength = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
                         clearRenderCache()
@@ -383,6 +409,8 @@ struct PhotoFlowView: View {
                         sourceEmbeddedDepth = nil
                         outputImage = nil
                         outputFileURL = nil
+                        previewDepth = nil
+                        generatedStrength = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
                         clearRenderCache()
@@ -400,6 +428,8 @@ struct PhotoFlowView: View {
                         sourceEmbeddedDepth = picked.embeddedDepth
                         outputImage = nil
                         outputFileURL = nil
+                        previewDepth = nil
+                        generatedStrength = nil
                         saveMessageKey = nil
                         isLoadingSelection = false
                         clearRenderCache()
@@ -439,6 +469,8 @@ struct PhotoFlowView: View {
                     await MainActor.run {
                         outputImage = output
                         outputFileURL = fileURL
+                        previewDepth = nil
+                        generatedStrength = nil
                         saveMessageKey = nil
                         isGenerating = false
                         onGenerated()
@@ -491,6 +523,11 @@ struct PhotoFlowView: View {
                 let jpegQuality: Float = 0.95
                 let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
 
+                // Keep a small copy of the depth so the Live 3D Preview can re-warp the
+                // photo without re-running the depth model. The model's native output is
+                // ~518px on the short side, so 1024 on the long side loses nothing.
+                let depthForPreview = Self.makePreviewDepth(from: depthBuffer)
+
                 if Task.isCancelled {
                     TempFiles.removeItemIfExists(at: fileURL)
                     return
@@ -499,6 +536,8 @@ struct PhotoFlowView: View {
                 await MainActor.run {
                     outputImage = output
                     outputFileURL = fileURL
+                    previewDepth = depthForPreview
+                    generatedStrength = appliedStrength
                     saveMessageKey = nil
                     isGenerating = false
                     onGenerated()
@@ -520,6 +559,24 @@ struct PhotoFlowView: View {
 
     private func clearRenderCache() {
         // No-op: strength changes no longer trigger automatic regeneration.
+    }
+
+    /// Downscales the estimator's full-resolution depth map for retention. The preview's
+    /// depth-refine pass samples depth with normalized coordinates, so a smaller depth
+    /// buffer works at any preview resolution.
+    private nonisolated static func makePreviewDepth(from depthBuffer: CVPixelBuffer) -> CVPixelBuffer? {
+        let width = CVPixelBufferGetWidth(depthBuffer)
+        let height = CVPixelBufferGetHeight(depthBuffer)
+        let longSide = max(width, height)
+        let cap = 1024
+        guard longSide > cap, longSide > 0 else { return depthBuffer }
+
+        let scale = CGFloat(cap) / CGFloat(longSide)
+        let size = CGSize(
+            width: max(1, (CGFloat(width) * scale).rounded()),
+            height: max(1, (CGFloat(height) * scale).rounded())
+        )
+        return try? PixelBufferUtilities.resize(depthBuffer, to: size)
     }
 
     private func cancelGenerating() {
@@ -636,9 +693,6 @@ struct PhotoFlowView: View {
                     ),
                     in: 0.1...1.5
                 )
-
-                Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
-                    .disabled(true)
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)

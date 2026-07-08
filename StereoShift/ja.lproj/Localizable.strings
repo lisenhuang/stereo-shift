@@ -1,5 +1,6 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2Dから3Dサイドバイサイド（SBS）";
+"3D preview is unavailable for this photo." = "この写真では3Dプレビューを利用できません。";
 "3D Strength" = "3D強度";
 "Add from Disk" = "ディスクから追加";
 "Add from Photos" = "写真から追加";
@@ -22,6 +23,7 @@
 "Connect to Wi-Fi to start Web Share." = "Web共有を開始するにはWi-Fiに接続してください。";
 "Done" = "完了";
 "Dark" = "ダーク";
+"Drag to look around" = "ドラッグして見回せます";
 "English" = "英語";
 "Error" = "エラー";
 "Estimating depth and rendering stereo views." = "深度を推定してステレオ表示をレンダリングしています。";
@@ -37,6 +39,7 @@
 "Importing…" = "読み込み中…";
 "Language" = "言語";
 "Light" = "ライト";
+"Live 3D Preview" = "ライブ3Dプレビュー";
 "Loading photo…" = "写真を読み込み中…";
 "Loading video…" = "動画を読み込み中…";
 "Mode" = "モード";
@@ -62,6 +65,7 @@
 "Pick Spatial Video from Files" = "ファイルから空間ビデオを選択";
 "Pick Video" = "動画を選択";
 "Pick Video from Files" = "ファイルから動画を選択";
+"Preparing 3D preview…" = "3Dプレビューを準備中…";
 "Preview" = "プレビュー";
 "Preview unavailable" = "プレビューできません";
 "Purchase is pending approval." = "購入は承認待ちです。";
@@ -80,7 +84,6 @@
 "Saving…" = "保存中…";
 "Separating stereo views and building SBS output." = "左右ビューを分離してSBS出力を作成しています。";
 "Share" = "共有";
-"Side-by-Side (SBS)" = "サイドバイサイド（SBS）";
 "Something went wrong." = "問題が発生しました。";
 "Spatial" = "空間";
 "Spatial media is converted by separating left and right views. The depth model is not used." = "空間メディアは左右ビューを分離して変換します。深度モデルは使用しません。";
@@ -92,6 +95,7 @@
 "Strong" = "強め";
 "Subtle" = "弱め";
 "Terms of Use (EULA)" = "利用規約（EULA）";
+"Tilt your phone to look around" = "スマートフォンを傾けて見回せます";
 "Web share URL:" = "Web共有URL:";
 "Web Share requires Wi-Fi connection." = "Web共有にはWi-Fi接続が必要です。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Web共有を開始すると、VR/ARブラウザで画像と動画を開いてSBSを3D表示できます。";
