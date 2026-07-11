@@ -89,21 +89,18 @@ final class MetalStereoRenderer {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        // The depth map comes from a ~518px model inference, so its edges are much lower
-        // resolution than the RGB frame. The joint bilateral window must span that gap.
-        let refineRadius = max(3, min(10, width / 450))
-        // Exact sampling is useful through normal 12MP photo widths. Above that, a
-        // two-pixel stride avoids a quadratic cost spike without discarding model detail.
-        let refineStep = highQuality && width <= 5_000 ? 1 : (refineRadius > 5 ? 2 : 1)
+        // The filter radius is measured in native model-depth texels, not output pixels.
+        // Quality therefore always gathers 25 distinct depth samples (fast: 9), reaching
+        // the same semantic edge neighborhood without a high-resolution phase pattern.
+        let refineRadius = highQuality ? 2 : 1
         encodeDepthRefine(
             commandBuffer: commandBuffer,
             source: sourceTexture,
             depth: rawDepthTexture,
             output: depthA,
             radius: refineRadius,
-            sampleStep: refineStep,
-            sigmaSpatial: Float(refineRadius) * 0.6,
-            sigmaColor: 0.1,
+            sigmaSpatial: highQuality ? 1.35 : 0.9,
+            sigmaColor: highQuality ? 0.14 : 0.1,
             minDepth: parameters.depthMin,
             invRange: 1 / max(parameters.depthMax - parameters.depthMin, 0.0001),
             gamma: parameters.depthGamma,
@@ -175,7 +172,6 @@ final class MetalStereoRenderer {
         depth: MTLTexture,
         output: MTLTexture,
         radius: Int,
-        sampleStep: Int,
         sigmaSpatial: Float,
         sigmaColor: Float,
         minDepth: Float,
@@ -190,19 +186,17 @@ final class MetalStereoRenderer {
         encoder.setTexture(depth, index: 1)
         encoder.setTexture(output, index: 2)
         var r = Int32(radius)
-        var step = Int32(sampleStep)
         var sigS = sigmaSpatial
         var sigC = sigmaColor
         var minD = minDepth
         var invR = invRange
         var g = gamma
         encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 0)
-        encoder.setBytes(&step, length: MemoryLayout<Int32>.size, index: 1)
-        encoder.setBytes(&sigS, length: MemoryLayout<Float>.size, index: 2)
-        encoder.setBytes(&sigC, length: MemoryLayout<Float>.size, index: 3)
-        encoder.setBytes(&minD, length: MemoryLayout<Float>.size, index: 4)
-        encoder.setBytes(&invR, length: MemoryLayout<Float>.size, index: 5)
-        encoder.setBytes(&g, length: MemoryLayout<Float>.size, index: 6)
+        encoder.setBytes(&sigS, length: MemoryLayout<Float>.size, index: 1)
+        encoder.setBytes(&sigC, length: MemoryLayout<Float>.size, index: 2)
+        encoder.setBytes(&minD, length: MemoryLayout<Float>.size, index: 3)
+        encoder.setBytes(&invR, length: MemoryLayout<Float>.size, index: 4)
+        encoder.setBytes(&g, length: MemoryLayout<Float>.size, index: 5)
         dispatchThreads(encoder: encoder, pipeline: depthRefinePipeline, width: width, height: height)
         encoder.endEncoding()
     }

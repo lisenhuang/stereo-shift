@@ -15,16 +15,16 @@ Both keys live in `StereoShift.xcodeproj/project.pbxproj` and each appears **8 t
 (StereoShift + StereoShiftShareExtension targets × Debug/Release × build configs).
 **All occurrences must stay identical** — update every one, or the build is inconsistent.
 
-Current values: `MARKETING_VERSION = 1.2.4`, `CURRENT_PROJECT_VERSION = 20`.
+Current values: `MARKETING_VERSION = 1.2.5`, `CURRENT_PROJECT_VERSION = 21`.
 
 Quick way to bump the build number across all 8 occurrences (run from repo root, then
 verify with the grep below):
 
 ```bash
-# Build number: 20 -> 21
-sed -i '' 's/CURRENT_PROJECT_VERSION = 20;/CURRENT_PROJECT_VERSION = 21;/g' StereoShift.xcodeproj/project.pbxproj
-# Version: 1.2.4 -> 1.2.5
-sed -i '' 's/MARKETING_VERSION = 1.2.4;/MARKETING_VERSION = 1.2.5;/g' StereoShift.xcodeproj/project.pbxproj
+# Build number: 21 -> 22
+sed -i '' 's/CURRENT_PROJECT_VERSION = 21;/CURRENT_PROJECT_VERSION = 22;/g' StereoShift.xcodeproj/project.pbxproj
+# Version: 1.2.5 -> 1.2.6
+sed -i '' 's/MARKETING_VERSION = 1.2.5;/MARKETING_VERSION = 1.2.6;/g' StereoShift.xcodeproj/project.pbxproj
 
 # Verify both now show a single, updated value across all 8 sites:
 grep -oE '(MARKETING_VERSION|CURRENT_PROJECT_VERSION) = [^;]+' StereoShift.xcodeproj/project.pbxproj | sort | uniq -c
@@ -53,8 +53,9 @@ Layout (`StereoShift/`):
 - `StereoRenderer.swift` — engine routing; computes disparity, depth stats, convergence;
   owns the Metal branch and CPU/CIKernel fallbacks
 - `MetalStereoRenderer.swift` + `StereoShaders.metal` — the production GPU path:
-  depth refine (RGB-guided joint bilateral) → max-dilate → Gaussian feather →
-  iterative inverse warp around a convergence plane → SBS compose
+  RGB-guided, mode-preserving depth upsample → stable multi-root inverse warp →
+  edge-only subpixel coverage → direct SBS output (the fast video profile retains
+  max-dilation and Gaussian feathering)
 - `VideoProcessor.swift` — AVFoundation read → per-frame depth + SBS → H.264 write;
   uses a `VideoTemporalSession` to smooth depth stats across frames
 - `SpatialMediaConverter.swift` — splits MV-HEVC spatial media into SBS

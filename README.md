@@ -76,9 +76,9 @@ Model I/O:
 
 StereoShift uses a Metal compute pipeline with separate still-photo quality and video-oriented fast paths:
 
-1. **Depth Refine** (`depthRefine`): A joint bilateral filter samples the native half-float depth while using the full-resolution RGB frame as its guide. It aligns depth discontinuities to image contours and normalizes with robust 2%/98% bounds.
+1. **Depth Refine** (`depthRefine`): A joint bilateral upsampler gathers a fixed 5x5 neighborhood of distinct native depth texels while using the full-resolution RGB frame as its guide. At strong discontinuities it preserves the foreground or background depth mode instead of inventing a fractional surface between them, then normalizes with robust 2%/98% bounds.
 
-2. **Quality photo warp** (`stereoWarp`): Five fixed-point iterations run from three candidate roots around each possible depth discontinuity. The closest valid root wins at overlaps; when no exact root exists in a disoccluded gap, the farther candidate fills it. This preserves sharp silhouettes instead of warping through a wide blurred depth ramp.
+2. **Quality photo warp** (`stereoWarp`): Five fixed-point iterations run from three candidate roots around each possible depth discontinuity. Roots inside an unstable depth ramp are rejected; the closest stable surface wins at overlaps and the farther candidate fills disocclusions. A 2x2 subpixel coverage solve runs only at depth edges to anti-alias sloped silhouettes without softening the rest of the photo.
 
 3. **Fast video warp**: The lower-cost profile retains conservative max-dilation/feathering and a three-iteration inverse solve for throughput.
 
