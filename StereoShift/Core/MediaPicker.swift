@@ -299,7 +299,7 @@ enum MediaPicker {
                 continue
             }
 
-            guard let normalized = try? normalizeDepthMapToOneComponent8(converted.depthDataMap, invert: candidate.invert) else {
+            guard let normalized = try? normalizeDepthMapToOneComponent16Half(converted.depthDataMap, invert: candidate.invert) else {
                 continue
             }
             return normalized
@@ -308,7 +308,7 @@ enum MediaPicker {
         return nil
     }
 
-    private static func normalizeDepthMapToOneComponent8(_ depthMap: CVPixelBuffer, invert: Bool) throws -> CVPixelBuffer {
+    private static func normalizeDepthMapToOneComponent16Half(_ depthMap: CVPixelBuffer, invert: Bool) throws -> CVPixelBuffer {
         let width = CVPixelBufferGetWidth(depthMap)
         let height = CVPixelBufferGetHeight(depthMap)
         let format = CVPixelBufferGetPixelFormatType(depthMap)
@@ -387,7 +387,11 @@ enum MediaPicker {
         let high = valid[highIndex]
         let range = max(high - low, 0.000001)
 
-        let output = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: kCVPixelFormatType_OneComponent8)
+        let output = try PixelBufferUtilities.makePixelBuffer(
+            width: width,
+            height: height,
+            pixelFormat: kCVPixelFormatType_OneComponent16Half
+        )
 
         CVPixelBufferLockBaseAddress(output, [])
         defer { CVPixelBufferUnlockBaseAddress(output, []) }
@@ -396,15 +400,15 @@ enum MediaPicker {
             throw StereoPipelineError.pixelBufferBaseAddressUnavailable
         }
 
-        let outputBPR = CVPixelBufferGetBytesPerRow(output)
-        let outputPtr = outputBase.bindMemory(to: UInt8.self, capacity: outputBPR * height)
+        let outputStride = CVPixelBufferGetBytesPerRow(output) / MemoryLayout<UInt16>.stride
+        let outputPtr = outputBase.bindMemory(to: UInt16.self, capacity: outputStride * height)
 
         for y in 0..<height {
-            let outRow = outputPtr.advanced(by: y * outputBPR)
+            let outRow = outputPtr.advanced(by: y * outputStride)
             for x in 0..<width {
                 let value = values[(y * width) + x]
                 if !value.isFinite || value <= 0 {
-                    outRow[x] = 0
+                    outRow[x] = Float16.zero.bitPattern
                     continue
                 }
 
@@ -413,7 +417,7 @@ enum MediaPicker {
                 if invert {
                     t = 1 - t
                 }
-                outRow[x] = UInt8(max(0, min(255, Int((t * 255).rounded()))))
+                outRow[x] = Float16(max(0, min(1, t))).bitPattern
             }
         }
 

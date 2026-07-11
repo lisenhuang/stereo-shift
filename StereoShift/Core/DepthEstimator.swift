@@ -3,13 +3,12 @@ import CoreML
 import Foundation
 
 actor DepthEstimator {
-    private struct IntSize {
+    struct IntSize {
         var width: Int
         var height: Int
     }
 
     private struct PreprocessMetadata {
-        let originalSize: IntSize
         let modelSize: IntSize
         let contentRect: CGRect
     }
@@ -17,6 +16,7 @@ actor DepthEstimator {
     private let longSideMultiple: Int = 14
 
     private var loadedModels: [DepthModel: MLModel] = [:]
+    private var loadedComputeUnits: [DepthModel: MLComputeUnits] = [:]
     private var compiledModelURLs: [URL: URL] = [:]
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
@@ -30,18 +30,29 @@ actor DepthEstimator {
 
     func predictDepth(pixelBuffer: CVPixelBuffer, model: DepthModel, quality: DepthQuality) async throws -> CVPixelBuffer {
         let depthModel = model
-        let model = try loadModel(depthModel)
+        var model = try loadModel(depthModel)
         let prepared = try preprocess(pixelBuffer, depthModel: depthModel, model: model, quality: quality)
-        let provider = try featureProvider(for: prepared.pixelBuffer, model: model)
+        var rawDepth = try await predictRawDepth(prepared.pixelBuffer, model: model)
 
-        let prediction = try await Task.detached(priority: .userInitiated) {
-            try model.prediction(from: provider)
-        }.value
+        // Some accelerator/runtime combinations can complete successfully while returning
+        // an all-zero image. The packaged model normalizes every useful prediction to a
+        // non-zero maximum, so retry once on CPU instead of silently generating flat 3D.
+        if !hasUsableDepthSignal(rawDepth), loadedComputeUnits[depthModel] != .cpuOnly {
+            model = try loadCPUModel(depthModel)
+            rawDepth = try await predictRawDepth(prepared.pixelBuffer, model: model)
+        }
 
-        var rawDepth = try depthOutput(from: prediction)
         rawDepth = try invertDepthIfNeeded(rawDepth, model: depthModel)
         let depth = try postprocess(depth: rawDepth, metadata: prepared.metadata)
         return depth
+    }
+
+    private func predictRawDepth(_ pixelBuffer: CVPixelBuffer, model: MLModel) async throws -> CVPixelBuffer {
+        let provider = try featureProvider(for: pixelBuffer, model: model)
+        let prediction = try await Task.detached(priority: .userInitiated) {
+            try model.prediction(from: provider)
+        }.value
+        return try depthOutput(from: prediction)
     }
 
     private func invertDepthIfNeeded(_ depth: CVPixelBuffer, model: DepthModel) throws -> CVPixelBuffer {
@@ -67,6 +78,7 @@ actor DepthEstimator {
                 configuration.computeUnits = computeUnits
                 let loadedModel = try MLModel(contentsOf: modelURL, configuration: configuration)
                 loadedModels[depthModel] = loadedModel
+                loadedComputeUnits[depthModel] = computeUnits
                 return loadedModel
             } catch {
                 lastError = error
@@ -77,6 +89,61 @@ actor DepthEstimator {
             throw lastError
         }
         throw StereoPipelineError.modelNotFound
+    }
+
+    private func loadCPUModel(_ depthModel: DepthModel) throws -> MLModel {
+        guard let modelURL = try locateModelURL(depthModel) else {
+            throw StereoPipelineError.modelNotFound
+        }
+
+        let configuration = MLModelConfiguration()
+        configuration.computeUnits = .cpuOnly
+        let model = try MLModel(contentsOf: modelURL, configuration: configuration)
+        loadedModels[depthModel] = model
+        loadedComputeUnits[depthModel] = .cpuOnly
+        return model
+    }
+
+    private func hasUsableDepthSignal(_ depth: CVPixelBuffer) -> Bool {
+        let sourceWidth = CVPixelBufferGetWidth(depth)
+        let sourceHeight = CVPixelBufferGetHeight(depth)
+        guard sourceWidth > 0, sourceHeight > 0 else { return false }
+
+        let width = min(32, sourceWidth)
+        let height = min(32, sourceHeight)
+        guard let analysis = try? PixelBufferUtilities.makePixelBuffer(
+            width: width,
+            height: height,
+            pixelFormat: kCVPixelFormatType_OneComponent8
+        ) else { return false }
+
+        let image = CIImage(cvPixelBuffer: depth)
+        let scaled = image
+            .transformed(by: CGAffineTransform(
+                scaleX: CGFloat(width) / max(image.extent.width, 1),
+                y: CGFloat(height) / max(image.extent.height, 1)
+            ))
+            .cropped(to: CGRect(x: 0, y: 0, width: width, height: height))
+        ciContext.render(
+            scaled,
+            to: analysis,
+            bounds: CGRect(x: 0, y: 0, width: width, height: height),
+            colorSpace: CGColorSpaceCreateDeviceGray()
+        )
+
+        CVPixelBufferLockBaseAddress(analysis, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(analysis, .readOnly) }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(analysis) else { return false }
+
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(analysis)
+        let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
+        for y in 0..<height {
+            let row = pointer.advanced(by: y * bytesPerRow)
+            for x in 0..<width where row[x] > 1 {
+                return true
+            }
+        }
+        return false
     }
 
     private var preferredComputeUnitOrder: [MLComputeUnits] {
@@ -358,7 +425,7 @@ actor DepthEstimator {
         let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer)
         let sx = CGFloat(modelSizes.scaled.width) / sourceImage.extent.width
         let sy = CGFloat(modelSizes.scaled.height) / sourceImage.extent.height
-        var scaled = sourceImage.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
+        let scaled = sourceImage.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
 
         // No model-specific preprocessing needed for the packaged model.
 
@@ -375,7 +442,6 @@ actor DepthEstimator {
         )
 
         let metadata = PreprocessMetadata(
-            originalSize: IntSize(width: sourceWidth, height: sourceHeight),
             modelSize: modelSizes.model,
             contentRect: CGRect(
                 x: offsetX,
@@ -402,6 +468,15 @@ actor DepthEstimator {
             height: metadata.contentRect.height * sy
         ).integral
 
+        if CVPixelBufferGetPixelFormatType(rawDepth) == kCVPixelFormatType_OneComponent16Half,
+           mappedRect.origin == .zero,
+           Int(mappedRect.width) == rawWidth,
+           Int(mappedRect.height) == rawHeight {
+            // The packaged fixed-size model takes this path. Preserve its Float16 bits
+            // exactly and avoid an unnecessary Core Image round-trip/allocation.
+            return rawDepth
+        }
+
         let depthImage = CIImage(cvPixelBuffer: rawDepth)
             .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.0])
         let cropped = depthImage.cropped(to: mappedRect)
@@ -409,8 +484,13 @@ actor DepthEstimator {
             by: CGAffineTransform(translationX: -mappedRect.origin.x, y: -mappedRect.origin.y)
         )
 
-        let outputWidth = metadata.originalSize.width
-        let outputHeight = metadata.originalSize.height
+        // Keep the depth map at native model resolution. Metal samples it in normalized
+        // coordinates while refining against the full-resolution RGB guide, so upscaling
+        // here only adds blur and creates a very large temporary buffer for high-MP photos.
+        // Half-float output also preserves the model's precision instead of quantizing it
+        // through an 8-bit BGRA buffer before the GPU sees it.
+        let outputWidth = max(1, Int(mappedRect.width.rounded()))
+        let outputHeight = max(1, Int(mappedRect.height.rounded()))
         let outputScaleX = CGFloat(outputWidth) / max(mappedRect.width, 1)
         let outputScaleY = CGFloat(outputHeight) / max(mappedRect.height, 1)
 
@@ -421,14 +501,14 @@ actor DepthEstimator {
         let outputBuffer = try PixelBufferUtilities.makePixelBuffer(
             width: outputWidth,
             height: outputHeight,
-            pixelFormat: kCVPixelFormatType_32BGRA
+            pixelFormat: kCVPixelFormatType_OneComponent16Half
         )
 
         ciContext.render(
             resized,
             to: outputBuffer,
             bounds: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight),
-            colorSpace: CGColorSpaceCreateDeviceRGB()
+            colorSpace: CGColorSpaceCreateDeviceGray()
         )
 
         return outputBuffer
@@ -469,23 +549,16 @@ actor DepthEstimator {
         return value - (value % multiple)
     }
 
-    private static func computeFixedModelSizing(width: Int, height: Int, target: IntSize) -> (model: IntSize, scaled: IntSize) {
-        let sourceWidth = max(width, 1)
-        let sourceHeight = max(height, 1)
-        let targetWidth = max(target.width, 1)
-        let targetHeight = max(target.height, 1)
+    static func computeFixedModelSizing(width: Int, height: Int, target: IntSize) -> (model: IntSize, scaled: IntSize) {
+        _ = width
+        _ = height
 
-        let scaleX = CGFloat(targetWidth) / CGFloat(sourceWidth)
-        let scaleY = CGFloat(targetHeight) / CGFloat(sourceHeight)
-        let scale = min(scaleX, scaleY)
-
-        let scaledWidth = max(1, Int((CGFloat(sourceWidth) * scale).rounded()))
-        let scaledHeight = max(1, Int((CGFloat(sourceHeight) * scale).rounded()))
-
-        return (
-            model: IntSize(width: targetWidth, height: targetHeight),
-            scaled: IntSize(width: scaledWidth, height: scaledHeight)
-        )
+        // The packaged Depth Anything V2 model has a fixed 518x392 input and was
+        // converted/evaluated with images stretched to that canvas. Letterboxing wastes
+        // a large fraction of the model's spatial resolution (especially for portraits)
+        // and introduces artificial black borders into the depth prediction.
+        let fixedSize = IntSize(width: max(target.width, 1), height: max(target.height, 1))
+        return (model: fixedSize, scaled: fixedSize)
     }
 
     private func imageInputName(for model: MLModel) -> String? {

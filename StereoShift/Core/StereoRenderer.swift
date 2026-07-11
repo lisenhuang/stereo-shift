@@ -233,8 +233,9 @@ final class StereoRenderer {
             // perceived depth; capped for comfort. Scaled down for shallow-depth scenes
             // so percentile normalization doesn't stretch depth-map quantization noise
             // into visible wobble on nearly-flat content (skies, walls, far landscapes).
-            let range = max(stats.hi - stats.lo, 0.0001)
-            let rangeConfidence = min(1, range / 0.25)
+            let rawRange = max(0, stats.hi - stats.lo)
+            let range = max(rawRange, 0.0001)
+            let rangeConfidence = rawRange > 0 ? min(1, rawRange / 0.25) : 0
             let widthScale = Float(width) / 1440
             let maxShift = min(preset.baselinePerEye * clampedStrength * widthScale, Float(width) * 0.025) * rangeConfidence
 
@@ -250,7 +251,8 @@ final class StereoRenderer {
                         maxShift: maxShift,
                         convergence: convergence,
                         depthMin: stats.lo,
-                        depthMax: stats.hi
+                        depthMax: stats.hi,
+                        renderProfile: options.renderProfile
                     )
                 )
             } catch {
@@ -316,7 +318,9 @@ final class StereoRenderer {
     /// Percentile depth statistics (2%, 50%, 98%) from a downsampled histogram of the
     /// depth buffer. Used to normalize depth on the GPU and place the convergence plane.
     private func metalDepthStats(for depthBuffer: CVPixelBuffer) -> (lo: Float, hi: Float, median: Float) {
-        let fallback: (lo: Float, hi: Float, median: Float) = (0, 1, 0.5)
+        // Fail closed: if statistics cannot be read, a collapsed range produces no
+        // visible disparity instead of inventing a full-range depth effect.
+        let fallback: (lo: Float, hi: Float, median: Float) = (0.5, 0.5, 0.5)
         let sourceWidth = CVPixelBufferGetWidth(depthBuffer)
         let sourceHeight = CVPixelBufferGetHeight(depthBuffer)
         guard sourceWidth > 0, sourceHeight > 0 else { return fallback }
@@ -370,7 +374,13 @@ final class StereoRenderer {
             highTarget: total / 2
         )
 
-        guard highBin > lowBin else { return fallback }
+        guard highBin > lowBin else {
+            // Preserve the collapsed range so flat/shallow scenes get effectively zero
+            // disparity. Falling back to 0...1 incorrectly grants them the full shift
+            // budget and turns depth quantization noise into visible wobble.
+            let flatValue = Float(medianBin) / 255
+            return (lo: flatValue, hi: flatValue, median: flatValue)
+        }
         return (
             lo: Float(lowBin) / 255,
             hi: Float(highBin) / 255,
@@ -1307,8 +1317,13 @@ final class StereoRenderer {
 
     private func normalizedDepthMap(from depthBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int, tuning: DepthTuning) throws -> [Float] {
         let preparedDepth: CVPixelBuffer
+        let sourceFormat = CVPixelBufferGetPixelFormatType(depthBuffer)
+        let canReadDirectly = sourceFormat == kCVPixelFormatType_OneComponent8
+            || sourceFormat == kCVPixelFormatType_32BGRA
 
-        if CVPixelBufferGetWidth(depthBuffer) == targetWidth && CVPixelBufferGetHeight(depthBuffer) == targetHeight {
+        if canReadDirectly,
+           CVPixelBufferGetWidth(depthBuffer) == targetWidth,
+           CVPixelBufferGetHeight(depthBuffer) == targetHeight {
             preparedDepth = depthBuffer
         } else {
             preparedDepth = try PixelBufferUtilities.resize(depthBuffer, to: CGSize(width: targetWidth, height: targetHeight), context: ciContext)
@@ -1408,7 +1423,13 @@ final class StereoRenderer {
 
     private func serverNormalizedDepthMap(from depthBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> [Float] {
         let preparedDepth: CVPixelBuffer
-        if CVPixelBufferGetWidth(depthBuffer) == targetWidth && CVPixelBufferGetHeight(depthBuffer) == targetHeight {
+        let sourceFormat = CVPixelBufferGetPixelFormatType(depthBuffer)
+        let canReadDirectly = sourceFormat == kCVPixelFormatType_OneComponent8
+            || sourceFormat == kCVPixelFormatType_32BGRA
+
+        if canReadDirectly,
+           CVPixelBufferGetWidth(depthBuffer) == targetWidth,
+           CVPixelBufferGetHeight(depthBuffer) == targetHeight {
             preparedDepth = depthBuffer
         } else {
             // This produces BGRA, which is fine for extracting grayscale depth values.

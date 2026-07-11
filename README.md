@@ -49,69 +49,47 @@ All processing runs on-device.
 
 Video conversion preserves the original audio track when possible.
 
-## Depth Pipelines (v2 vs v3)
+## Depth Pipeline
 
-StereoShift uses the same high-level flow for all depth models:
+StereoShift currently packages Depth Anything V2 Small F16:
 
-1. Preprocess the input `CVPixelBuffer` into the model's expected size/format.
+1. Stretch the input `CVPixelBuffer` to the model's fixed `518x392` BGRA input. This uses the full model canvas instead of losing resolution to letterbox padding.
 2. Run Core ML inference.
-3. Decode the model output into a normalized depth buffer.
-4. Crop/resize the depth buffer back to the original media dimensions.
-5. Feed the depth buffer into the SBS renderer (shared for v2/v3).
+3. Keep the native `518x392` half-float grayscale output (`kCVPixelFormatType_OneComponent16Half`) without an 8-bit conversion or full-resolution intermediate.
+4. Feed that depth texture to the Metal renderer, which samples it in normalized coordinates and performs RGB-guided upsampling at output resolution.
+
+For Portrait/LiDAR photos that contain embedded disparity or depth, StereoShift prefers that camera-derived depth and preserves it as half-float after robust percentile normalization.
 
 Implementation references:
 
 - `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Core/DepthEstimator.swift`
 - `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Core/StereoRenderer.swift`
 
-### Depth Anything v2 (Small F16/F32)
+### Depth Anything V2 Small F16
 
 Model I/O:
 
-- Input: one image feature (named `image`) as a `CVPixelBuffer` (BGRA).
-  - The generated interface notes: short side ~`518` and the long side should be a multiple of `14`.
-  - `DepthEstimator` will aspect-fit into a model-sized canvas (letterbox) and records a content rect for later crop-back.
+- Input: one fixed `518x392` BGRA image feature named `image`.
 - Output: one image feature named `depth` as a grayscale `CVPixelBuffer` (`kCVPixelFormatType_OneComponent16Half`).
-
-StereoShift postprocess:
-
-- Crop the letterboxed padding away using the recorded content rect, then resize back to the original image/video size.
-- Standardize the resulting depth buffer into a grayscale BGRA `CVPixelBuffer` for downstream rendering.
-
-### Depth Anything v3 (Small F16/F32)
-
-Model I/O:
-
-- Input: one image feature (named `image`) as a `CVPixelBuffer` (BGRA), fixed `518x518`.
-- Output: one `MLMultiArray` (named `var_7994`) with shape `1x518x518` (Float16 or Float32).
-
-StereoShift postprocess:
-
-- Convert the `MLMultiArray` to an 8-bit normalized depth map using percentile clipping to avoid outliers:
-  - F16: 1%..99%
-  - F32: 0.5%..99.5%
-- Invert polarity for v3 so the renderer always uses the convention: larger depth value = closer.
-- Crop/resize depth back to the original size like v2.
 
 ## SBS Rendering Pipeline (Metal GPU)
 
-StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The pipeline consists of eight compute passes executed in a single command buffer:
+StereoShift uses a Metal compute pipeline with separate still-photo quality and video-oriented fast paths:
 
-1. **Depth Refine** (`depthRefine` kernel): Joint bilateral filter on the depth map using the RGB frame as the guide. Because depth comes from a ~518px model inference upscaled to full resolution, its edges are blurry and misaligned with image edges; this pass snaps depth discontinuities to image contours, eliminating warp halos. The same pass normalizes depth to [0, 1] using 2%/98% percentile bounds (computed on the CPU from a downsampled histogram) so every image uses the full disparity budget.
+1. **Depth Refine** (`depthRefine`): A joint bilateral filter samples the native half-float depth while using the full-resolution RGB frame as its guide. It aligns depth discontinuities to image contours and normalizes with robust 2%/98% bounds.
 
-2. **Depth Dilate H + V** (`depthDilateAxis` kernel, two passes): Separable max-filter dilation of near depth into the background. The horizontal radius scales with `maxShift` so the dilated band always covers the disocclusion width; the vertical radius is small. This prevents foreground edge ghosting in the warp.
+2. **Quality photo warp** (`stereoWarp`): Five fixed-point iterations run from three candidate roots around each possible depth discontinuity. The closest valid root wins at overlaps; when no exact root exists in a disoccluded gap, the farther candidate fills it. This preserves sharp silhouettes instead of warping through a wide blurred depth ramp.
 
-3. **Depth Feather H + V** (`depthGaussianAxis` kernel, two passes): Separable Gaussian blur sized relative to `maxShift`, converting the hard dilated depth step into a smooth ramp so disocclusions stretch instead of tearing.
+3. **Fast video warp**: The lower-cost profile retains conservative max-dilation/feathering and a three-iteration inverse solve for throughput.
 
-4. **Stereo Warp — Left/Right Eye** (`stereoWarp` kernel, direction = ∓1): Fixed-point iterative inverse warp. Disparity is computed around a convergence plane — `disparity = (depth − convergence) × maxShift` — placed at the scene's median depth, so content straddles the screen plane instead of floating entirely in front of it. Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
-
-5. **Compose SBS** (`composeSBS` kernel): Copies left and right eye textures side-by-side into a double-width output texture.
+4. **Direct SBS output**: Each eye writes directly into its half of one CVPixelBuffer-backed Metal texture. This removes the two eye textures, compose texture, and CPU readback that previously inflated peak memory for high-resolution photos.
 
 Key implementation details:
 
 - All passes use Metal compute kernels dispatched via `MTLComputeCommandEncoder`
 - CVPixelBuffer ↔ MTLTexture conversion uses `CVMetalTextureCache` for zero-copy GPU access
 - `maxShift` is derived from `baselinePerEye × 3D Strength × (width / 1440)` — proportional to frame width so all resolutions get the same perceived depth — and capped at 2.5% of width for comfort
+- Flat or statistically collapsed depth maps receive effectively zero disparity instead of a false full-range 3D effect
 - For video, depth normalization statistics are exponentially smoothed across frames (`StereoRenderer.makeSBSVideoFrame`) to prevent depth-scale flicker
 - CPU and CIKernel render engines are preserved as fallbacks if Metal is unavailable
 

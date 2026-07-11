@@ -11,6 +11,7 @@ struct MetalStereoParameters {
     var depthMin: Float
     var depthMax: Float
     var depthGamma: Float = 1.0
+    var renderProfile: StereoRenderProfile = .ultraFast
 }
 
 final class MetalStereoRenderer {
@@ -20,7 +21,6 @@ final class MetalStereoRenderer {
     private let depthDilatePipeline: MTLComputePipelineState
     private let depthGaussianPipeline: MTLComputePipelineState
     private let stereoWarpPipeline: MTLComputePipelineState
-    private let composeSBSPipeline: MTLComputePipelineState
     private var textureCache: CVMetalTextureCache?
 
     static let shared: MetalStereoRenderer? = {
@@ -42,8 +42,7 @@ final class MetalStereoRenderer {
         guard let depthRefineFn = library.makeFunction(name: "depthRefine"),
               let depthDilateFn = library.makeFunction(name: "depthDilateAxis"),
               let depthGaussianFn = library.makeFunction(name: "depthGaussianAxis"),
-              let stereoWarpFn = library.makeFunction(name: "stereoWarp"),
-              let composeFn = library.makeFunction(name: "composeSBS") else {
+              let stereoWarpFn = library.makeFunction(name: "stereoWarp") else {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
@@ -53,7 +52,6 @@ final class MetalStereoRenderer {
         self.depthDilatePipeline = try device.makeComputePipelineState(function: depthDilateFn)
         self.depthGaussianPipeline = try device.makeComputePipelineState(function: depthGaussianFn)
         self.stereoWarpPipeline = try device.makeComputePipelineState(function: stereoWarpFn)
-        self.composeSBSPipeline = try device.makeComputePipelineState(function: composeFn)
 
         var cache: CVMetalTextureCache?
         CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &cache)
@@ -61,8 +59,8 @@ final class MetalStereoRenderer {
     }
 
     /// Produces an SBS stereo pair from an RGB image and its depth map using Metal GPU
-    /// acceleration. Pipeline: joint-bilateral depth refine → separable max-dilate →
-    /// separable Gaussian feather → iterative inverse warp × 2 → SBS compose.
+    /// acceleration. Pipeline: joint-bilateral depth refine → profile-specific occlusion
+    /// handling → iterative inverse warp × 2 directly into the SBS output.
     func makeSBS(
         from rgb: CVPixelBuffer,
         depth: CVPixelBuffer,
@@ -71,25 +69,32 @@ final class MetalStereoRenderer {
         let width = CVPixelBufferGetWidth(rgb)
         let height = CVPixelBufferGetHeight(rgb)
         let maxShift = max(0, parameters.maxShift)
+        let highQuality = parameters.renderProfile == .quality
 
         let sourceTexture = try makeTexture(from: rgb, pixelFormat: .bgra8Unorm)
         let rawDepthTexture = try makeTexture(from: depth, pixelFormat: depthTexturePixelFormat(for: depth))
 
         let depthA = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
-        let depthB = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
-        let leftTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
-        let rightTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
-        let sbsTexture = try makeEmptyTexture(width: width * 2, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
+        let depthB = highQuality
+            ? nil
+            : try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let outputBuffer = try PixelBufferUtilities.makePixelBuffer(
+            width: width * 2,
+            height: height,
+            pixelFormat: kCVPixelFormatType_32BGRA
+        )
+        let sbsTexture = try makeTexture(from: outputBuffer, pixelFormat: .bgra8Unorm)
 
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        // The depth map comes from a ~518px model inference upscaled to full resolution,
-        // so its edges are blurry and misaligned with image edges. The joint bilateral
-        // window must span that upsampling blur.
+        // The depth map comes from a ~518px model inference, so its edges are much lower
+        // resolution than the RGB frame. The joint bilateral window must span that gap.
         let refineRadius = max(3, min(10, width / 450))
-        let refineStep = refineRadius > 5 ? 2 : 1
+        // Exact sampling is useful through normal 12MP photo widths. Above that, a
+        // two-pixel stride avoids a quadratic cost spike without discarding model detail.
+        let refineStep = highQuality && width <= 5_000 ? 1 : (refineRadius > 5 ? 2 : 1)
         encodeDepthRefine(
             commandBuffer: commandBuffer,
             source: sourceTexture,
@@ -106,29 +111,34 @@ final class MetalStereoRenderer {
             height: height
         )
 
-        // Dilation must cover the disparity difference across a silhouette, so it scales
-        // with maxShift. Horizontal dominates because disocclusions are horizontal.
-        let dilateHRadius = max(2, min(48, Int((maxShift * 0.6).rounded())))
-        let dilateHStep = dilateHRadius > 20 ? 2 : 1
-        let dilateVRadius = max(1, min(6, Int((maxShift * 0.1).rounded())))
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, width: width, height: height)
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, width: width, height: height)
+        if let depthB {
+            // The video-oriented fast path keeps the inexpensive conservative support
+            // map. Quality mode instead warps with the edge-aligned refined depth and
+            // resolves foreground/background roots in the warp shader itself.
+            let dilateHRadius = max(2, min(48, Int((maxShift * 0.6).rounded())))
+            let dilateHStep = dilateHRadius > 20 ? 2 : 1
+            let dilateVRadius = max(1, min(6, Int((maxShift * 0.1).rounded())))
+            encodeDepthDilate(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, width: width, height: height)
+            encodeDepthDilate(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, width: width, height: height)
 
-        let smoothSigma = max(1.0, min(6.0, maxShift * 0.15))
-        let smoothRadius = min(15, Int((smoothSigma * 2.5).rounded(.up)))
-        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
-        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+            let smoothSigma = max(1.0, min(6.0, maxShift * 0.15))
+            let smoothRadius = min(15, Int((smoothSigma * 2.5).rounded(.up)))
+            encodeDepthGaussian(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+            encodeDepthGaussian(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+        }
 
         let edgeTaper = max(8, maxShift * parameters.convergence * 2)
         encodeStereoWarp(
             commandBuffer: commandBuffer,
             source: sourceTexture,
             depth: depthA,
-            output: leftTexture,
+            output: sbsTexture,
             direction: -1.0,
             maxShift: maxShift,
             convergence: parameters.convergence,
             edgeTaper: edgeTaper,
+            iterations: highQuality ? 5 : 3,
+            outputXOffset: 0,
             width: width,
             height: height
         )
@@ -136,21 +146,14 @@ final class MetalStereoRenderer {
             commandBuffer: commandBuffer,
             source: sourceTexture,
             depth: depthA,
-            output: rightTexture,
+            output: sbsTexture,
             direction: 1.0,
             maxShift: maxShift,
             convergence: parameters.convergence,
             edgeTaper: edgeTaper,
+            iterations: highQuality ? 5 : 3,
+            outputXOffset: width,
             width: width,
-            height: height
-        )
-
-        encodeComposeSBS(
-            commandBuffer: commandBuffer,
-            left: leftTexture,
-            right: rightTexture,
-            output: sbsTexture,
-            width: width * 2,
             height: height
         )
 
@@ -161,7 +164,7 @@ final class MetalStereoRenderer {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        return try readTexture(sbsTexture, width: width * 2, height: height)
+        return outputBuffer
     }
 
     // MARK: - Encoder helpers
@@ -261,6 +264,8 @@ final class MetalStereoRenderer {
         maxShift: Float,
         convergence: Float,
         edgeTaper: Float,
+        iterations: Int,
+        outputXOffset: Int,
         width: Int,
         height: Int
     ) {
@@ -273,28 +278,15 @@ final class MetalStereoRenderer {
         var shift = maxShift
         var conv = convergence
         var taper = edgeTaper
+        var iterationCount = Int32(max(1, min(6, iterations)))
+        var xOffset = UInt32(max(0, outputXOffset))
         encoder.setBytes(&dir, length: MemoryLayout<Float>.size, index: 0)
         encoder.setBytes(&shift, length: MemoryLayout<Float>.size, index: 1)
         encoder.setBytes(&conv, length: MemoryLayout<Float>.size, index: 2)
         encoder.setBytes(&taper, length: MemoryLayout<Float>.size, index: 3)
+        encoder.setBytes(&iterationCount, length: MemoryLayout<Int32>.size, index: 4)
+        encoder.setBytes(&xOffset, length: MemoryLayout<UInt32>.size, index: 5)
         dispatchThreads(encoder: encoder, pipeline: stereoWarpPipeline, width: width, height: height)
-        encoder.endEncoding()
-    }
-
-    private func encodeComposeSBS(
-        commandBuffer: MTLCommandBuffer,
-        left: MTLTexture,
-        right: MTLTexture,
-        output: MTLTexture,
-        width: Int,
-        height: Int
-    ) {
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
-        encoder.setComputePipelineState(composeSBSPipeline)
-        encoder.setTexture(left, index: 0)
-        encoder.setTexture(right, index: 1)
-        encoder.setTexture(output, index: 2)
-        dispatchThreads(encoder: encoder, pipeline: composeSBSPipeline, width: width, height: height)
         encoder.endEncoding()
     }
 
@@ -370,7 +362,7 @@ final class MetalStereoRenderer {
             mipmapped: false
         )
         descriptor.usage = usage
-        descriptor.storageMode = .shared
+        descriptor.storageMode = .private
 
         guard let texture = device.makeTexture(descriptor: descriptor) else {
             throw StereoPipelineError.metalDeviceUnavailable
@@ -378,23 +370,4 @@ final class MetalStereoRenderer {
         return texture
     }
 
-    private func readTexture(_ texture: MTLTexture, width: Int, height: Int) throws -> CVPixelBuffer {
-        let outputBuffer = try PixelBufferUtilities.makePixelBuffer(
-            width: width,
-            height: height,
-            pixelFormat: kCVPixelFormatType_32BGRA
-        )
-
-        CVPixelBufferLockBaseAddress(outputBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(outputBuffer, []) }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(outputBuffer) else {
-            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
-        }
-
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(outputBuffer)
-        texture.getBytes(baseAddress, bytesPerRow: bytesPerRow, from: MTLRegion(origin: .init(), size: .init(width: width, height: height, depth: 1)), mipmapLevel: 0)
-
-        return outputBuffer
-    }
 }

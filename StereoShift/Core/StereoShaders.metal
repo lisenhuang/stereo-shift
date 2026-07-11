@@ -3,17 +3,11 @@ using namespace metal;
 
 // StereoShift Metal pipeline. Pass order (see MetalStereoRenderer.makeSBS):
 //   1. depthRefine             — joint-bilateral depth filter guided by the RGB image,
-//                                plus percentile normalization and gamma. Aligns depth
-//                                edges with image edges so warped silhouettes don't halo.
-//   2. depthDilateAxis (H, V)  — max-filter dilation of near depth into the background,
-//                                sized relative to the maximum disparity, so the inverse
-//                                warp never samples background depth right next to a
-//                                foreground silhouette (prevents edge ghosting).
-//   3. depthGaussianAxis (H, V)— softens the dilated depth so disocclusions stretch
-//                                smoothly instead of tearing.
-//   4. stereoWarp ×2           — fixed-point iterative inverse warp around a convergence
-//                                plane: disparity = (depth - convergence) * maxShift.
-//   5. composeSBS              — packs left/right into a double-width frame.
+//                                plus percentile normalization and gamma.
+//   2a. quality photos         — keep the edge-aligned depth for multi-root visibility.
+//   2b. fast video profile     — max-dilate + Gaussian feather support map.
+//   3. stereoWarp ×2           — profile-dependent fixed-point inverse warp around a
+//                                convergence plane, written directly into SBS output.
 
 constexpr sampler linearSampler(coord::normalized, address::clamp_to_edge, filter::linear);
 
@@ -127,8 +121,30 @@ kernel void depthGaussianAxis(
 // maxShift:  maximum per-eye pixel displacement
 // convergence: normalized depth of the zero-parallax (screen) plane; nearer content
 //              pops out, farther content recedes behind the screen
-// edgeTaper: distance in pixels over which behind-screen disparity fades to zero at
-//            the left/right borders (avoids smearing clamped edge pixels into view)
+// edgeTaper: distance in pixels over which disparity fades at the border toward which
+//            this eye would sample (avoids smearing clamped edge pixels into view)
+// iterations: quality-dependent fixed-point solve count
+// outputXOffset: 0 for the left half, source width for the right half
+inline float edgeSafeDisparity(
+    float depth,
+    float convergence,
+    float maxShift,
+    float direction,
+    float destinationX,
+    float imageWidth,
+    float edgeTaper)
+{
+    float disparity = (depth - convergence) * maxShift;
+    float sourceDelta = direction * disparity;
+    float distanceToRiskBorder = (sourceDelta < 0.0)
+        ? max(destinationX - 0.5, 0.0)
+        : max((imageWidth - 0.5) - destinationX, 0.0);
+    float taper = (edgeTaper > 0.0)
+        ? clamp(distanceToRiskBorder / edgeTaper, 0.0, 1.0)
+        : 1.0;
+    return disparity * taper;
+}
+
 kernel void stereoWarp(
     texture2d<float, access::sample> sourceTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture  [[texture(1)]],
@@ -137,55 +153,74 @@ kernel void stereoWarp(
     constant float &maxShift    [[buffer(1)]],
     constant float &convergence [[buffer(2)]],
     constant float &edgeTaper   [[buffer(3)]],
+    constant int   &iterations  [[buffer(4)]],
+    constant uint  &outputXOffset [[buffer(5)]],
     uint2 gid                   [[thread_position_in_grid]])
 {
-    uint w = outTexture.get_width();
-    uint h = outTexture.get_height();
+    uint w = sourceTexture.get_width();
+    uint h = sourceTexture.get_height();
     if (gid.x >= w || gid.y >= h) return;
+    if (gid.x + outputXOffset >= outTexture.get_width()) return;
 
     float fw = float(w);
     float xPix = float(gid.x) + 0.5;
     float yNorm = (float(gid.y) + 0.5) / float(h);
 
-    float borderDistance = min(xPix, fw - xPix);
-    float negativeTaper = (edgeTaper > 0.0) ? clamp(borderDistance / edgeTaper, 0.0, 1.0) : 1.0;
-
     // Fixed-point iteration solves the inverse warp: find the source column whose
     // disparity lands it on this output pixel. Sampling depth at the converged source
     // position (instead of the destination) keeps silhouettes geometrically stable.
-    float sourceX = xPix;
-    for (int i = 0; i < 3; i++) {
-        float d = depthTexture.sample(linearSampler, float2(sourceX / fw, yNorm)).r;
-        float disparity = (d - convergence) * maxShift;
-        if (disparity < 0.0) {
-            disparity *= negativeTaper;
+    // Quality mode starts from both sides of a possible discontinuity. At an overlap,
+    // the closest valid root wins; in a disoccluded gap with no exact root, the farther
+    // candidate wins so the background stretches instead of duplicating the foreground.
+    int candidateCount = (iterations > 3) ? 3 : 1;
+    float bestSourceX = xPix;
+    float bestDepth = 0.0;
+    float bestResidual = INFINITY;
+    bool foundValidRoot = false;
+
+    for (int candidateIndex = 0; candidateIndex < candidateCount; candidateIndex++) {
+        float seedOffset = 0.0;
+        if (candidateIndex == 1) seedOffset = -maxShift;
+        if (candidateIndex == 2) seedOffset = maxShift;
+
+        float sourceX = clamp(xPix + seedOffset, 0.5, fw - 0.5);
+        for (int i = 0; i < iterations; i++) {
+            float d = depthTexture.sample(linearSampler, float2(sourceX / fw, yNorm)).r;
+            float disparity = edgeSafeDisparity(
+                d, convergence, maxShift, direction, xPix, fw, edgeTaper
+            );
+            sourceX = clamp(xPix + (direction * disparity), 0.5, fw - 0.5);
         }
-        sourceX = xPix + (direction * disparity);
+
+        float candidateDepth = depthTexture.sample(
+            linearSampler, float2(sourceX / fw, yNorm)
+        ).r;
+        float candidateDisparity = edgeSafeDisparity(
+            candidateDepth, convergence, maxShift, direction, xPix, fw, edgeTaper
+        );
+        float projectedX = sourceX - (direction * candidateDisparity);
+        float residual = abs(projectedX - xPix);
+        bool isValidRoot = residual <= 0.75;
+
+        if (isValidRoot) {
+            if (!foundValidRoot || candidateDepth > bestDepth) {
+                bestSourceX = sourceX;
+                bestDepth = candidateDepth;
+                bestResidual = residual;
+            }
+            foundValidRoot = true;
+        } else if (!foundValidRoot) {
+            bool clearlyBetterResidual = residual < (bestResidual - 0.25);
+            bool comparableResidual = abs(residual - bestResidual) <= 0.25;
+            if (clearlyBetterResidual || (comparableResidual && candidateDepth < bestDepth)) {
+                bestSourceX = sourceX;
+                bestDepth = candidateDepth;
+                bestResidual = residual;
+            }
+        }
     }
 
-    float2 sampleUV = float2(clamp(sourceX / fw, 0.0, 1.0), yNorm);
+    float2 sampleUV = float2(bestSourceX / fw, yNorm);
     float4 color = sourceTexture.sample(linearSampler, sampleUV);
-    outTexture.write(float4(color.rgb, 1.0), gid);
-}
-
-// Compose SBS — copies left and right eye textures into a double-width output.
-kernel void composeSBS(
-    texture2d<float, access::read>  leftTexture  [[texture(0)]],
-    texture2d<float, access::read>  rightTexture [[texture(1)]],
-    texture2d<float, access::write> outTexture   [[texture(2)]],
-    uint2 gid                                    [[thread_position_in_grid]])
-{
-    uint halfW = leftTexture.get_width();
-    uint outH  = outTexture.get_height();
-    if (gid.y >= outH) return;
-
-    if (gid.x < halfW) {
-        // Left half
-        float4 c = leftTexture.read(gid);
-        outTexture.write(c, gid);
-    } else if (gid.x < halfW * 2) {
-        // Right half
-        float4 c = rightTexture.read(uint2(gid.x - halfW, gid.y));
-        outTexture.write(c, gid);
-    }
+    outTexture.write(float4(color.rgb, 1.0), uint2(gid.x + outputXOffset, gid.y));
 }

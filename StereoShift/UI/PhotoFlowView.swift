@@ -467,20 +467,28 @@ struct PhotoFlowView: View {
         let renderer = pipeline.stereoRenderer
         let depthEstimator = pipeline.depthEstimator
         let appliedStrength = strength
+        let embeddedDepth = sourceEmbeddedDepth
         var appliedOptions = stereo3DOptions
         appliedOptions.depthModel = .depthAnythingV2SmallF16
         appliedOptions.renderEngine = .metal
-        appliedOptions.renderProfile = .ultraFast
+        appliedOptions.renderProfile = .quality
 
         generateTask = Task.detached(priority: .userInitiated) {
             do {
                 try Task.checkCancellation()
                 let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: sourceImage)
-                let depthBuffer = try await depthEstimator.predictDepth(
-                    pixelBuffer: rgbBuffer,
-                    model: appliedOptions.depthModel,
-                    quality: appliedOptions.depthQuality
-                )
+                let depthBuffer: CVPixelBuffer
+                if let embeddedDepth {
+                    // Portrait/LiDAR photos carry camera-derived depth that is generally
+                    // more faithful than monocular estimation, especially at silhouettes.
+                    depthBuffer = embeddedDepth
+                } else {
+                    depthBuffer = try await depthEstimator.predictDepth(
+                        pixelBuffer: rgbBuffer,
+                        model: appliedOptions.depthModel,
+                        quality: appliedOptions.depthQuality
+                    )
+                }
                 let outputBuffer = try renderer.makeSBS(
                     from: rgbBuffer,
                     depth: depthBuffer,
@@ -488,8 +496,7 @@ struct PhotoFlowView: View {
                     options: appliedOptions
                 )
                 let output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
-                let jpegQuality: Float = 0.95
-                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
+                let fileURL = try TempFiles.writePNG(cgImage: output, prefix: "stereoshift-photo")
 
                 if Task.isCancelled {
                     TempFiles.removeItemIfExists(at: fileURL)
