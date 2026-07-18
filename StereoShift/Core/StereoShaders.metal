@@ -5,14 +5,19 @@ using namespace metal;
 //   1. depthRefine             — joint-bilateral depth filter guided by the RGB image,
 //                                plus percentile normalization and gamma. Aligns depth
 //                                edges with image edges so warped silhouettes don't halo.
-//   2. depthDilateAxis (H, V)  — max-filter dilation of near depth into the background,
-//                                sized relative to the maximum disparity, so the inverse
-//                                warp never samples background depth right next to a
-//                                foreground silhouette (prevents edge ghosting).
-//   3. depthGaussianAxis (H, V)— softens the dilated depth so disocclusions stretch
-//                                smoothly instead of tearing.
-//   4. stereoWarp ×2           — fixed-point iterative inverse warp around a convergence
-//                                plane: disparity = (depth - convergence) * maxShift.
+//   2. depthDilateAxis (H dir, V) per eye — max-filter dilation of near depth into the
+//                                background. Horizontal dilation is DIRECTIONAL: it only
+//                                grows toward the side where that eye's disocclusion
+//                                trails (right for the right eye, left for the left eye),
+//                                so the clean side of every silhouette keeps true
+//                                background parallax instead of a flattened halo band.
+//   3. depthGaussianAxis (H, V) per eye — softens the dilated depth so disocclusions
+//                                stretch smoothly instead of tearing.
+//   4. stereoWarp ×2           — damped fixed-point iterative inverse warp around a
+//                                convergence plane: disparity = (depth - convergence) *
+//                                maxShift. Pixels whose converged source lands inside a
+//                                nearer occluder (disocclusion) are resampled with the
+//                                local dilated disparity at the output position.
 //   5. composeSBS              — packs left/right into a double-width frame.
 
 constexpr sampler linearSampler(coord::normalized, address::clamp_to_edge, filter::linear);
@@ -74,12 +79,17 @@ kernel void depthRefine(
 }
 
 // Separable max-filter dilation along one axis (axis = (1,0) or (0,1)).
+// dirSign > 0: one-sided, propagates near depth toward +axis (offsets [-radius, 0]);
+// dirSign < 0: one-sided toward -axis (offsets [0, +radius]);
+// dirSign = 0: symmetric. One-sided horizontal dilation grows near depth only into
+// the disocclusion side of a silhouette, which is what the warp actually needs.
 kernel void depthDilateAxis(
     texture2d<float, access::read>  inDepth  [[texture(0)]],
     texture2d<float, access::write> outDepth [[texture(1)]],
     constant int2 &axis       [[buffer(0)]],
     constant int  &radius     [[buffer(1)]],
     constant int  &sampleStep [[buffer(2)]],
+    constant int  &dirSign    [[buffer(3)]],
     uint2 gid                 [[thread_position_in_grid]])
 {
     uint w = outDepth.get_width();
@@ -88,10 +98,19 @@ kernel void depthDilateAxis(
 
     int maxX = int(inDepth.get_width()) - 1;
     int maxY = int(inDepth.get_height()) - 1;
+    int oStart = -radius;
+    int oEnd = radius;
+    if (dirSign > 0) {
+        oStart = -radius;
+        oEnd = 0;
+    } else if (dirSign < 0) {
+        oStart = 0;
+        oEnd = radius;
+    }
     // Seed with the pixel's own depth so dilation stays extensive (output >= input)
     // regardless of radius/sampleStep parity, which a -radius stride start can skip.
     float maxVal = inDepth.read(gid).r;
-    for (int o = -radius; o <= radius; o += sampleStep) {
+    for (int o = oStart; o <= oEnd; o += sampleStep) {
         int sx = clamp(int(gid.x) + (o * axis.x), 0, maxX);
         int sy = clamp(int(gid.y) + (o * axis.y), 0, maxY);
         maxVal = max(maxVal, inDepth.read(uint2(sx, sy)).r);
@@ -135,14 +154,20 @@ kernel void depthGaussianAxis(
 //              pops out, farther content recedes behind the screen
 // edgeTaper: distance in pixels over which behind-screen disparity fades to zero at
 //            the left/right borders (avoids smearing clamped edge pixels into view)
+// holeThresh: depth margin (normalized) for disocclusion detection
+//
+// depthTexture is the per-eye dilated+feathered depth (drives a stable iteration);
+// sharpTexture is the undilated refined depth (grounds the occlusion test).
 kernel void stereoWarp(
     texture2d<float, access::sample> sourceTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture  [[texture(1)]],
-    texture2d<float, access::write>  outTexture    [[texture(2)]],
+    texture2d<float, access::sample> sharpTexture  [[texture(2)]],
+    texture2d<float, access::write>  outTexture    [[texture(3)]],
     constant float &direction   [[buffer(0)]],
     constant float &maxShift    [[buffer(1)]],
     constant float &convergence [[buffer(2)]],
     constant float &edgeTaper   [[buffer(3)]],
+    constant float &holeThresh  [[buffer(4)]],
     uint2 gid                   [[thread_position_in_grid]])
 {
     uint w = outTexture.get_width();
@@ -156,12 +181,32 @@ kernel void stereoWarp(
     float borderDistance = min(xPix, fw - xPix);
     float negativeTaper = (edgeTaper > 0.0) ? clamp(borderDistance / edgeTaper, 0.0, 1.0) : 1.0;
 
-    // Fixed-point iteration solves the inverse warp: find the source column whose
-    // disparity lands it on this output pixel. Sampling depth at the converged source
-    // position (instead of the destination) keeps silhouettes geometrically stable.
+    float2 outUV = float2(xPix / fw, yNorm);
+    float dOut = sharpTexture.sample(linearSampler, outUV).r;
+
+    // Damped fixed-point iteration solves the inverse warp: find the source column
+    // whose disparity lands it on this output pixel. Depth at silhouettes forms a
+    // step, which makes the raw iteration oscillate between the occluder and the
+    // background side; averaging successive estimates damps it into convergence.
     float sourceX = xPix;
     for (int i = 0; i < 4; i++) {
         float d = depthTexture.sample(linearSampler, float2(sourceX / fw, yNorm)).r;
+        float disparity = (d - convergence) * maxShift;
+        if (disparity < 0.0) {
+            disparity *= negativeTaper;
+        }
+        float candidate = xPix + (direction * disparity);
+        sourceX = (i == 0) ? candidate : ((sourceX + candidate) * 0.5);
+    }
+
+    // If the converged source sits inside a distinctly nearer object than this
+    // pixel's own depth, the pixel is disoccluded — the source position is an
+    // occluder, not a match. Resample with the local dilated disparity at the
+    // output position, which is guaranteed to pull background from the visible
+    // side of the silhouette instead of bleeding occluder color into the hole.
+    float dSrc = sharpTexture.sample(linearSampler, float2(clamp(sourceX / fw, 0.0, 1.0), yNorm)).r;
+    if (dSrc > dOut + holeThresh) {
+        float d = depthTexture.sample(linearSampler, outUV).r;
         float disparity = (d - convergence) * maxShift;
         if (disparity < 0.0) {
             disparity *= negativeTaper;

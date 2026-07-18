@@ -95,15 +95,15 @@ StereoShift postprocess:
 
 ## SBS Rendering Pipeline (Metal GPU)
 
-StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The pipeline consists of eight compute passes executed in a single command buffer:
+StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The depth map reaches the GPU as the **raw float16 model output** (model space, letterbox padding intact) — it is never quantized to 8 bits or pre-upscaled on the CPU. The pipeline consists of these compute passes in a single command buffer:
 
-1. **Depth Refine** (`depthRefine` kernel): Joint bilateral filter on the depth map using the RGB frame as the guide. Because depth comes from a ~518px model inference upscaled to full resolution, its edges are blurry and misaligned with image edges; this pass snaps depth discontinuities to image contours, eliminating warp halos. The same pass normalizes depth to [0, 1] using 2%/98% percentile bounds (computed on the CPU from a downsampled histogram) so every image uses the full disparity budget.
+1. **Depth Refine** (`depthRefine` kernel): Joint bilateral filter on the depth map using the RGB frame as the guide. Depth comes from a ~518px model inference, so its edges are blurry and misaligned with image edges; this pass snaps depth discontinuities to image contours, eliminating warp halos. The letterbox crop and the upsample to full resolution happen here in a single edge-aware step (a `depthCrop` parameter maps full-frame UVs into the model-space depth texture), and the same pass normalizes depth to [0, 1] using 2%/98% percentile bounds (histogrammed on the CPU from the raw float16 map) so every image uses the full disparity budget.
 
-2. **Depth Dilate H + V** (`depthDilateAxis` kernel, two passes): Separable max-filter dilation of near depth into the background. The horizontal radius scales with `maxShift` so the dilated band always covers the disocclusion width; the vertical radius is small. This prevents foreground edge ghosting in the warp.
+2. **Depth Dilate H + V** (`depthDilateAxis` kernel, per eye): Separable max-filter dilation of near depth into the background. The horizontal pass is **directional per eye** — it grows near depth only toward the side where that eye's disocclusion trails (right for the right eye, left for the left eye) — so the clean side of every silhouette keeps true background parallax instead of a flattened halo band. The radius scales with `maxShift` so the dilated band always covers the disocclusion width; the vertical radius is small.
 
-3. **Depth Feather H + V** (`depthGaussianAxis` kernel, two passes): Separable Gaussian blur sized relative to `maxShift`, converting the hard dilated depth step into a smooth ramp so disocclusions stretch instead of tearing.
+3. **Depth Feather H + V** (`depthGaussianAxis` kernel, per eye): Separable Gaussian blur sized relative to `maxShift`, converting the hard dilated depth step into a smooth ramp so disocclusions stretch instead of tearing.
 
-4. **Stereo Warp — Left/Right Eye** (`stereoWarp` kernel, direction = ∓1): Fixed-point iterative inverse warp. Disparity is computed around a convergence plane — `disparity = (depth − convergence) × maxShift` — placed at the scene's median depth, so content straddles the screen plane instead of floating entirely in front of it. Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
+4. **Stereo Warp — Left/Right Eye** (`stereoWarp` kernel, direction = ∓1): Damped fixed-point iterative inverse warp around a convergence plane — `disparity = (depth − convergence) × maxShift` — placed at the scene's median depth, so content straddles the screen plane instead of floating entirely in front of it. Damping stops the iteration from oscillating across depth steps at silhouettes. After convergence, each pixel is checked against the **undilated** refined depth: if the converged source lands inside a distinctly nearer object, the pixel is disoccluded and is resampled with the local dilated disparity at its own position (pulling background from the visible side) instead of bleeding occluder color. Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
 
 5. **Compose SBS** (`composeSBS` kernel): Copies left and right eye textures side-by-side into a double-width output texture.
 
@@ -113,7 +113,7 @@ Key implementation details:
 - CVPixelBuffer ↔ MTLTexture conversion uses `CVMetalTextureCache` for zero-copy GPU access
 - `maxShift` is derived from `baselinePerEye × 3D Strength × (width / 1440)` — proportional to frame width so all resolutions get the same perceived depth — and capped at 2.5% of width for comfort
 - For video, depth normalization statistics are exponentially smoothed across frames (`StereoRenderer.makeSBSVideoFrame`) to prevent depth-scale flicker
-- CPU and CIKernel render engines are preserved as fallbacks if Metal is unavailable
+- CPU and CIKernel render engines are preserved as fallbacks if Metal is unavailable; they still receive the full-resolution 8-bit postprocessed depth
 
 Implementation references:
 

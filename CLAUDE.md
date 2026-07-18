@@ -53,8 +53,10 @@ Layout (`StereoShift/`):
 - `StereoRenderer.swift` — engine routing; computes disparity, depth stats, convergence;
   owns the Metal branch and CPU/CIKernel fallbacks
 - `MetalStereoRenderer.swift` + `StereoShaders.metal` — the production GPU path:
-  depth refine (RGB-guided joint bilateral) → max-dilate → Gaussian feather →
-  iterative inverse warp around a convergence plane → SBS compose
+  depth refine (RGB-guided joint bilateral, consumes the raw float16 model output and
+  does the letterbox crop + upsample in one pass) → per-eye directional max-dilate →
+  Gaussian feather → damped iterative inverse warp around a convergence plane with a
+  sharp-depth disocclusion test → SBS compose
 - `VideoProcessor.swift` — AVFoundation read → per-frame depth + SBS → H.264 write;
   uses a `VideoTemporalSession` to smooth depth stats across frames
 - `SpatialMediaConverter.swift` — splits MV-HEVC spatial media into SBS

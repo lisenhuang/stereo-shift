@@ -15,6 +15,9 @@ struct MetalStereoParameters {
     /// u/v). Anything outside is letterbox padding from model preprocessing and is
     /// never sampled. (0, 0, 1, 1) when the depth texture is already cropped.
     var depthCrop: SIMD4<Float> = SIMD4<Float>(0, 0, 1, 1)
+    /// Depth margin (normalized) above which a converged warp source counts as an
+    /// occluder and the pixel is treated as disoccluded (see stereoWarp).
+    var holeThreshold: Float = 0.04
 }
 
 final class MetalStereoRenderer {
@@ -65,8 +68,9 @@ final class MetalStereoRenderer {
     }
 
     /// Produces an SBS stereo pair from an RGB image and its depth map using Metal GPU
-    /// acceleration. Pipeline: joint-bilateral depth refine → separable max-dilate →
-    /// separable Gaussian feather → iterative inverse warp × 2 → SBS compose.
+    /// acceleration. Pipeline: joint-bilateral depth refine → per-eye directional
+    /// max-dilate → per-eye Gaussian feather → damped iterative inverse warp × 2 with
+    /// disocclusion fallback → SBS compose.
     func makeSBS(
         from rgb: CVPixelBuffer,
         depth: CVPixelBuffer,
@@ -79,8 +83,11 @@ final class MetalStereoRenderer {
         let sourceTexture = try makeTexture(from: rgb, pixelFormat: .bgra8Unorm)
         let rawDepthTexture = try makeTexture(from: depth, pixelFormat: depthTexturePixelFormat(for: depth))
 
-        let depthA = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
-        let depthB = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthSharp = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthScratchB = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthScratchC = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthRight = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthLeft = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
         let leftTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
         let rightTexture = try makeEmptyTexture(width: width, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
         let sbsTexture = try makeEmptyTexture(width: width * 2, height: height, pixelFormat: .bgra8Unorm, usage: [.shaderRead, .shaderWrite])
@@ -99,7 +106,7 @@ final class MetalStereoRenderer {
             commandBuffer: commandBuffer,
             source: sourceTexture,
             depth: rawDepthTexture,
-            output: depthA,
+            output: depthSharp,
             radius: refineRadius,
             sampleStep: refineStep,
             sigmaSpatial: Float(refineRadius) * 0.6,
@@ -112,41 +119,55 @@ final class MetalStereoRenderer {
             height: height
         )
 
-        // Dilation must cover the disparity difference across a silhouette, so it scales
-        // with maxShift. Horizontal dominates because disocclusions are horizontal.
-        let dilateHRadius = max(2, min(48, Int((maxShift * 0.6).rounded())))
+        // Dilation must cover the disocclusion width behind a silhouette, so it scales
+        // with maxShift. It is DIRECTIONAL per eye: the right eye's disocclusions trail
+        // to the right of foreground objects, the left eye's to the left, so near depth
+        // is grown only toward that side. The clean side of every silhouette keeps true
+        // background parallax (no flattened halo band around the object).
+        let dilateHRadius = max(2, min(56, Int((maxShift * 0.8).rounded())))
         let dilateHStep = dilateHRadius > 20 ? 2 : 1
         let dilateVRadius = max(1, min(6, Int((maxShift * 0.1).rounded())))
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, width: width, height: height)
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, width: width, height: height)
-
         let smoothSigma = max(1.0, min(6.0, maxShift * 0.15))
         let smoothRadius = min(15, Int((smoothSigma * 2.5).rounded(.up)))
-        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthA, output: depthB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
-        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthB, output: depthA, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+
+        // Right eye (warp direction +1): grow near depth rightward.
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthSharp, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, dirSign: 1, width: width, height: height)
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthScratchB, output: depthScratchC, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, dirSign: 0, width: width, height: height)
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchC, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchB, output: depthRight, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+
+        // Left eye (warp direction -1): grow near depth leftward.
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthSharp, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, dirSign: -1, width: width, height: height)
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthScratchB, output: depthScratchC, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, dirSign: 0, width: width, height: height)
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchC, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
+        encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchB, output: depthLeft, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
 
         let edgeTaper = max(8, maxShift * parameters.convergence * 2)
         encodeStereoWarp(
             commandBuffer: commandBuffer,
             source: sourceTexture,
-            depth: depthA,
+            depth: depthLeft,
+            sharp: depthSharp,
             output: leftTexture,
             direction: -1.0,
             maxShift: maxShift,
             convergence: parameters.convergence,
             edgeTaper: edgeTaper,
+            holeThreshold: parameters.holeThreshold,
             width: width,
             height: height
         )
         encodeStereoWarp(
             commandBuffer: commandBuffer,
             source: sourceTexture,
-            depth: depthA,
+            depth: depthRight,
+            sharp: depthSharp,
             output: rightTexture,
             direction: 1.0,
             maxShift: maxShift,
             convergence: parameters.convergence,
             edgeTaper: edgeTaper,
+            holeThreshold: parameters.holeThreshold,
             width: width,
             height: height
         )
@@ -220,6 +241,7 @@ final class MetalStereoRenderer {
         axis: SIMD2<Int32>,
         radius: Int,
         sampleStep: Int,
+        dirSign: Int32,
         width: Int,
         height: Int
     ) {
@@ -230,9 +252,11 @@ final class MetalStereoRenderer {
         var a = axis
         var r = Int32(radius)
         var step = Int32(sampleStep)
+        var sign = dirSign
         encoder.setBytes(&a, length: MemoryLayout<SIMD2<Int32>>.size, index: 0)
         encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 1)
         encoder.setBytes(&step, length: MemoryLayout<Int32>.size, index: 2)
+        encoder.setBytes(&sign, length: MemoryLayout<Int32>.size, index: 3)
         dispatchThreads(encoder: encoder, pipeline: depthDilatePipeline, width: width, height: height)
         encoder.endEncoding()
     }
@@ -265,11 +289,13 @@ final class MetalStereoRenderer {
         commandBuffer: MTLCommandBuffer,
         source: MTLTexture,
         depth: MTLTexture,
+        sharp: MTLTexture,
         output: MTLTexture,
         direction: Float,
         maxShift: Float,
         convergence: Float,
         edgeTaper: Float,
+        holeThreshold: Float,
         width: Int,
         height: Int
     ) {
@@ -277,15 +303,18 @@ final class MetalStereoRenderer {
         encoder.setComputePipelineState(stereoWarpPipeline)
         encoder.setTexture(source, index: 0)
         encoder.setTexture(depth, index: 1)
-        encoder.setTexture(output, index: 2)
+        encoder.setTexture(sharp, index: 2)
+        encoder.setTexture(output, index: 3)
         var dir = direction
         var shift = maxShift
         var conv = convergence
         var taper = edgeTaper
+        var hole = holeThreshold
         encoder.setBytes(&dir, length: MemoryLayout<Float>.size, index: 0)
         encoder.setBytes(&shift, length: MemoryLayout<Float>.size, index: 1)
         encoder.setBytes(&conv, length: MemoryLayout<Float>.size, index: 2)
         encoder.setBytes(&taper, length: MemoryLayout<Float>.size, index: 3)
+        encoder.setBytes(&hole, length: MemoryLayout<Float>.size, index: 4)
         dispatchThreads(encoder: encoder, pipeline: stereoWarpPipeline, width: width, height: height)
         encoder.endEncoding()
     }
