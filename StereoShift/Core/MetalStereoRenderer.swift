@@ -24,6 +24,7 @@ final class MetalStereoRenderer {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let depthRefinePipeline: MTLComputePipelineState
+    private let depthFlattenPipeline: MTLComputePipelineState
     private let depthDilatePipeline: MTLComputePipelineState
     private let depthGaussianPipeline: MTLComputePipelineState
     private let stereoWarpPipeline: MTLComputePipelineState
@@ -47,6 +48,7 @@ final class MetalStereoRenderer {
         }
 
         guard let depthRefineFn = library.makeFunction(name: "depthRefine"),
+              let depthFlattenFn = library.makeFunction(name: "depthFlatten"),
               let depthDilateFn = library.makeFunction(name: "depthDilateAxis"),
               let depthGaussianFn = library.makeFunction(name: "depthGaussianAxis"),
               let stereoWarpFn = library.makeFunction(name: "stereoWarp"),
@@ -57,6 +59,7 @@ final class MetalStereoRenderer {
         self.device = device
         self.commandQueue = queue
         self.depthRefinePipeline = try device.makeComputePipelineState(function: depthRefineFn)
+        self.depthFlattenPipeline = try device.makeComputePipelineState(function: depthFlattenFn)
         self.depthDilatePipeline = try device.makeComputePipelineState(function: depthDilateFn)
         self.depthGaussianPipeline = try device.makeComputePipelineState(function: depthGaussianFn)
         self.stereoWarpPipeline = try device.makeComputePipelineState(function: stereoWarpFn)
@@ -68,9 +71,9 @@ final class MetalStereoRenderer {
     }
 
     /// Produces an SBS stereo pair from an RGB image and its depth map using Metal GPU
-    /// acceleration. Pipeline: joint-bilateral depth refine → per-eye directional
-    /// max-dilate → per-eye Gaussian feather → damped iterative inverse warp × 2 with
-    /// disocclusion fallback → SBS compose.
+    /// acceleration. Pipeline: joint-bilateral depth refine → flatten unsupported
+    /// undulation → per-eye directional max-dilate → per-eye Gaussian feather → damped
+    /// iterative inverse warp × 2 with disocclusion fallback → SBS compose.
     func makeSBS(
         from rgb: CVPixelBuffer,
         depth: CVPixelBuffer,
@@ -84,6 +87,8 @@ final class MetalStereoRenderer {
         let rawDepthTexture = try makeTexture(from: depth, pixelFormat: depthTexturePixelFormat(for: depth))
 
         let depthSharp = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthFlat = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
+        let depthCoarseA = try makeEmptyTexture(width: max(1, width / 8), height: max(1, height / 8), pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
         let depthScratchB = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
         let depthScratchC = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
         let depthRight = try makeEmptyTexture(width: width, height: height, pixelFormat: .r16Float, usage: [.shaderRead, .shaderWrite])
@@ -115,9 +120,41 @@ final class MetalStereoRenderer {
             invRange: 1 / max(parameters.depthMax - parameters.depthMin, 0.0001),
             gamma: parameters.depthGamma,
             depthCrop: parameters.depthCrop,
+            adaptive: 1,
             width: width,
             height: height
         )
+
+        // Model noise leaves low-amplitude waves on flat surfaces (walls, sky), which
+        // the warp turns into visible curvature. Build a large-scale base with a second
+        // joint bilateral at 1/8 resolution and a very wide spatial sigma — edge-aware,
+        // so it preserves true slopes and never mixes depth across object boundaries,
+        // but too wide to follow the wobble — then keep only the depth detail backed
+        // by image structure; the result (depthFlat) feeds the dilations and the
+        // warp's occlusion test.
+        let coarseW = max(1, width / 8)
+        let coarseH = max(1, height / 8)
+        let coarseSigma = max(6.0, Float(coarseW) / 8)
+        let coarseRadius = min(75, Int((coarseSigma * 2.5).rounded(.up)))
+        let coarseStep = max(1, coarseRadius / 20)
+        encodeDepthRefine(
+            commandBuffer: commandBuffer,
+            source: sourceTexture,
+            depth: depthSharp,
+            output: depthCoarseA,
+            radius: coarseRadius,
+            sampleStep: coarseStep,
+            sigmaSpatial: coarseSigma,
+            sigmaColor: 0.08,
+            minDepth: 0,
+            invRange: 1,
+            gamma: 1,
+            depthCrop: SIMD4<Float>(0, 0, 1, 1),
+            adaptive: 0,
+            width: coarseW,
+            height: coarseH
+        )
+        encodeDepthFlatten(commandBuffer: commandBuffer, source: sourceTexture, coarse: depthCoarseA, refined: depthSharp, output: depthFlat, width: width, height: height)
 
         // Dilation must cover the disocclusion width behind a silhouette, so it scales
         // with maxShift. It is DIRECTIONAL per eye: the right eye's disocclusions trail
@@ -127,17 +164,17 @@ final class MetalStereoRenderer {
         let dilateHRadius = max(2, min(56, Int((maxShift * 0.8).rounded())))
         let dilateHStep = dilateHRadius > 20 ? 2 : 1
         let dilateVRadius = max(1, min(6, Int((maxShift * 0.1).rounded())))
-        let smoothSigma = max(1.0, min(6.0, maxShift * 0.15))
+        let smoothSigma = max(1.0, min(6.0, maxShift * 0.08))
         let smoothRadius = min(15, Int((smoothSigma * 2.5).rounded(.up)))
 
         // Right eye (warp direction +1): grow near depth rightward.
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthSharp, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, dirSign: 1, width: width, height: height)
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthFlat, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, dirSign: 1, width: width, height: height)
         encodeDepthDilate(commandBuffer: commandBuffer, input: depthScratchB, output: depthScratchC, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, dirSign: 0, width: width, height: height)
         encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchC, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
         encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchB, output: depthRight, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
 
         // Left eye (warp direction -1): grow near depth leftward.
-        encodeDepthDilate(commandBuffer: commandBuffer, input: depthSharp, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, dirSign: -1, width: width, height: height)
+        encodeDepthDilate(commandBuffer: commandBuffer, input: depthFlat, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: dilateHRadius, sampleStep: dilateHStep, dirSign: -1, width: width, height: height)
         encodeDepthDilate(commandBuffer: commandBuffer, input: depthScratchB, output: depthScratchC, axis: SIMD2<Int32>(0, 1), radius: dilateVRadius, sampleStep: 1, dirSign: 0, width: width, height: height)
         encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchC, output: depthScratchB, axis: SIMD2<Int32>(1, 0), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
         encodeDepthGaussian(commandBuffer: commandBuffer, input: depthScratchB, output: depthLeft, axis: SIMD2<Int32>(0, 1), radius: smoothRadius, sigma: smoothSigma, width: width, height: height)
@@ -147,7 +184,7 @@ final class MetalStereoRenderer {
             commandBuffer: commandBuffer,
             source: sourceTexture,
             depth: depthLeft,
-            sharp: depthSharp,
+            sharp: depthFlat,
             output: leftTexture,
             direction: -1.0,
             maxShift: maxShift,
@@ -161,7 +198,7 @@ final class MetalStereoRenderer {
             commandBuffer: commandBuffer,
             source: sourceTexture,
             depth: depthRight,
-            sharp: depthSharp,
+            sharp: depthFlat,
             output: rightTexture,
             direction: 1.0,
             maxShift: maxShift,
@@ -206,6 +243,7 @@ final class MetalStereoRenderer {
         invRange: Float,
         gamma: Float,
         depthCrop: SIMD4<Float>,
+        adaptive: Float,
         width: Int,
         height: Int
     ) {
@@ -222,6 +260,7 @@ final class MetalStereoRenderer {
         var invR = invRange
         var g = gamma
         var crop = depthCrop
+        var adapt = adaptive
         encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 0)
         encoder.setBytes(&step, length: MemoryLayout<Int32>.size, index: 1)
         encoder.setBytes(&sigS, length: MemoryLayout<Float>.size, index: 2)
@@ -230,6 +269,7 @@ final class MetalStereoRenderer {
         encoder.setBytes(&invR, length: MemoryLayout<Float>.size, index: 5)
         encoder.setBytes(&g, length: MemoryLayout<Float>.size, index: 6)
         encoder.setBytes(&crop, length: MemoryLayout<SIMD4<Float>>.size, index: 7)
+        encoder.setBytes(&adapt, length: MemoryLayout<Float>.size, index: 8)
         dispatchThreads(encoder: encoder, pipeline: depthRefinePipeline, width: width, height: height)
         encoder.endEncoding()
     }
@@ -282,6 +322,25 @@ final class MetalStereoRenderer {
         encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 1)
         encoder.setBytes(&s, length: MemoryLayout<Float>.size, index: 2)
         dispatchThreads(encoder: encoder, pipeline: depthGaussianPipeline, width: width, height: height)
+        encoder.endEncoding()
+    }
+
+    private func encodeDepthFlatten(
+        commandBuffer: MTLCommandBuffer,
+        source: MTLTexture,
+        coarse: MTLTexture,
+        refined: MTLTexture,
+        output: MTLTexture,
+        width: Int,
+        height: Int
+    ) {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+        encoder.setComputePipelineState(depthFlattenPipeline)
+        encoder.setTexture(source, index: 0)
+        encoder.setTexture(coarse, index: 1)
+        encoder.setTexture(refined, index: 2)
+        encoder.setTexture(output, index: 3)
+        dispatchThreads(encoder: encoder, pipeline: depthFlattenPipeline, width: width, height: height)
         encoder.endEncoding()
     }
 

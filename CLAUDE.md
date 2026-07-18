@@ -54,7 +54,9 @@ Layout (`StereoShift/`):
   owns the Metal branch and CPU/CIKernel fallbacks
 - `MetalStereoRenderer.swift` + `StereoShaders.metal` — the production GPU path:
   depth refine (RGB-guided joint bilateral, consumes the raw float16 model output and
-  does the letterbox crop + upsample in one pass) → per-eye directional max-dilate →
+  does the letterbox crop + upsample in one pass) → depth flatten (wide edge-aware
+  bilateral base at 1/8 res + detail crush where the image lacks structure; removes
+  curved-background wobble) → per-eye directional max-dilate →
   Gaussian feather → damped iterative inverse warp around a convergence plane with a
   sharp-depth disocclusion test → SBS compose
 - `VideoProcessor.swift` — AVFoundation read → per-frame depth + SBS → H.264 write;

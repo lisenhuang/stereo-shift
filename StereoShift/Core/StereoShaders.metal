@@ -5,28 +5,47 @@ using namespace metal;
 //   1. depthRefine             — joint-bilateral depth filter guided by the RGB image,
 //                                plus percentile normalization and gamma. Aligns depth
 //                                edges with image edges so warped silhouettes don't halo.
-//   2. depthDilateAxis (H dir, V) per eye — max-filter dilation of near depth into the
+//   2. depthRefine (coarse) + depthFlatten — a second, very wide joint bilateral at 1/8
+//                                resolution forms an edge-aware large-scale base;
+//                                depthFlatten then crushes depth detail that has no
+//                                supporting image structure. Removes the model's
+//                                low-amplitude depth wobble on flat surfaces
+//                                (curved-background artifact) while keeping true
+//                                slopes and real relief.
+//   3. depthDilateAxis (H dir, V) per eye — max-filter dilation of near depth into the
 //                                background. Horizontal dilation is DIRECTIONAL: it only
 //                                grows toward the side where that eye's disocclusion
 //                                trails (right for the right eye, left for the left eye),
 //                                so the clean side of every silhouette keeps true
 //                                background parallax instead of a flattened halo band.
-//   3. depthGaussianAxis (H, V) per eye — softens the dilated depth so disocclusions
+//   4. depthGaussianAxis (H, V) per eye — softens the dilated depth so disocclusions
 //                                stretch smoothly instead of tearing.
-//   4. stereoWarp ×2           — damped fixed-point iterative inverse warp around a
+//   5. stereoWarp ×2           — damped fixed-point iterative inverse warp around a
 //                                convergence plane: disparity = (depth - convergence) *
 //                                maxShift. Pixels whose converged source lands inside a
 //                                nearer occluder (disocclusion) are resampled with the
 //                                local dilated disparity at the output position.
-//   5. composeSBS              — packs left/right into a double-width frame.
+//   6. composeSBS              — packs left/right into a double-width frame.
 
 constexpr sampler linearSampler(coord::normalized, address::clamp_to_edge, filter::linear);
+
+inline float luma709(float3 c) {
+    return dot(c, float3(0.2126, 0.7152, 0.0722));
+}
 
 // Joint bilateral filter on the depth map using the RGB frame as the guide,
 // followed by range normalization (percentile min/max computed on the CPU) and gamma.
 // The depth texture is the raw model output (float16, model resolution); `depthCrop`
 // maps full-frame UVs into the content region of that texture, so this single pass
 // performs the letterbox crop + edge-aware upsample + normalize in one resample.
+//
+// sigmaColor adapts to local image structure when `adaptive` is 1: where the image is
+// flat (walls, sky), color binding is loosened so the spatial term irons out the
+// model's low-amplitude depth undulation (which otherwise reads as a "curved"
+// background in stereo); near image edges, binding tightens to the passed sigmaColor
+// so silhouettes snap. `adaptive` is 0 for the coarse large-scale-base pass, whose
+// color gate must stay tight everywhere so foreign depth never seeps across object
+// boundaries.
 kernel void depthRefine(
     texture2d<float, access::sample> sourceTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture  [[texture(1)]],
@@ -39,6 +58,7 @@ kernel void depthRefine(
     constant float &invRange     [[buffer(5)]],
     constant float &gamma        [[buffer(6)]],
     constant float4 &depthCrop   [[buffer(7)]],
+    constant float &adaptive     [[buffer(8)]],
     uint2 gid                    [[thread_position_in_grid]])
 {
     uint w = outDepth.get_width();
@@ -49,8 +69,18 @@ kernel void depthRefine(
     float2 uv = (float2(gid) + 0.5) * invSize;
 
     float3 centerColor = sourceTexture.sample(linearSampler, uv).rgb;
+
+    // Local image-edge strength from 1px luma differences.
+    float lL = luma709(sourceTexture.sample(linearSampler, uv - float2(invSize.x, 0.0)).rgb);
+    float lR = luma709(sourceTexture.sample(linearSampler, uv + float2(invSize.x, 0.0)).rgb);
+    float lT = luma709(sourceTexture.sample(linearSampler, uv - float2(0.0, invSize.y)).rgb);
+    float lB = luma709(sourceTexture.sample(linearSampler, uv + float2(0.0, invSize.y)).rgb);
+    float edgeStrength = abs(lR - lL) + abs(lB - lT);
+    float flatness = 1.0 - smoothstep(0.02, 0.15, edgeStrength);
+    float sigmaC = mix(sigmaColor, 0.22, flatness * adaptive);
+
     float invTwoSigmaS2 = 1.0 / (2.0 * sigmaSpatial * sigmaSpatial);
-    float invTwoSigmaC2 = 1.0 / (2.0 * sigmaColor * sigmaColor);
+    float invTwoSigmaC2 = 1.0 / (2.0 * sigmaC * sigmaC);
 
     float sum = 0.0;
     float weightSum = 0.0;
@@ -76,6 +106,56 @@ kernel void depthRefine(
     depth = clamp((depth - minDepth) * invRange, 0.0, 1.0);
     depth = pow(depth, gamma);
     outDepth.write(float4(depth, depth, depth, 1.0), gid);
+}
+
+// Flattens unsupported depth undulation. The base is the refined depth resampled to a
+// coarse grid by an image-guided joint bilateral with a very wide spatial sigma (see
+// MetalStereoRenderer — it reuses the depthRefine kernel). A wide EDGE-AWARE base
+// preserves true slopes and large shapes (a receding floor, a wall seen at an angle)
+// and never mixes depth across object boundaries, but it cannot follow the large-scale
+// non-linear wobble the model leaves on flat surfaces, so that wobble lands entirely
+// in `detail`. Detail is then kept only where the image has structure to back it (an
+// edge or visible shading gradient); on textureless regions it is crushed — invisible
+// to the viewer anyway, since a textureless surface shows no warp distortion. This
+// keeps planar backgrounds planar in stereo without touching real, image-supported
+// relief.
+kernel void depthFlatten(
+    texture2d<float, access::sample> sourceTexture  [[texture(0)]],
+    texture2d<float, access::sample> coarseTexture  [[texture(1)]],
+    texture2d<float, access::read>   refinedTexture [[texture(2)]],
+    texture2d<float, access::write>  outDepth       [[texture(3)]],
+    uint2 gid                  [[thread_position_in_grid]])
+{
+    uint w = outDepth.get_width();
+    uint h = outDepth.get_height();
+    if (gid.x >= w || gid.y >= h) return;
+
+    float2 invSize = float2(1.0 / float(w), 1.0 / float(h));
+    float2 uv = (float2(gid) + 0.5) * invSize;
+
+    float base = coarseTexture.sample(linearSampler, uv).r;
+    float refined = refinedTexture.read(gid).r;
+    float detail = refined - base;
+
+    // Image support for the detail: luma gradients at 1px (edges, texture) and at an
+    // 8px span (broad shading on rounded surfaces, e.g. faces). A textureless wall
+    // stays under both thresholds even with a smooth lighting gradient.
+    float lL = luma709(sourceTexture.sample(linearSampler, uv - float2(invSize.x, 0.0)).rgb);
+    float lR = luma709(sourceTexture.sample(linearSampler, uv + float2(invSize.x, 0.0)).rgb);
+    float lT = luma709(sourceTexture.sample(linearSampler, uv - float2(0.0, invSize.y)).rgb);
+    float lB = luma709(sourceTexture.sample(linearSampler, uv + float2(0.0, invSize.y)).rgb);
+    float g1 = abs(lR - lL) + abs(lB - lT);
+    float w8 = invSize.x * 8.0, h8 = invSize.y * 8.0;
+    float lL8 = luma709(sourceTexture.sample(linearSampler, uv - float2(w8, 0.0)).rgb);
+    float lR8 = luma709(sourceTexture.sample(linearSampler, uv + float2(w8, 0.0)).rgb);
+    float lT8 = luma709(sourceTexture.sample(linearSampler, uv - float2(0.0, h8)).rgb);
+    float lB8 = luma709(sourceTexture.sample(linearSampler, uv + float2(0.0, h8)).rgb);
+    float g8 = abs(lR8 - lL8) + abs(lB8 - lT8);
+
+    float support = max(smoothstep(0.03, 0.12, g1), smoothstep(0.05, 0.20, g8));
+    float keep = mix(0.3, 1.0, support);
+
+    outDepth.write(float4(base + detail * keep, 0.0, 0.0, 1.0), gid);
 }
 
 // Separable max-filter dilation along one axis (axis = (1,0) or (0,1)).
