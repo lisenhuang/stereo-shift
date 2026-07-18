@@ -476,14 +476,14 @@ struct PhotoFlowView: View {
             do {
                 try Task.checkCancellation()
                 let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: sourceImage)
-                let depthBuffer = try await depthEstimator.predictDepth(
+                let rawDepth = try await depthEstimator.predictRawDepth(
                     pixelBuffer: rgbBuffer,
                     model: appliedOptions.depthModel,
                     quality: appliedOptions.depthQuality
                 )
                 let outputBuffer = try renderer.makeSBS(
                     from: rgbBuffer,
-                    depth: depthBuffer,
+                    rawDepth: rawDepth,
                     strength: appliedStrength,
                     options: appliedOptions
                 )

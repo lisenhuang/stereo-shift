@@ -2,6 +2,41 @@ import CoreImage
 import CoreML
 import Foundation
 
+/// Depth straight from the model, still in model-output space (float16 for Depth
+/// Anything v2) — not letterbox-cropped, not upscaled, not quantized to 8-bit.
+/// The Metal renderer consumes this directly so depth keeps full precision and the
+/// joint-bilateral refine does a single edge-aware upsample to full resolution.
+struct RawDepthMap: @unchecked Sendable {
+    /// Model-output-space depth buffer. Larger value = closer to the camera.
+    let depth: CVPixelBuffer
+    /// Region of `depth` corresponding to the source image, in depth pixel
+    /// coordinates with a top-left origin (letterbox padding excluded).
+    let contentRect: CGRect
+    /// Pixel size of the source image the depth was predicted from.
+    let originalWidth: Int
+    let originalHeight: Int
+
+    /// `contentRect` expressed in normalized depth-texture coordinates
+    /// (origin u/v + size u/v), ready for the GPU.
+    var normalizedCrop: SIMD4<Float> {
+        let width = Float(max(CVPixelBufferGetWidth(depth), 1))
+        let height = Float(max(CVPixelBufferGetHeight(depth), 1))
+        let x = Float(contentRect.origin.x) / width
+        let y = Float(contentRect.origin.y) / height
+        let w = Float(contentRect.width) / width
+        let h = Float(contentRect.height) / height
+        guard x.isFinite, y.isFinite, w.isFinite, h.isFinite, w > 0, h > 0 else {
+            return SIMD4<Float>(0, 0, 1, 1)
+        }
+        return SIMD4<Float>(
+            max(0, min(1, x)),
+            max(0, min(1, y)),
+            max(0, min(1, w)),
+            max(0, min(1, h))
+        )
+    }
+}
+
 actor DepthEstimator {
     private struct IntSize {
         var width: Int
@@ -29,7 +64,41 @@ actor DepthEstimator {
     }
 
     func predictDepth(pixelBuffer: CVPixelBuffer, model: DepthModel, quality: DepthQuality) async throws -> CVPixelBuffer {
-        let depthModel = model
+        let raw = try await predictRawDepthBuffer(pixelBuffer: pixelBuffer, model: model, quality: quality)
+        let depth = try postprocess(depth: raw.depth, metadata: raw.metadata)
+        return depth
+    }
+
+    /// Returns depth in model-output space together with the rect that maps it back
+    /// onto the source image. Preferred over `predictDepth` on the Metal path: it
+    /// skips the full-resolution 8-bit postprocess entirely.
+    func predictRawDepth(pixelBuffer: CVPixelBuffer, model: DepthModel, quality: DepthQuality) async throws -> RawDepthMap {
+        let raw = try await predictRawDepthBuffer(pixelBuffer: pixelBuffer, model: model, quality: quality)
+
+        let rawWidth = CVPixelBufferGetWidth(raw.depth)
+        let rawHeight = CVPixelBufferGetHeight(raw.depth)
+        let sx = CGFloat(rawWidth) / CGFloat(max(raw.metadata.modelSize.width, 1))
+        let sy = CGFloat(rawHeight) / CGFloat(max(raw.metadata.modelSize.height, 1))
+        let contentRect = CGRect(
+            x: raw.metadata.contentRect.origin.x * sx,
+            y: raw.metadata.contentRect.origin.y * sy,
+            width: raw.metadata.contentRect.width * sx,
+            height: raw.metadata.contentRect.height * sy
+        )
+
+        return RawDepthMap(
+            depth: raw.depth,
+            contentRect: contentRect,
+            originalWidth: raw.metadata.originalSize.width,
+            originalHeight: raw.metadata.originalSize.height
+        )
+    }
+
+    private func predictRawDepthBuffer(
+        pixelBuffer: CVPixelBuffer,
+        model depthModel: DepthModel,
+        quality: DepthQuality
+    ) async throws -> (depth: CVPixelBuffer, metadata: PreprocessMetadata) {
         let model = try loadModel(depthModel)
         let prepared = try preprocess(pixelBuffer, depthModel: depthModel, model: model, quality: quality)
         let provider = try featureProvider(for: prepared.pixelBuffer, model: model)
@@ -40,8 +109,41 @@ actor DepthEstimator {
 
         var rawDepth = try depthOutput(from: prediction)
         rawDepth = try invertDepthIfNeeded(rawDepth, model: depthModel)
-        let depth = try postprocess(depth: rawDepth, metadata: prepared.metadata)
-        return depth
+        // Hand the renderer a self-owned copy: Core ML output buffers are reused
+        // between predictions and are not guaranteed to be Metal-cache friendly.
+        rawDepth = try copyPixelBuffer(rawDepth)
+        return (rawDepth, prepared.metadata)
+    }
+
+    private func copyPixelBuffer(_ source: CVPixelBuffer) throws -> CVPixelBuffer {
+        let width = CVPixelBufferGetWidth(source)
+        let height = CVPixelBufferGetHeight(source)
+        let format = CVPixelBufferGetPixelFormatType(source)
+        let copy = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: format)
+
+        CVPixelBufferLockBaseAddress(source, .readOnly)
+        CVPixelBufferLockBaseAddress(copy, [])
+        defer {
+            CVPixelBufferUnlockBaseAddress(copy, [])
+            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+        }
+
+        guard let sourceBase = CVPixelBufferGetBaseAddress(source),
+              let copyBase = CVPixelBufferGetBaseAddress(copy) else {
+            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        }
+
+        let sourceBytesPerRow = CVPixelBufferGetBytesPerRow(source)
+        let copyBytesPerRow = CVPixelBufferGetBytesPerRow(copy)
+        let rowBytes = min(sourceBytesPerRow, copyBytesPerRow)
+        for y in 0..<height {
+            memcpy(
+                copyBase.advanced(by: y * copyBytesPerRow),
+                sourceBase.advanced(by: y * sourceBytesPerRow),
+                rowBytes
+            )
+        }
+        return copy
     }
 
     private func invertDepthIfNeeded(_ depth: CVPixelBuffer, model: DepthModel) throws -> CVPixelBuffer {

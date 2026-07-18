@@ -125,7 +125,7 @@ final class VideoProcessor {
             progress(VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: effectiveDurationSeconds))
 
             var frameIndex = 0
-            var cachedDepth: CVPixelBuffer?
+            var cachedRawDepth: RawDepthMap?
             let cadence = max(1, options.videoDepthCadence.rawValue)
             let smoothingAlpha = max(0, min(1, options.videoDepthSmoothing))
             let temporalSession = renderer.beginVideoTemporalSession()
@@ -153,36 +153,33 @@ final class VideoProcessor {
                 )
 
                 let shouldRecomputeDepth: Bool = {
-                    if cachedDepth == nil { return true }
+                    if cachedRawDepth == nil { return true }
                     if cadence <= 1 { return true }
                     return frameIndex % cadence == 0
                 }()
 
                 if shouldRecomputeDepth {
-                    let rawDepth = try await depthEstimator.predictDepth(
+                    let rawDepth = try await depthEstimator.predictRawDepth(
                         pixelBuffer: preparedFrame,
                         model: options.depthModel,
                         quality: options.depthQuality
                     )
 
-                    if smoothingAlpha > 0 {
-                        let currentDepth = try oneComponent8(from: rawDepth, targetWidth: Int(processingSize.width), targetHeight: Int(processingSize.height))
-                        if let previousDepth = cachedDepth {
-                            cachedDepth = try blendOneComponent8(previous: previousDepth, current: currentDepth, alpha: smoothingAlpha)
-                        } else {
-                            cachedDepth = currentDepth
-                        }
+                    // Smoothing blends in model space (float16, ~0.4 MP buffers), so it
+                    // stays cheap and never quantizes depth to 8 bits mid-stream.
+                    if smoothingAlpha > 0, let previousDepth = cachedRawDepth {
+                        cachedRawDepth = blendRawDepth(previous: previousDepth, current: rawDepth, alpha: smoothingAlpha)
                     } else {
-                        cachedDepth = rawDepth
+                        cachedRawDepth = rawDepth
                     }
                 }
 
-                guard let depthForFrame = cachedDepth else {
+                guard let depthForFrame = cachedRawDepth else {
                     throw StereoPipelineError.modelOutputNotFound
                 }
                 let stereoFrame = try renderer.makeSBSVideoFrame(
                     from: preparedFrame,
-                    depth: depthForFrame,
+                    rawDepth: depthForFrame,
                     strength: strength,
                     options: options,
                     session: temporalSession
@@ -316,77 +313,63 @@ final class VideoProcessor {
         }
     }
 
-    private func oneComponent8(from pixelBuffer: CVPixelBuffer, targetWidth: Int, targetHeight: Int) throws -> CVPixelBuffer {
-        let extent = CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight)
-        let sourceImage = CIImage(cvPixelBuffer: pixelBuffer)
-            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.0])
+    private func blendRawDepth(previous: RawDepthMap, current: RawDepthMap, alpha: Float) -> RawDepthMap {
+        let prev = previous.depth
+        let curr = current.depth
+        let width = CVPixelBufferGetWidth(curr)
+        let height = CVPixelBufferGetHeight(curr)
 
-        let sx = CGFloat(targetWidth) / max(sourceImage.extent.width, 1)
-        let sy = CGFloat(targetHeight) / max(sourceImage.extent.height, 1)
-        let scaled = sourceImage
-            .transformed(by: CGAffineTransform(scaleX: sx, y: sy))
-            .cropped(to: extent)
-
-        let output = try PixelBufferUtilities.makePixelBuffer(
-            width: targetWidth,
-            height: targetHeight,
-            pixelFormat: kCVPixelFormatType_OneComponent8
-        )
-        ciContext.render(scaled, to: output, bounds: extent, colorSpace: CGColorSpaceCreateDeviceGray())
-        return output
-    }
-
-    private func blendOneComponent8(previous: CVPixelBuffer, current: CVPixelBuffer, alpha: Float) throws -> CVPixelBuffer {
-        let width = CVPixelBufferGetWidth(current)
-        let height = CVPixelBufferGetHeight(current)
-
-        guard CVPixelBufferGetPixelFormatType(previous) == kCVPixelFormatType_OneComponent8,
-              CVPixelBufferGetPixelFormatType(current) == kCVPixelFormatType_OneComponent8,
-              CVPixelBufferGetWidth(previous) == width,
-              CVPixelBufferGetHeight(previous) == height
+        guard CVPixelBufferGetPixelFormatType(prev) == kCVPixelFormatType_OneComponent16Half,
+              CVPixelBufferGetPixelFormatType(curr) == kCVPixelFormatType_OneComponent16Half,
+              CVPixelBufferGetWidth(prev) == width,
+              CVPixelBufferGetHeight(prev) == height,
+              let output = try? PixelBufferUtilities.makePixelBuffer(
+                  width: width,
+                  height: height,
+                  pixelFormat: kCVPixelFormatType_OneComponent16Half
+              )
         else {
-            throw StereoPipelineError.unsupportedPixelFormat
+            return current
         }
 
-        let output = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: kCVPixelFormatType_OneComponent8)
-
-        CVPixelBufferLockBaseAddress(previous, .readOnly)
-        CVPixelBufferLockBaseAddress(current, .readOnly)
+        CVPixelBufferLockBaseAddress(prev, .readOnly)
+        CVPixelBufferLockBaseAddress(curr, .readOnly)
         CVPixelBufferLockBaseAddress(output, [])
         defer {
             CVPixelBufferUnlockBaseAddress(output, [])
-            CVPixelBufferUnlockBaseAddress(current, .readOnly)
-            CVPixelBufferUnlockBaseAddress(previous, .readOnly)
+            CVPixelBufferUnlockBaseAddress(curr, .readOnly)
+            CVPixelBufferUnlockBaseAddress(prev, .readOnly)
         }
 
-        guard let prevBase = CVPixelBufferGetBaseAddress(previous),
-              let currBase = CVPixelBufferGetBaseAddress(current),
+        guard let prevBase = CVPixelBufferGetBaseAddress(prev),
+              let currBase = CVPixelBufferGetBaseAddress(curr),
               let outBase = CVPixelBufferGetBaseAddress(output) else {
-            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+            return current
         }
 
-        let prevBPR = CVPixelBufferGetBytesPerRow(previous)
-        let currBPR = CVPixelBufferGetBytesPerRow(current)
+        let prevBPR = CVPixelBufferGetBytesPerRow(prev)
+        let currBPR = CVPixelBufferGetBytesPerRow(curr)
         let outBPR = CVPixelBufferGetBytesPerRow(output)
-
-        let prevPtr = prevBase.bindMemory(to: UInt8.self, capacity: prevBPR * height)
-        let currPtr = currBase.bindMemory(to: UInt8.self, capacity: currBPR * height)
-        let outPtr = outBase.bindMemory(to: UInt8.self, capacity: outBPR * height)
 
         let a = max(0, min(1, alpha))
         let invA = 1 - a
 
         for y in 0..<height {
-            let prevRow = prevPtr.advanced(by: y * prevBPR)
-            let currRow = currPtr.advanced(by: y * currBPR)
-            let outRow = outPtr.advanced(by: y * outBPR)
+            let prevRow = prevBase.advanced(by: y * prevBPR).bindMemory(to: UInt16.self, capacity: width)
+            let currRow = currBase.advanced(by: y * currBPR).bindMemory(to: UInt16.self, capacity: width)
+            let outRow = outBase.advanced(by: y * outBPR).bindMemory(to: UInt16.self, capacity: width)
             for x in 0..<width {
-                let blended = (invA * Float(prevRow[x])) + (a * Float(currRow[x]))
-                outRow[x] = UInt8(max(0, min(255, Int(blended.rounded()))))
+                let blended = (invA * Float(Float16(bitPattern: prevRow[x]))) + (a * Float(Float16(bitPattern: currRow[x])))
+                outRow[x] = Float16(blended).bitPattern
             }
         }
 
-        return output
+        return RawDepthMap(
+            depth: output,
+            contentRect: current.contentRect,
+            originalWidth: current.originalWidth,
+            originalHeight: current.originalHeight
+        )
     }
 
     private func attachOriginalAudioIfAvailable(sourceURL: URL, processedVideoURL: URL) async throws -> URL {

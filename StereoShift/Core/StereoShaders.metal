@@ -19,6 +19,9 @@ constexpr sampler linearSampler(coord::normalized, address::clamp_to_edge, filte
 
 // Joint bilateral filter on the depth map using the RGB frame as the guide,
 // followed by range normalization (percentile min/max computed on the CPU) and gamma.
+// The depth texture is the raw model output (float16, model resolution); `depthCrop`
+// maps full-frame UVs into the content region of that texture, so this single pass
+// performs the letterbox crop + edge-aware upsample + normalize in one resample.
 kernel void depthRefine(
     texture2d<float, access::sample> sourceTexture [[texture(0)]],
     texture2d<float, access::sample> depthTexture  [[texture(1)]],
@@ -30,6 +33,7 @@ kernel void depthRefine(
     constant float &minDepth     [[buffer(4)]],
     constant float &invRange     [[buffer(5)]],
     constant float &gamma        [[buffer(6)]],
+    constant float4 &depthCrop   [[buffer(7)]],
     uint2 gid                    [[thread_position_in_grid]])
 {
     uint w = outDepth.get_width();
@@ -52,7 +56,8 @@ kernel void depthRefine(
         for (int dx = start; dx <= radius; dx += sampleStep) {
             float2 offset = float2(dx, dy);
             float2 sampleUV = uv + (offset * invSize);
-            float d = depthTexture.sample(linearSampler, sampleUV).r;
+            float2 depthUV = depthCrop.xy + (sampleUV * depthCrop.zw);
+            float d = depthTexture.sample(linearSampler, depthUV).r;
             float3 colorDelta = sourceTexture.sample(linearSampler, sampleUV).rgb - centerColor;
             float weight = exp(-dot(offset, offset) * invTwoSigmaS2)
                          * exp(-dot(colorDelta, colorDelta) * invTwoSigmaC2);
@@ -61,7 +66,8 @@ kernel void depthRefine(
         }
     }
 
-    float depth = (weightSum > 0.0) ? (sum / weightSum) : depthTexture.sample(linearSampler, uv).r;
+    float depth = (weightSum > 0.0) ? (sum / weightSum)
+                                    : depthTexture.sample(linearSampler, depthCrop.xy + (uv * depthCrop.zw)).r;
     depth = clamp((depth - minDepth) * invRange, 0.0, 1.0);
     depth = pow(depth, gamma);
     outDepth.write(float4(depth, depth, depth, 1.0), gid);
@@ -154,7 +160,7 @@ kernel void stereoWarp(
     // disparity lands it on this output pixel. Sampling depth at the converged source
     // position (instead of the destination) keeps silhouettes geometrically stable.
     float sourceX = xPix;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 4; i++) {
         float d = depthTexture.sample(linearSampler, float2(sourceX / fw, yNorm)).r;
         float disparity = (d - convergence) * maxShift;
         if (disparity < 0.0) {

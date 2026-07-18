@@ -11,6 +11,10 @@ struct MetalStereoParameters {
     var depthMin: Float
     var depthMax: Float
     var depthGamma: Float = 1.0
+    /// Region of the depth texture holding actual image content (origin u/v + size
+    /// u/v). Anything outside is letterbox padding from model preprocessing and is
+    /// never sampled. (0, 0, 1, 1) when the depth texture is already cropped.
+    var depthCrop: SIMD4<Float> = SIMD4<Float>(0, 0, 1, 1)
 }
 
 final class MetalStereoRenderer {
@@ -85,9 +89,10 @@ final class MetalStereoRenderer {
             throw StereoPipelineError.metalDeviceUnavailable
         }
 
-        // The depth map comes from a ~518px model inference upscaled to full resolution,
-        // so its edges are blurry and misaligned with image edges. The joint bilateral
-        // window must span that upsampling blur.
+        // The depth map comes from a ~518px model inference, so its edges are blurry
+        // and misaligned with image edges. The joint bilateral window must span that
+        // upsampling blur. Sampling stays in model space via `depthCrop`, so the
+        // refine does the whole crop+upscale in one edge-aware step.
         let refineRadius = max(3, min(10, width / 450))
         let refineStep = refineRadius > 5 ? 2 : 1
         encodeDepthRefine(
@@ -102,6 +107,7 @@ final class MetalStereoRenderer {
             minDepth: parameters.depthMin,
             invRange: 1 / max(parameters.depthMax - parameters.depthMin, 0.0001),
             gamma: parameters.depthGamma,
+            depthCrop: parameters.depthCrop,
             width: width,
             height: height
         )
@@ -178,6 +184,7 @@ final class MetalStereoRenderer {
         minDepth: Float,
         invRange: Float,
         gamma: Float,
+        depthCrop: SIMD4<Float>,
         width: Int,
         height: Int
     ) {
@@ -193,6 +200,7 @@ final class MetalStereoRenderer {
         var minD = minDepth
         var invR = invRange
         var g = gamma
+        var crop = depthCrop
         encoder.setBytes(&r, length: MemoryLayout<Int32>.size, index: 0)
         encoder.setBytes(&step, length: MemoryLayout<Int32>.size, index: 1)
         encoder.setBytes(&sigS, length: MemoryLayout<Float>.size, index: 2)
@@ -200,6 +208,7 @@ final class MetalStereoRenderer {
         encoder.setBytes(&minD, length: MemoryLayout<Float>.size, index: 4)
         encoder.setBytes(&invR, length: MemoryLayout<Float>.size, index: 5)
         encoder.setBytes(&g, length: MemoryLayout<Float>.size, index: 6)
+        encoder.setBytes(&crop, length: MemoryLayout<SIMD4<Float>>.size, index: 7)
         dispatchThreads(encoder: encoder, pipeline: depthRefinePipeline, width: width, height: height)
         encoder.endEncoding()
     }

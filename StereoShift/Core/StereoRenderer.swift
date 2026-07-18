@@ -162,12 +162,22 @@ final class StereoRenderer {
 
     func makeSBS(from image: CGImage, strength: Float, options: Stereo3DOptions) async throws -> CGImage {
         let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: image)
-        let depthBuffer = try await depthEstimator.predictDepth(
-            pixelBuffer: rgbBuffer,
-            model: options.depthModel,
-            quality: options.depthQuality
-        )
-        let outputBuffer = try makeSBS(from: rgbBuffer, depth: depthBuffer, strength: strength, options: options)
+        let outputBuffer: CVPixelBuffer
+        if options.renderEngine == .metal {
+            let rawDepth = try await depthEstimator.predictRawDepth(
+                pixelBuffer: rgbBuffer,
+                model: options.depthModel,
+                quality: options.depthQuality
+            )
+            outputBuffer = try makeSBS(from: rgbBuffer, rawDepth: rawDepth, strength: strength, options: options)
+        } else {
+            let depthBuffer = try await depthEstimator.predictDepth(
+                pixelBuffer: rgbBuffer,
+                model: options.depthModel,
+                quality: options.depthQuality
+            )
+            outputBuffer = try makeSBS(from: rgbBuffer, depth: depthBuffer, strength: strength, options: options)
+        }
         return try PixelBufferUtilities.makeCGImage(from: outputBuffer, context: ciContext)
     }
 
@@ -177,6 +187,18 @@ final class StereoRenderer {
 
     func makeSBS(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
         try makeSBS(from: rgb, depth: depth, strength: strength, options: options, session: nil)
+    }
+
+    /// Metal-first render from model-space depth. Keeps depth in float16 and lets the
+    /// GPU do the crop + upsample, avoiding the full-resolution 8-bit postprocess.
+    func makeSBS(from rgb: CVPixelBuffer, rawDepth: RawDepthMap, strength: Float, options: Stereo3DOptions) throws -> CVPixelBuffer {
+        try makeSBSWithRawDepth(from: rgb, rawDepth: rawDepth, strength: strength, options: options, session: nil)
+    }
+
+    /// Video-frame variant of `makeSBS(from:rawDepth:strength:options:)`; depth
+    /// statistics are exponentially smoothed across frames via the session.
+    func makeSBSVideoFrame(from rgb: CVPixelBuffer, rawDepth: RawDepthMap, strength: Float, options: Stereo3DOptions, session: VideoTemporalSession) throws -> CVPixelBuffer {
+        try makeSBSWithRawDepth(from: rgb, rawDepth: rawDepth, strength: strength, options: options, session: session)
     }
 
     /// Creates fresh per-video state. Call once before rendering a video's frames via
@@ -190,6 +212,86 @@ final class StereoRenderer {
     /// session) to prevent the depth scale and convergence plane from pumping frame to frame.
     func makeSBSVideoFrame(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, options: Stereo3DOptions, session: VideoTemporalSession) throws -> CVPixelBuffer {
         try makeSBS(from: rgb, depth: depth, strength: strength, options: options, session: session)
+    }
+
+    private func makeSBSWithRawDepth(
+        from rgb: CVPixelBuffer,
+        rawDepth: RawDepthMap,
+        strength: Float,
+        options: Stereo3DOptions,
+        session: VideoTemporalSession?
+    ) throws -> CVPixelBuffer {
+        // Metal GPU path on model-space depth — joint-bilateral refine does the
+        // letterbox crop and the edge-aware upsample in a single float16 pass.
+        if options.renderEngine == .metal,
+           !(session?.metalFailed ?? false),
+           let metalRenderer = MetalStereoRenderer.shared {
+            let width = CVPixelBufferGetWidth(rgb)
+            let clampedStrength = max(0, min(1.5, strength))
+            let preset = RefinedServerPreset.forProfile(options.renderProfile)
+
+            var stats = metalDepthStats(for: rawDepth)
+            if let session {
+                if let previous = session.depthStatsEMA {
+                    // The depth model normalizes each frame independently, so stats jump
+                    // legitimately when the nearest/farthest object changes. Damp small
+                    // frame-to-frame changes to kill histogram jitter, but SNAP on large
+                    // jumps (scene cuts / objects entering) rather than crushing depth for
+                    // the several frames an EMA would take to catch up.
+                    let alpha: Float = 0.4
+                    let jump = max(abs(stats.lo - previous.lo), abs(stats.hi - previous.hi))
+                    if jump <= 0.12 {
+                        stats = (
+                            lo: previous.lo + ((stats.lo - previous.lo) * alpha),
+                            hi: previous.hi + ((stats.hi - previous.hi) * alpha),
+                            median: previous.median + ((stats.median - previous.median) * alpha)
+                        )
+                    }
+                }
+                session.depthStatsEMA = stats
+            }
+
+            // Disparity proportional to frame width so any resolution yields the same
+            // perceived depth; capped for comfort. Scaled down for shallow-depth scenes
+            // so percentile normalization doesn't stretch depth-map quantization noise
+            // into visible wobble on nearly-flat content (skies, walls, far landscapes).
+            let range = max(stats.hi - stats.lo, 0.0001)
+            let rangeConfidence = min(1, range / 0.25)
+            let widthScale = Float(width) / 1440
+            let maxShift = min(preset.baselinePerEye * clampedStrength * widthScale, Float(width) * 0.025) * rangeConfidence
+
+            // Put the zero-parallax plane near the scene's median depth so content
+            // straddles the screen instead of floating entirely in front of it.
+            let convergence = min(0.7, max(0.3, (stats.median - stats.lo) / range))
+
+            do {
+                return try metalRenderer.makeSBS(
+                    from: rgb,
+                    depth: rawDepth.depth,
+                    parameters: MetalStereoParameters(
+                        maxShift: maxShift,
+                        convergence: convergence,
+                        depthMin: stats.lo,
+                        depthMax: stats.hi,
+                        depthCrop: rawDepth.normalizedCrop
+                    )
+                )
+            } catch {
+                // Mid-video: latch onto the CPU path for the rest of the clip so one
+                // video never mixes two stereo looks (video frames are capped at 1080p,
+                // safe for the CPU path). Photos: re-throw — the full-resolution CPU path
+                // could OOM on 48MP/panoramas, and a single image has no continuity need.
+                if let session {
+                    session.metalFailed = true
+                } else {
+                    throw error
+                }
+            }
+        }
+
+        // Non-Metal route: the CPU/CIKernel paths expect full-resolution 8-bit depth.
+        let depth = try fullResolutionDepth(from: rawDepth)
+        return try makeSBS(from: rgb, depth: depth, strength: strength, options: options, session: session)
     }
 
     private func makeSBS(
@@ -376,6 +478,134 @@ final class StereoRenderer {
             hi: Float(highBin) / 255,
             median: Float(medianBin) / 255
         )
+    }
+
+    /// Percentile depth statistics (2%, 50%, 98%) for model-space depth. Reads the raw
+    /// depth buffer directly (stride-sampled within the content rect) so float16 maps
+    /// never round-trip through an 8-bit render — the Metal normalize then happens in
+    /// the same units the refine kernel samples.
+    private func metalDepthStats(for rawDepth: RawDepthMap) -> (lo: Float, hi: Float, median: Float) {
+        let fallback: (lo: Float, hi: Float, median: Float) = (0, 1, 0.5)
+        let buffer = rawDepth.depth
+        let width = CVPixelBufferGetWidth(buffer)
+        let height = CVPixelBufferGetHeight(buffer)
+        guard width > 0, height > 0 else { return fallback }
+
+        let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+        let rect = rawDepth.contentRect.integral.intersection(bounds)
+        guard rect.width >= 2, rect.height >= 2, !rect.isNull else { return fallback }
+
+        let format = CVPixelBufferGetPixelFormatType(buffer)
+
+        CVPixelBufferLockBaseAddress(buffer, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else { return fallback }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+
+        // Model outputs ~518px maps; a ~192px sampling grid keeps this well under a
+        // millisecond while tracking the true histogram closely.
+        let stepX = max(1, Int(rect.width) / 192)
+        let stepY = max(1, Int(rect.height) / 192)
+
+        // Raw model depth is normalized to [0, 1] (verified for Depth Anything v2);
+        // clamp defensively so an out-of-range future model can't skew the bounds.
+        let binCount = 4096
+        var histogram = [Int](repeating: 0, count: binCount)
+        var total = 0
+
+        var y = Int(rect.minY)
+        while y < Int(rect.maxY) {
+            let row = baseAddress.advanced(by: y * bytesPerRow)
+            var x = Int(rect.minX)
+            while x < Int(rect.maxX) {
+                let value: Float
+                switch format {
+                case kCVPixelFormatType_OneComponent16Half:
+                    let sample = row.bindMemory(to: UInt16.self, capacity: x + 1)[x]
+                    value = Float(Float16(bitPattern: sample))
+                case kCVPixelFormatType_OneComponent8:
+                    value = Float(row.bindMemory(to: UInt8.self, capacity: x + 1)[x]) / 255
+                case kCVPixelFormatType_32BGRA:
+                    let pixel = row.bindMemory(to: UInt8.self, capacity: (x + 1) * 4)
+                    let offset = x * 4
+                    value = ((0.299 * Float(pixel[offset + 2])) + (0.587 * Float(pixel[offset + 1])) + (0.114 * Float(pixel[offset]))) / 255
+                default:
+                    return fallback
+                }
+                if value.isFinite {
+                    let clamped = max(0, min(1, value))
+                    histogram[Int(clamped * Float(binCount - 1))] += 1
+                    total += 1
+                }
+                x += stepX
+            }
+            y += stepY
+        }
+
+        guard total > 0 else { return fallback }
+
+        let (lowBin, highBin) = histogramPercentiles(
+            histogram,
+            lowTarget: Int((Double(total) * 0.02).rounded(.down)),
+            highTarget: Int((Double(total) * 0.98).rounded(.down))
+        )
+        let (medianBin, _) = histogramPercentiles(
+            histogram,
+            lowTarget: total / 2,
+            highTarget: total / 2
+        )
+
+        guard highBin > lowBin else { return fallback }
+        let scale = Float(binCount - 1)
+        return (
+            lo: Float(lowBin) / scale,
+            hi: Float(highBin) / scale,
+            median: Float(medianBin) / scale
+        )
+    }
+
+    /// Materializes the full-resolution 8-bit depth the CPU/CIKernel fallbacks expect
+    /// from model-space depth (crop letterbox, upscale). Only used off the Metal path.
+    private func fullResolutionDepth(from rawDepth: RawDepthMap) throws -> CVPixelBuffer {
+        let rawWidth = CVPixelBufferGetWidth(rawDepth.depth)
+        let rawHeight = CVPixelBufferGetHeight(rawDepth.depth)
+        let mappedRect = rawDepth.contentRect.integral.intersection(
+            CGRect(x: 0, y: 0, width: rawWidth, height: rawHeight)
+        )
+        guard mappedRect.width >= 1, mappedRect.height >= 1, !mappedRect.isNull else {
+            throw StereoPipelineError.modelOutputNotFound
+        }
+
+        let depthImage = CIImage(cvPixelBuffer: rawDepth.depth)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 0.0])
+        let cropped = depthImage.cropped(to: mappedRect)
+        let originNormalized = cropped.transformed(
+            by: CGAffineTransform(translationX: -mappedRect.origin.x, y: -mappedRect.origin.y)
+        )
+
+        let outputWidth = max(rawDepth.originalWidth, 1)
+        let outputHeight = max(rawDepth.originalHeight, 1)
+        let outputScaleX = CGFloat(outputWidth) / max(mappedRect.width, 1)
+        let outputScaleY = CGFloat(outputHeight) / max(mappedRect.height, 1)
+
+        let resized = originNormalized
+            .transformed(by: CGAffineTransform(scaleX: outputScaleX, y: outputScaleY))
+            .cropped(to: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight))
+
+        let outputBuffer = try PixelBufferUtilities.makePixelBuffer(
+            width: outputWidth,
+            height: outputHeight,
+            pixelFormat: kCVPixelFormatType_32BGRA
+        )
+
+        ciContext.render(
+            resized,
+            to: outputBuffer,
+            bounds: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight),
+            colorSpace: CGColorSpaceCreateDeviceRGB()
+        )
+
+        return outputBuffer
     }
 
     private func makeSBSUsingCPUInverseWarp(from rgb: CVPixelBuffer, depth: CVPixelBuffer, strength: Float, tuning: DepthTuning) throws -> CVPixelBuffer {
