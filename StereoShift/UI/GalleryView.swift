@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 import UIKit
 
 struct GalleryView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     @ObservedObject var webServer: GalleryWebServer
     @ObservedObject var subscriptionManager: SubscriptionManager
@@ -128,6 +129,13 @@ struct GalleryView: View {
         }
         .onAppear {
             syncVisibleItemCount()
+            webServer.refreshNetworkStatus()
+        }
+        .onChange(of: scenePhase) { _, newValue in
+            // Enabling Personal Hotspot in Settings does not change this device's own network
+            // path, so NWPathMonitor may not fire. Re-check when the user comes back.
+            guard newValue == .active else { return }
+            webServer.refreshNetworkStatus()
         }
         .onChange(of: galleryLibrary.items.count) { _, _ in
             syncVisibleItemCount()
@@ -258,7 +266,7 @@ struct GalleryView: View {
                     isImporting ||
                     isSelecting ||
                     isDeletingSelection ||
-                    (!webServer.isWiFiConnected && !webServer.isRunning)
+                    (!webServer.isShareNetworkAvailable && !webServer.isRunning)
                 )
 
                 if let hostAddress = webServer.hostAddress, webServer.isRunning {
@@ -307,7 +315,7 @@ struct GalleryView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                } else if !webServer.isWiFiConnected {
+                } else if !webServer.isShareNetworkAvailable {
                     Text("Connect to Wi-Fi to start Web Share.")
                         .font(.caption)
                         .foregroundStyle(.secondary)

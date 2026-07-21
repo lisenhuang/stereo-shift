@@ -14,7 +14,8 @@ import UIKit
 
 final class GalleryWebServer: ObservableObject {
     @Published private(set) var isRunning = false
-    @Published private(set) var isWiFiConnected = false
+    /// True when the device has an address Web Share can bind to — a Wi-Fi LAN or Personal Hotspot.
+    @Published private(set) var isShareNetworkAvailable = false
     @Published private(set) var hostAddress: String?
     @Published private(set) var browseURL: String?
     @Published private(set) var accessPIN: String = GalleryWebServer.loadOrCreateAccessPIN()
@@ -51,7 +52,7 @@ final class GalleryWebServer: ObservableObject {
         }
 #endif
         configureNetworkMonitor()
-        refreshWiFiStatus()
+        refreshShareNetworkStatus()
     }
 
     deinit {
@@ -68,6 +69,13 @@ final class GalleryWebServer: ObservableObject {
         } else {
             start()
         }
+    }
+
+    /// Re-evaluates whether a bindable local address exists. Call when returning to the
+    /// foreground: turning Personal Hotspot on leaves this device's own path unchanged, so
+    /// `NWPathMonitor` is not guaranteed to report it.
+    func refreshNetworkStatus() {
+        refreshShareNetworkStatus()
     }
 
     func resetAccessPIN() {
@@ -87,17 +95,22 @@ final class GalleryWebServer: ObservableObject {
         // Re-sync persisted PIN at startup in case UserDefaults changed while server was stopped.
         accessPIN = Self.loadOrCreateAccessPIN()
 
-        guard let hostAddress = Self.localWiFiIPv4Address() else {
-            isWiFiConnected = false
+        guard let hostAddress = Self.localShareIPv4Address() else {
+            isShareNetworkAvailable = false
+            // Localized copy also names Personal Hotspot; the key stays the original English literal.
             errorMessage = NSLocalizedString("Connect to Wi-Fi to start Web Share.", comment: "")
             return
         }
-        isWiFiConnected = true
+        isShareNetworkAvailable = true
 
         do {
             let httpsParameters = try Self.makeHTTPSParameters()
             let httpsListener = try NWListener(using: httpsParameters, on: 443)
-            let httpListener = try NWListener(using: .tcp, on: 80)
+            // Endpoint reuse matters on the rebind path in refreshShareNetworkStatus(), where the
+            // previous listener may not have fully torn down yet.
+            let httpParameters = NWParameters.tcp
+            httpParameters.allowLocalEndpointReuse = true
+            let httpListener = try NWListener(using: httpParameters, on: 80)
 
             configure(listener: httpsListener, isTLS: true, hostAddress: hostAddress)
             configure(listener: httpListener, isTLS: false, hostAddress: hostAddress)
@@ -135,19 +148,32 @@ final class GalleryWebServer: ObservableObject {
         pathMonitor.pathUpdateHandler = { [weak self] _ in
             guard let self else { return }
             DispatchQueue.main.async {
-                self.refreshWiFiStatus()
+                self.refreshShareNetworkStatus()
             }
         }
         pathMonitor.start(queue: queue)
     }
 
-    private func refreshWiFiStatus() {
-        let wifiAddress = Self.localWiFiIPv4Address()
-        isWiFiConnected = (wifiAddress != nil)
+    private func refreshShareNetworkStatus() {
+        let shareAddress = Self.localShareIPv4Address()
+        isShareNetworkAvailable = (shareAddress != nil)
 
-        if isRunning, wifiAddress == nil {
+        guard isRunning else { return }
+
+        guard let shareAddress else {
             stop()
+            // Localized copy also names Personal Hotspot; the key stays the original English literal.
             errorMessage = NSLocalizedString("Web Share requires Wi-Fi connection.", comment: "")
+            return
+        }
+
+        // The bindable address can also *change* under a running server — Wi-Fi handing over to
+        // Personal Hotspot, roaming to another SSID, a new DHCP lease. hostAddress, the QR link,
+        // and the HTTPS upgrade link handed to clients are all captured at start(), so rebind
+        // rather than keep advertising an address nobody can reach.
+        if shareAddress != hostAddress {
+            stop()
+            start()
         }
     }
 
@@ -1025,7 +1051,15 @@ final class GalleryWebServer: ObservableObject {
         raw.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? raw
     }
 
-    private static func localWiFiIPv4Address() -> String? {
+    /// Interfaces Web Share can bind to. `en0`-`en2` cover a normal Wi-Fi LAN; `bridge*`
+    /// (usually `bridge100`) covers Personal Hotspot, where the phone is the router at
+    /// 172.20.10.1 and `en0` carries no IPv4 address because it is enslaved to the bridge.
+    /// Cellular (`pdp_ip*`) is excluded — it is not a local network.
+    private static func isShareableInterfaceName(_ name: String) -> Bool {
+        name == "en0" || name == "en1" || name == "en2" || name.hasPrefix("bridge")
+    }
+
+    private static func localShareIPv4Address() -> String? {
 #if canImport(Darwin)
         var ifaddrPointer: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddrPointer) == 0, let firstAddress = ifaddrPointer else {
@@ -1057,7 +1091,7 @@ final class GalleryWebServer: ObservableObject {
 
             if family == UInt8(AF_INET), isUp, isRunning, !isLoopback, let nameCString = interface.ifa_name {
                 let name = String(cString: nameCString)
-                if preferredInterfaces.contains(name) {
+                if isShareableInterfaceName(name) {
                     var address = addressPointer.pointee
                     var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
 
@@ -1090,23 +1124,26 @@ final class GalleryWebServer: ObservableObject {
             return nil
         }
 
+        // Prefer a Wi-Fi LAN: a router-assigned private address is what other devices on the
+        // same network expect to reach.
         for interfaceName in preferredInterfaces {
             if let match = candidates.first(where: { $0.name == interfaceName && isPrivateIPv4($0.ip) }) {
                 return match.ip
             }
         }
 
+        // Still prefer Wi-Fi when its address is outside RFC1918 (CGNAT 100.64/10 on some
+        // carrier and venue networks), so an active LAN wins over the hotspot either way.
         for interfaceName in preferredInterfaces {
             if let match = candidates.first(where: { $0.name == interfaceName }) {
                 return match.ip
             }
         }
 
-        if let privateMatch = candidates.first(where: { isPrivateIPv4($0.ip) }) {
-            return privateMatch.ip
-        }
-
-        return candidates.first?.ip
+        // Then Personal Hotspot, where clients joined to the phone reach the listener on the
+        // bridge address. Tethering over USB/Bluetooth can leave Wi-Fi associated at the same
+        // time, which is why this is ranked last rather than merged into the tiers above.
+        return candidates.first(where: { isPrivateIPv4($0.ip) })?.ip ?? candidates.first?.ip
 #else
         return nil
 #endif

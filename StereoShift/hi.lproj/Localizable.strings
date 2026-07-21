@@ -19,7 +19,7 @@
 "Delete" = "हटाएं";
 "Delete all items from In-App Gallery?" = "इन-ऐप गैलरी से सभी आइटम हटाएं?";
 "Delete this item from In-App Gallery?" = "इन-ऐप गैलरी से यह आइटम हटाएं?";
-"Connect to Wi-Fi to start Web Share." = "वेब शेयर शुरू करने के लिए Wi-Fi से जुड़ें।";
+"Connect to Wi-Fi to start Web Share." = "वेब शेयर शुरू करने के लिए Wi-Fi से जुड़ें या पर्सनल हॉटस्पॉट चालू करें।";
 "Done" = "पूरा";
 "Dark" = "डार्क";
 "English" = "अंग्रेज़ी";
@@ -93,7 +93,7 @@
 "Subtle" = "हल्का";
 "Terms of Use (EULA)" = "उपयोग की शर्तें (EULA)";
 "Web share URL:" = "वेब शेयर URL:";
-"Web Share requires Wi-Fi connection." = "वेब शेयर के लिए Wi-Fi कनेक्शन जरूरी है।";
+"Web Share requires Wi-Fi connection." = "वेब शेयर के लिए Wi-Fi या पर्सनल हॉटस्पॉट जरूरी है।";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "वेब शेयर शुरू करें, फिर VR/AR ब्राउज़र में खोलकर SBS फोटो और वीडियो 3D में देखें।";
 "Restore Purchases" = "खरीदारी बहाल करें";
 "Reset PIN" = "PIN रीसेट करें";

@@ -19,7 +19,7 @@
 "Delete" = "删除";
 "Delete all items from In-App Gallery?" = "要清空应用内画廊的全部项目吗？";
 "Delete this item from In-App Gallery?" = "要从应用内画廊删除此项目吗？";
-"Connect to Wi-Fi to start Web Share." = "请先连接 Wi-Fi 后再启动网页共享。";
+"Connect to Wi-Fi to start Web Share." = "请连接 Wi-Fi 或开启个人热点后再启动网页共享。";
 "Done" = "完成";
 "Dark" = "深色";
 "English" = "英语";
@@ -94,7 +94,7 @@
 "Subtle" = "轻微";
 "Terms of Use (EULA)" = "使用条款（EULA）";
 "Web share URL:" = "网页共享地址：";
-"Web Share requires Wi-Fi connection." = "网页共享需要连接 Wi-Fi。";
+"Web Share requires Wi-Fi connection." = "网页共享需要 Wi-Fi 或个人热点。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "启动网页共享后，可在 VR/AR 浏览器中访问图片和视频，并以 3D 模式观看 SBS。";
 "Restore Purchases" = "恢复购买";
 "Reset PIN" = "重置 PIN";

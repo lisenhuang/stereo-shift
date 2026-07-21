@@ -19,7 +19,7 @@
 "Delete" = "Delete";
 "Delete all items from In-App Gallery?" = "Delete all items from In-App Gallery?";
 "Delete this item from In-App Gallery?" = "Delete this item from In-App Gallery?";
-"Connect to Wi-Fi to start Web Share." = "Connect to Wi-Fi to start Web Share.";
+"Connect to Wi-Fi to start Web Share." = "Connect to Wi-Fi or turn on Personal Hotspot to start Web Share.";
 "Done" = "Done";
 "Dark" = "Dark";
 "English" = "English";
@@ -94,7 +94,7 @@
 "Subtle" = "Subtle";
 "Terms of Use (EULA)" = "Terms of Use (EULA)";
 "Web share URL:" = "Web share URL:";
-"Web Share requires Wi-Fi connection." = "Web Share requires Wi-Fi connection.";
+"Web Share requires Wi-Fi connection." = "Web Share requires Wi-Fi or Personal Hotspot.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Start Web Share, then open it in a VR/AR browser to view SBS photos and videos in 3D.";
 "Restore Purchases" = "Restore Purchases";
 "Reset PIN" = "Reset PIN";

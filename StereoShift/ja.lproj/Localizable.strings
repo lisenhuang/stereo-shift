@@ -19,7 +19,7 @@
 "Delete" = "削除";
 "Delete all items from In-App Gallery?" = "アプリ内ギャラリーのすべての項目を削除しますか？";
 "Delete this item from In-App Gallery?" = "この項目をアプリ内ギャラリーから削除しますか？";
-"Connect to Wi-Fi to start Web Share." = "Web共有を開始するにはWi-Fiに接続してください。";
+"Connect to Wi-Fi to start Web Share." = "Web共有を開始するにはWi-Fiに接続するか、インターネット共有をオンにしてください。";
 "Done" = "完了";
 "Dark" = "ダーク";
 "English" = "英語";
@@ -93,7 +93,7 @@
 "Subtle" = "弱め";
 "Terms of Use (EULA)" = "利用規約（EULA）";
 "Web share URL:" = "Web共有URL:";
-"Web Share requires Wi-Fi connection." = "Web共有にはWi-Fi接続が必要です。";
+"Web Share requires Wi-Fi connection." = "Web共有にはWi-Fiまたはインターネット共有が必要です。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Web共有を開始すると、VR/ARブラウザで画像と動画を開いてSBSを3D表示できます。";
 "Restore Purchases" = "購入を復元";
 "Reset PIN" = "PINを再設定";

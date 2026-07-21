@@ -19,7 +19,7 @@
 "Delete" = "Supprimer";
 "Delete all items from In-App Gallery?" = "Supprimer tous les elements de la galerie integree ?";
 "Delete this item from In-App Gallery?" = "Supprimer cet element de la galerie integree ?";
-"Connect to Wi-Fi to start Web Share." = "Connectez-vous au Wi-Fi pour demarrer le partage Web.";
+"Connect to Wi-Fi to start Web Share." = "Connectez-vous au Wi-Fi ou activez le partage de connexion pour demarrer le partage Web.";
 "Done" = "Termine";
 "Dark" = "Sombre";
 "English" = "Anglais";
@@ -93,7 +93,7 @@
 "Subtle" = "Leger";
 "Terms of Use (EULA)" = "Conditions d'utilisation (EULA)";
 "Web share URL:" = "URL du partage Web :";
-"Web Share requires Wi-Fi connection." = "Le partage Web necessite une connexion Wi-Fi.";
+"Web Share requires Wi-Fi connection." = "Le partage Web necessite le Wi-Fi ou le partage de connexion.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Demarrez le partage Web, puis ouvrez-le dans un navigateur VR/AR pour voir les photos et videos SBS en 3D.";
 "Restore Purchases" = "Restaurer les achats";
 "Reset PIN" = "Reinitialiser le PIN";

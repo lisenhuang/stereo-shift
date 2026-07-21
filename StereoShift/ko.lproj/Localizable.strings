@@ -19,7 +19,7 @@
 "Delete" = "삭제";
 "Delete all items from In-App Gallery?" = "앱 내 갤러리의 모든 항목을 삭제할까요?";
 "Delete this item from In-App Gallery?" = "이 항목을 앱 내 갤러리에서 삭제할까요?";
-"Connect to Wi-Fi to start Web Share." = "웹 공유를 시작하려면 Wi-Fi에 연결하세요.";
+"Connect to Wi-Fi to start Web Share." = "웹 공유를 시작하려면 Wi-Fi에 연결하거나 개인용 핫스팟을 켜세요.";
 "Done" = "완료";
 "Dark" = "다크";
 "English" = "영어";
@@ -93,7 +93,7 @@
 "Subtle" = "약함";
 "Terms of Use (EULA)" = "이용 약관(EULA)";
 "Web share URL:" = "웹 공유 주소:";
-"Web Share requires Wi-Fi connection." = "웹 공유를 사용하려면 Wi-Fi 연결이 필요합니다.";
+"Web Share requires Wi-Fi connection." = "웹 공유를 사용하려면 Wi-Fi 또는 개인용 핫스팟이 필요합니다.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "웹 공유를 시작한 뒤 VR/AR 브라우저에서 이미지와 동영상을 열어 SBS를 3D로 볼 수 있습니다.";
 "Restore Purchases" = "구매 복원";
 "Reset PIN" = "PIN 재설정";
