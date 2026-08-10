@@ -460,9 +460,7 @@ actor DepthEstimator {
         let sourceImage = CIImage(cvPixelBuffer: sourcePixelBuffer)
         let sx = CGFloat(modelSizes.scaled.width) / sourceImage.extent.width
         let sy = CGFloat(modelSizes.scaled.height) / sourceImage.extent.height
-        var scaled = sourceImage.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
-
-        // No model-specific preprocessing needed for the packaged model.
+        let scaled = sourceImage.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
 
         let offsetX = CGFloat(modelSizes.model.width - modelSizes.scaled.width) * 0.5
         let offsetY = CGFloat(modelSizes.model.height - modelSizes.scaled.height) * 0.5
@@ -572,22 +570,13 @@ actor DepthEstimator {
     }
 
     private static func computeFixedModelSizing(width: Int, height: Int, target: IntSize) -> (model: IntSize, scaled: IntSize) {
-        let sourceWidth = max(width, 1)
-        let sourceHeight = max(height, 1)
-        let targetWidth = max(target.width, 1)
-        let targetHeight = max(target.height, 1)
-
-        let scaleX = CGFloat(targetWidth) / CGFloat(sourceWidth)
-        let scaleY = CGFloat(targetHeight) / CGFloat(sourceHeight)
-        let scale = min(scaleX, scaleY)
-
-        let scaledWidth = max(1, Int((CGFloat(sourceWidth) * scale).rounded()))
-        let scaledHeight = max(1, Int((CGFloat(sourceHeight) * scale).rounded()))
-
-        return (
-            model: IntSize(width: targetWidth, height: targetHeight),
-            scaled: IntSize(width: scaledWidth, height: scaledHeight)
-        )
+        // Aspect-fill stretch: every model pixel carries image content. Letterboxing
+        // wasted up to ~45% of the fixed 518×392 input on padding for portrait shots
+        // and fed the model black bars that contaminate depth near the content edge.
+        // The model tolerates the aspect distortion, and the depth map is stretched
+        // back over the source frame by the inverse mapping, so geometry round-trips.
+        let targetSize = IntSize(width: max(target.width, 1), height: max(target.height, 1))
+        return (model: targetSize, scaled: targetSize)
     }
 
     private func imageInputName(for model: MLModel) -> String? {

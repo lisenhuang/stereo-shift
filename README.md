@@ -70,12 +70,15 @@ Model I/O:
 
 - Input: one image feature (named `image`) as a `CVPixelBuffer` (BGRA).
   - The generated interface notes: short side ~`518` and the long side should be a multiple of `14`.
-  - `DepthEstimator` will aspect-fit into a model-sized canvas (letterbox) and records a content rect for later crop-back.
+  - `DepthEstimator` aspect-fill **stretches** the image into the fixed model input so every
+    model pixel carries content (letterboxing wasted up to ~45% of the input on padding for
+    portrait shots and fed the model black bars), and records a content rect for crop-back.
+    Flexible-size models still aspect-fit with minimal padding to a multiple of 14.
 - Output: one image feature named `depth` as a grayscale `CVPixelBuffer` (`kCVPixelFormatType_OneComponent16Half`).
 
 StereoShift postprocess:
 
-- Crop the letterboxed padding away using the recorded content rect, then resize back to the original image/video size.
+- Crop any padding away using the recorded content rect, then resize back to the original image/video size.
 - Standardize the resulting depth buffer into a grayscale BGRA `CVPixelBuffer` for downstream rendering.
 
 ### Depth Anything v3 (Small F16/F32)
@@ -95,15 +98,15 @@ StereoShift postprocess:
 
 ## SBS Rendering Pipeline (Metal GPU)
 
-StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The depth map reaches the GPU as the **raw float16 model output** (model space, letterbox padding intact) — it is never quantized to 8 bits or pre-upscaled on the CPU. The pipeline consists of these compute passes in a single command buffer:
+StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The depth map reaches the GPU as the **raw float16 model output** (model space) — it is never quantized to 8 bits or pre-upscaled on the CPU. The pipeline consists of these compute passes in a single command buffer:
 
-1. **Depth Refine** (`depthRefine` kernel): Joint bilateral filter on the depth map using the RGB frame as the guide. Depth comes from a ~518px model inference, so its edges are blurry and misaligned with image edges; this pass snaps depth discontinuities to image contours, eliminating warp halos. The letterbox crop and the upsample to full resolution happen here in a single edge-aware step (a `depthCrop` parameter maps full-frame UVs into the model-space depth texture), and the same pass normalizes depth to [0, 1] using 2%/98% percentile bounds (histogrammed on the CPU from the raw float16 map) so every image uses the full disparity budget.
+1. **Depth Refine** (`depthRefine` kernel): Joint bilateral filter on the depth map using the RGB frame as the guide. Depth comes from a ~518px model inference, so its edges are blurry and misaligned with image edges; this pass snaps depth discontinuities to image contours, eliminating warp halos. The content crop and the upsample to full resolution happen here in a single edge-aware step (a `depthCrop` parameter maps full-frame UVs into the model-space depth texture), and the same pass normalizes depth to [0, 1] using 2%/98% percentile bounds (histogrammed on the CPU from the raw float16 map) so every image uses the full disparity budget.
 
-2. **Depth Dilate H + V** (`depthDilateAxis` kernel, per eye): Separable max-filter dilation of near depth into the background. The horizontal pass is **directional per eye** — it grows near depth only toward the side where that eye's disocclusion trails (right for the right eye, left for the left eye) — so the clean side of every silhouette keeps true background parallax instead of a flattened halo band. The radius scales with `maxShift` so the dilated band always covers the disocclusion width; the vertical radius is small.
+2. **Depth Dilate H + V** (`depthDilateAxis` kernel, per eye): Small separable max-filter dilation that pushes near depth across the silhouette's transition band (the model-to-output upsample residual plus the anti-aliased color fringe), so edge-mixed pixels travel with the foreground instead of shedding a ghost outline at background depth. The horizontal pass is **directional per eye** — it grows near depth only toward the side where that eye's disocclusion trails (right for the right eye, left for the left eye) — so the clean side of every silhouette keeps true background parallax. The scanline-search warp handles disocclusions itself, so the radius stays small (scaled to the upsample factor, not to `maxShift`).
 
-3. **Depth Feather H + V** (`depthGaussianAxis` kernel, per eye): Separable Gaussian blur sized relative to `maxShift`, converting the hard dilated depth step into a smooth ramp so disocclusions stretch instead of tearing.
+3. **Depth Feather H + V** (`depthGaussianAxis` kernel, per eye): Light separable Gaussian blur (σ ≈ 1.2 px) that anti-aliases the dilated depth steps so the warp's sub-step refinement lands smoothly, without smearing depth across edges.
 
-4. **Stereo Warp — Left/Right Eye** (`stereoWarp` kernel, direction = ∓1): Damped fixed-point iterative inverse warp around a convergence plane — `disparity = (depth − convergence) × maxShift` — placed at the scene's median depth, so content straddles the screen plane instead of floating entirely in front of it. Damping stops the iteration from oscillating across depth steps at silhouettes. After convergence, each pixel is checked against the **undilated** refined depth: if the converged source lands inside a distinctly nearer object, the pixel is disoccluded and is resampled with the local dilated disparity at its own position (pulling background from the visible side) instead of bleeding occluder color. Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
+4. **Stereo Warp — Left/Right Eye** (`stereoWarp` kernel, direction = ∓1): Occlusion-ordered scanline-search inverse warp around a convergence plane — `disparity = (depth − convergence) × maxShift` — placed at the scene's median depth, so content straddles the screen plane instead of floating entirely in front of it. For each output column the kernel scans candidate source offsets from the maximum pop-out disparity toward the maximum recede disparity (in half-pixel steps, up to a bounded iteration count) and stops at the first source column whose disparity maps it onto this pixel. Scanning from the pop-out side makes the nearest surface win wherever several sources overlap, and in disoccluded gaps the scan runs past the silhouette onto the background, stretching it naturally across the hole — occlusion ordering and hole fill both fall out of the scan order, with a final sub-step refinement sample for sub-pixel accuracy. Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
 
 5. **Compose SBS** (`composeSBS` kernel): Copies left and right eye textures side-by-side into a double-width output texture.
 

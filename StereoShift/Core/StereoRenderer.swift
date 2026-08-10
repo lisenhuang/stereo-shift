@@ -222,7 +222,7 @@ final class StereoRenderer {
         session: VideoTemporalSession?
     ) throws -> CVPixelBuffer {
         // Metal GPU path on model-space depth — joint-bilateral refine does the
-        // letterbox crop and the edge-aware upsample in a single float16 pass.
+        // content crop and the edge-aware upsample in a single float16 pass.
         if options.renderEngine == .metal,
            !(session?.metalFailed ?? false),
            let metalRenderer = MetalStereoRenderer.shared {

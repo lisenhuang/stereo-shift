@@ -15,16 +15,16 @@ Both keys live in `StereoShift.xcodeproj/project.pbxproj` and each appears **8 t
 (StereoShift + StereoShiftShareExtension targets × Debug/Release × build configs).
 **All occurrences must stay identical** — update every one, or the build is inconsistent.
 
-Current values: `MARKETING_VERSION = 1.2.6`, `CURRENT_PROJECT_VERSION = 22`.
+Current values: `MARKETING_VERSION = 1.3.0`, `CURRENT_PROJECT_VERSION = 23`.
 
 Quick way to bump the build number across all 8 occurrences (run from repo root, then
 verify with the grep below):
 
 ```bash
-# Build number: 22 -> 23 (the FROM value must match "Current values" above)
-sed -i '' 's/CURRENT_PROJECT_VERSION = 22;/CURRENT_PROJECT_VERSION = 23;/g' StereoShift.xcodeproj/project.pbxproj
-# Version: 1.2.6 -> 1.2.7
-sed -i '' 's/MARKETING_VERSION = 1.2.6;/MARKETING_VERSION = 1.2.7;/g' StereoShift.xcodeproj/project.pbxproj
+# Build number: 23 -> 24 (the FROM value must match "Current values" above)
+sed -i '' 's/CURRENT_PROJECT_VERSION = 23;/CURRENT_PROJECT_VERSION = 24;/g' StereoShift.xcodeproj/project.pbxproj
+# Version: 1.3.0 -> 1.3.1
+sed -i '' 's/MARKETING_VERSION = 1.3.0;/MARKETING_VERSION = 1.3.1;/g' StereoShift.xcodeproj/project.pbxproj
 
 # Verify both now show a single, updated value across all 8 sites:
 grep -oE '(MARKETING_VERSION|CURRENT_PROJECT_VERSION) = [^;]+' StereoShift.xcodeproj/project.pbxproj | sort | uniq -c
@@ -54,9 +54,10 @@ Layout (`StereoShift/`):
   owns the Metal branch and CPU/CIKernel fallbacks
 - `MetalStereoRenderer.swift` + `StereoShaders.metal` — the production GPU path:
   depth refine (RGB-guided joint bilateral, consumes the raw float16 model output and
-  does the letterbox crop + upsample in one pass) → per-eye directional max-dilate →
-  Gaussian feather → damped iterative inverse warp around a convergence plane with a
-  sharp-depth disocclusion test → SBS compose
+  does the crop + upsample in one pass; the model input is aspect-fill stretched, so
+  every model pixel is content) → per-eye directional max-dilate → light Gaussian
+  feather → occlusion-ordered scanline-search inverse warp around a convergence plane
+  (nearest surface wins by scan order; disocclusions stretch background) → SBS compose
 - `VideoProcessor.swift` — AVFoundation read → per-frame depth + SBS → H.264 write;
   uses a `VideoTemporalSession` to smooth depth stats across frames
 - `SpatialMediaConverter.swift` — splits MV-HEVC spatial media into SBS
