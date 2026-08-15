@@ -15,16 +15,16 @@ Both keys live in `StereoShift.xcodeproj/project.pbxproj` and each appears **8 t
 (StereoShift + StereoShiftShareExtension targets × Debug/Release × build configs).
 **All occurrences must stay identical** — update every one, or the build is inconsistent.
 
-Current values: `MARKETING_VERSION = 1.3.0`, `CURRENT_PROJECT_VERSION = 23`.
+Current values: `MARKETING_VERSION = 1.4.0`, `CURRENT_PROJECT_VERSION = 24`.
 
 Quick way to bump the build number across all 8 occurrences (run from repo root, then
 verify with the grep below):
 
 ```bash
-# Build number: 23 -> 24 (the FROM value must match "Current values" above)
-sed -i '' 's/CURRENT_PROJECT_VERSION = 23;/CURRENT_PROJECT_VERSION = 24;/g' StereoShift.xcodeproj/project.pbxproj
-# Version: 1.3.0 -> 1.3.1
-sed -i '' 's/MARKETING_VERSION = 1.3.0;/MARKETING_VERSION = 1.3.1;/g' StereoShift.xcodeproj/project.pbxproj
+# Build number: 24 -> 25 (the FROM value must match "Current values" above)
+sed -i '' 's/CURRENT_PROJECT_VERSION = 24;/CURRENT_PROJECT_VERSION = 25;/g' StereoShift.xcodeproj/project.pbxproj
+# Version: 1.4.0 -> 1.4.1
+sed -i '' 's/MARKETING_VERSION = 1.4.0;/MARKETING_VERSION = 1.4.1;/g' StereoShift.xcodeproj/project.pbxproj
 
 # Verify both now show a single, updated value across all 8 sites:
 grep -oE '(MARKETING_VERSION|CURRENT_PROJECT_VERSION) = [^;]+' StereoShift.xcodeproj/project.pbxproj | sort | uniq -c

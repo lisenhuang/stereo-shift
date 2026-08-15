@@ -2,6 +2,7 @@ import AVFoundation
 import CoreImage
 import ImageIO
 import PhotosUI
+import StoreKit
 import SwiftUI
 import UniformTypeIdentifiers
 import UIKit
@@ -858,6 +859,7 @@ private struct GalleryItemDetailView: View {
     let item: GalleryItem
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.requestReview) private var requestReview
 
     @State private var showShareSheet = false
     @State private var showDiskExportPicker = false
@@ -867,6 +869,7 @@ private struct GalleryItemDetailView: View {
     @State private var isDeleting = false
     @State private var saveMessageKey: LocalizedStringKey?
     @State private var errorMessage: String?
+    @State private var reviewPromptTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -943,7 +946,10 @@ private struct GalleryItemDetailView: View {
                 }
             }
             .sheet(isPresented: $showShareSheet) {
-                ShareSheet(items: [item.url])
+                ShareSheet(items: [item.url]) { completed in
+                    guard completed else { return }
+                    scheduleReviewPromptAfterVideoExport()
+                }
             }
             .sheet(isPresented: $showDiskExportPicker) {
                 DiskExportPicker(sourceURL: item.url) { didSave in
@@ -952,6 +958,7 @@ private struct GalleryItemDetailView: View {
                         showDiskExportPicker = false
                         if didSave {
                             saveMessageKey = "Saved to Disk."
+                            scheduleReviewPromptAfterVideoExport()
                         }
                     }
                 }
@@ -961,6 +968,9 @@ private struct GalleryItemDetailView: View {
                     isSavingToDisk = true
                     saveMessageKey = nil
                 }
+            }
+            .onDisappear {
+                reviewPromptTask?.cancel()
             }
             .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
                 Button("OK", role: .cancel) {
@@ -1024,6 +1034,7 @@ private struct GalleryItemDetailView: View {
                 await MainActor.run {
                     isSaving = false
                     saveMessageKey = "Saved to Photos."
+                    scheduleReviewPromptAfterVideoExport()
                 }
             } catch {
                 await MainActor.run {
@@ -1031,6 +1042,23 @@ private struct GalleryItemDetailView: View {
                     errorMessage = error.localizedDescription
                 }
             }
+        }
+    }
+
+    /// Exporting a photo is a couple of seconds of work, so only video counts towards the
+    /// review prompt — the same rule the video flow follows.
+    private func scheduleReviewPromptAfterVideoExport() {
+        guard item.type == .video else { return }
+
+        ReviewPrompter.shared.recordSuccessfulVideoExport()
+        guard ReviewPrompter.shared.shouldPromptNow else { return }
+
+        reviewPromptTask?.cancel()
+        reviewPromptTask = Task {
+            try? await Task.sleep(for: ReviewPrompter.promptDelay)
+            guard !Task.isCancelled else { return }
+            ReviewPrompter.shared.recordPromptShown()
+            requestReview()
         }
     }
 

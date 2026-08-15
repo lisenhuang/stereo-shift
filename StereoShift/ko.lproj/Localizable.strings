@@ -1,6 +1,7 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D를 3D 나란히(SBS)로 변환";
 "3D Strength" = "3D 강도";
+"A new version of StereoShift is available with the latest improvements." = "최신 개선 사항이 포함된 StereoShift의 새 버전을 사용할 수 있습니다.";
 "Add from Disk" = "디스크에서 추가";
 "Add from Photos" = "사진 앱에서 추가";
 "Added to In-App Gallery." = "앱 내 갤러리에 추가되었습니다.";
@@ -36,6 +37,7 @@
 "Input" = "입력";
 "Importing…" = "가져오는 중…";
 "Language" = "언어";
+"Later" = "나중에";
 "Light" = "라이트";
 "Loading photo…" = "사진 불러오는 중…";
 "Loading video…" = "동영상 불러오는 중…";
@@ -92,6 +94,8 @@
 "Strong" = "강함";
 "Subtle" = "약함";
 "Terms of Use (EULA)" = "이용 약관(EULA)";
+"Update" = "업데이트";
+"Update Available" = "업데이트 사용 가능";
 "Web share URL:" = "웹 공유 주소:";
 "Web Share requires Wi-Fi connection." = "웹 공유를 사용하려면 Wi-Fi 또는 개인용 핫스팟이 필요합니다.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "웹 공유를 시작한 뒤 VR/AR 브라우저에서 이미지와 동영상을 열어 SBS를 3D로 볼 수 있습니다.";

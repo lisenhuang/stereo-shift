@@ -23,6 +23,8 @@ struct HomeView: View {
     @StateObject private var galleryLibrary = AppGalleryLibrary()
     @StateObject private var galleryWebServer = GalleryWebServer()
     @StateObject private var subscriptionManager = SubscriptionManager()
+    @StateObject private var updateChecker = AppUpdateChecker()
+    @Environment(\.openURL) private var openURL
     @State private var mode: Mode = .photo
     @State private var inputMode: InputMediaMode = .regular2D
     @State private var strength: Float = 0.80
@@ -114,6 +116,32 @@ struct HomeView: View {
                 }
                 .sheet(isPresented: $showVideoSubscriptionSheet) {
                     VideoSubscriptionPaywallView(subscriptionManager: subscriptionManager)
+                }
+                .alert(
+                    "Update Available",
+                    isPresented: Binding(
+                        get: { updateChecker.availableUpdate != nil },
+                        set: { isPresented in
+                            if !isPresented {
+                                updateChecker.dismiss()
+                            }
+                        }
+                    )
+                ) {
+                    Button("Update") {
+                        if let update = updateChecker.availableUpdate {
+                            openURL(update.storeURL)
+                        }
+                        updateChecker.dismiss()
+                    }
+                    Button("Later", role: .cancel) {
+                        updateChecker.dismiss()
+                    }
+                } message: {
+                    Text("A new version of StereoShift is available with the latest improvements.")
+                }
+                .task {
+                    await updateChecker.check()
                 }
             }
         }

@@ -1,6 +1,7 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D 转 3D 并排（SBS）";
 "3D Strength" = "3D 强度";
+"A new version of StereoShift is available with the latest improvements." = "StereoShift 有新版本可用，包含最新改进。";
 "Add from Disk" = "从磁盘添加";
 "Add from Photos" = "从照片添加";
 "Added to In-App Gallery." = "已添加到应用内画廊。";
@@ -36,6 +37,7 @@
 "Input" = "输入";
 "Importing…" = "导入中…";
 "Language" = "语言";
+"Later" = "稍后";
 "Light" = "浅色";
 "Loading photo…" = "正在加载照片…";
 "Loading video…" = "正在加载视频…";
@@ -93,6 +95,8 @@
 "Strong" = "强烈";
 "Subtle" = "轻微";
 "Terms of Use (EULA)" = "使用条款（EULA）";
+"Update" = "更新";
+"Update Available" = "有可用更新";
 "Web share URL:" = "网页共享地址：";
 "Web Share requires Wi-Fi connection." = "网页共享需要 Wi-Fi 或个人热点。";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "启动网页共享后，可在 VR/AR 浏览器中访问图片和视频，并以 3D 模式观看 SBS。";

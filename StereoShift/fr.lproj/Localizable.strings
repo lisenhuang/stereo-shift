@@ -1,6 +1,7 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "2D vers 3D cote a cote (SBS)";
 "3D Strength" = "Intensite 3D";
+"A new version of StereoShift is available with the latest improvements." = "Une nouvelle version de StereoShift est disponible avec les dernières améliorations.";
 "Add from Disk" = "Ajouter depuis le disque";
 "Add from Photos" = "Ajouter depuis Photos";
 "Added to In-App Gallery." = "Ajoute a la galerie integree.";
@@ -36,6 +37,7 @@
 "Input" = "Entree";
 "Importing…" = "Importation…";
 "Language" = "Langue";
+"Later" = "Plus tard";
 "Light" = "Clair";
 "Loading photo…" = "Chargement de la photo…";
 "Loading video…" = "Chargement de la video…";
@@ -92,6 +94,8 @@
 "Strong" = "Fort";
 "Subtle" = "Leger";
 "Terms of Use (EULA)" = "Conditions d'utilisation (EULA)";
+"Update" = "Mettre à jour";
+"Update Available" = "Mise à jour disponible";
 "Web share URL:" = "URL du partage Web :";
 "Web Share requires Wi-Fi connection." = "Le partage Web necessite le Wi-Fi ou le partage de connexion.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "Demarrez le partage Web, puis ouvrez-le dans un navigateur VR/AR pour voir les photos et videos SBS en 3D.";

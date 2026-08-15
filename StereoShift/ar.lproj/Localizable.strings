@@ -1,6 +1,7 @@
 "2D" = "2D";
 "2D to 3D Side-by-Side" = "من 2D إلى 3D جنبًا إلى جنب (SBS)";
 "3D Strength" = "قوة 3D";
+"A new version of StereoShift is available with the latest improvements." = "يتوفر إصدار جديد من StereoShift يتضمن أحدث التحسينات.";
 "Add from Disk" = "إضافة من القرص";
 "Add from Photos" = "إضافة من الصور";
 "Added to In-App Gallery." = "تمت الإضافة إلى المعرض داخل التطبيق.";
@@ -36,6 +37,7 @@
 "Input" = "الإدخال";
 "Importing…" = "جارٍ الاستيراد…";
 "Language" = "اللغة";
+"Later" = "لاحقًا";
 "Light" = "فاتح";
 "Loading photo…" = "جارٍ تحميل الصورة…";
 "Loading video…" = "جارٍ تحميل الفيديو…";
@@ -92,6 +94,8 @@
 "Strong" = "قوي";
 "Subtle" = "خفيف";
 "Terms of Use (EULA)" = "شروط الاستخدام (EULA)";
+"Update" = "تحديث";
+"Update Available" = "تحديث متوفر";
 "Web share URL:" = "رابط مشاركة الويب:";
 "Web Share requires Wi-Fi connection." = "مشاركة الويب تتطلب Wi-Fi أو نقطة اتصال شخصية.";
 "Web share uses local ports 80/443 and redirects HTTP to HTTPS." = "ابدأ مشاركة الويب، ثم افتحها في متصفح VR/AR لعرض صور وفيديوهات SBS بنمط 3D.";

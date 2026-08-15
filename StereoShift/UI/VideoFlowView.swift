@@ -1,5 +1,6 @@
 import AVKit
 import PhotosUI
+import StoreKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -14,6 +15,8 @@ struct VideoFlowView: View {
     let onRequireSubscription: () -> Void
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
+
+    @Environment(\.requestReview) private var requestReview
 
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceVideoURL: URL?
@@ -36,6 +39,7 @@ struct VideoFlowView: View {
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var processingTask: Task<Void, Never>?
+    @State private var reviewPromptTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 16) {
@@ -112,7 +116,10 @@ struct VideoFlowView: View {
                     .disabled(isProcessing || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
-                    ShareSheet(items: [outputVideoURL])
+                    ShareSheet(items: [outputVideoURL]) { completed in
+                        guard completed else { return }
+                        scheduleReviewPromptAfterVideoExport()
+                    }
                 }
 
                 if let saveMessageKey {
@@ -151,6 +158,7 @@ struct VideoFlowView: View {
             updateScreenAwakeLock(isActive: false)
             selectionTask?.cancel()
             processingTask?.cancel()
+            reviewPromptTask?.cancel()
             onProcessingStateChanged(false)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
@@ -184,6 +192,7 @@ struct VideoFlowView: View {
             switch result {
             case .success:
                 saveMessageKey = "Saved to Disk."
+                scheduleReviewPromptAfterVideoExport()
             case let .failure(error):
                 if !isUserCancelledError(error) {
                     errorMessage = error.localizedDescription
@@ -517,6 +526,7 @@ struct VideoFlowView: View {
                 await MainActor.run {
                     isSaving = false
                     saveMessageKey = "Saved to Photos."
+                    scheduleReviewPromptAfterVideoExport()
                 }
             } catch {
                 await MainActor.run {
@@ -539,6 +549,19 @@ struct VideoFlowView: View {
             showSaveToDiskMover = true
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    private func scheduleReviewPromptAfterVideoExport() {
+        ReviewPrompter.shared.recordSuccessfulVideoExport()
+        guard ReviewPrompter.shared.shouldPromptNow else { return }
+
+        reviewPromptTask?.cancel()
+        reviewPromptTask = Task {
+            try? await Task.sleep(for: ReviewPrompter.promptDelay)
+            guard !Task.isCancelled else { return }
+            ReviewPrompter.shared.recordPromptShown()
+            requestReview()
         }
     }
 
