@@ -1,140 +1,288 @@
-# StereoShift (V1)
+<div align="center">
 
-StereoShift is a minimal iOS 17+ SwiftUI app that converts:
+# 🥽 StereoShift
 
-- One 2D photo -> Side-by-Side (Left|Right) stereo image
-- One 2D video -> Side-by-Side (Left|Right) stereo video
+### Turn any flat photo or video into 3D — entirely on your iPhone.
 
-All processing runs on-device.
+`2D in` → `AI depth` → `GPU stereo warp` → `Side-by-Side 3D out`
 
-## Tech Stack
+**iOS 17+ · SwiftUI · Core ML · Metal · 100% on-device · No servers, no uploads**
 
-- Swift + SwiftUI
-- Core ML (`apple/coreml-depth-anything-v2-small`, Small F16)
-- AVFoundation reader/writer pipeline
-- Metal GPU-accelerated stereo rendering pipeline
+</div>
 
-## Project Layout
+---
 
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/App`
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/UI`
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Core`
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Resources`
+## ▶️ Watch the intro
 
-## Model Setup
+[![StereoShift — intro video](https://img.youtube.com/vi/jkezZdtaT8s/maxresdefault.jpg)](https://www.youtube.com/watch?v=jkezZdtaT8s)
 
-1. Download and install the model package:
+> 🎬 **[Watch on YouTube →](https://www.youtube.com/watch?v=jkezZdtaT8s)** — a short walkthrough of the app and what the results look like.
 
-```bash
-/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/scripts/download_depth_anything_v2.sh
+---
+
+## 📱 What it is
+
+You give it an ordinary photo or video. It gives you back a **side-by-side 3D**
+version you can watch in a VR headset, on a 3D display, or with cheap cardboard
+glasses.
+
+No cloud. No account. No upload. Everything happens on the phone, in seconds.
+
+| | Feature | Notes |
+|:--:|:--|:--|
+| 📷 | **Photo → 3D** | Any photo, any resolution, up to 12MP+ |
+| 🎬 | **Video → 3D** | H.264 MP4, original audio kept |
+| 🥽 | **Spatial media** | Splits Apple MV-HEVC spatial video into SBS |
+| 🎚 | **3D Strength slider** | Subtle → Balanced → Strong, capped for viewing comfort |
+| 🔒 | **Fully offline** | Nothing ever leaves the device |
+| 📤 | **Share extension** | Send media straight from Photos into the app |
+| 🌐 | **Web Share** | Serve results to a headset on the same Wi-Fi |
+| 🌍 | **9 languages** | EN · ZH · JA · KO · ES · FR · PT-BR · HI · AR |
+
+---
+
+## 🎯 The whole idea, in one picture
+
+```
+      A normal 2D photo                    What StereoShift makes
+   ┌────────────────────┐            ┌──────────┬──────────┐
+   │                    │            │          │          │
+   │      🌳    🏠      │    ──▶     │  🌳  🏠  │ 🌳   🏠  │
+   │                    │            │          │          │
+   └────────────────────┘            └──────────┴──────────┘
+     one flat viewpoint                LEFT eye    RIGHT eye
+                                     each object shifted by
+                                       how far away it is
 ```
 
-2. The script installs Small F16 by default. The model package path is:
+Your two eyes sit about 6.5 cm apart, so they never see quite the same picture.
+Close things land in noticeably different places; distant things barely move.
+Your brain reads that difference as **depth**.
 
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Resources/DepthAnythingV2SmallF16.mlpackage`
+So to fake 3D from a flat photo, we only need to answer one question — and then
+act on it:
 
-`DepthEstimator` will load either compiled `.mlmodelc` or compile `.mlpackage` at runtime.
+> **"How far away is every pixel?"**
 
-## Build & Run
+---
 
-1. Open `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift.xcodeproj`
-2. Select an iOS 17+ device or simulator
-3. Build and run
-4. Pick a photo or video, adjust `3D Strength`, tap `Generate`
+## ⚙️ How 2D becomes 3D — the four moves
 
-## Output Formats
+```
+  ┌───────────┐    ┌───────────┐    ┌───────────┐    ┌───────────┐
+  │  1. INPUT │    │ 2. DEPTH  │    │ 3. WARP   │    │ 4. OUTPUT │
+  ├───────────┤    ├───────────┤    ├───────────┤    ├───────────┤
+  │ 📷 photo  │───▶│ Core ML   │───▶│  Metal    │───▶│ 🖼 PNG    │
+  │ 🎬 video  │    │ neural    │    │  compute  │    │ 🎞 MP4    │
+  │ 🥽 spatial│    │ net       │    │  shaders  │    │  (L | R)  │
+  └───────────┘    └───────────┘    └───────────┘    └───────────┘
+                    "how far is        "move each
+                     each pixel?"       pixel by
+                                        its depth"
+```
 
-- Photo output: PNG (saved temporary file + share sheet + save to Photos)
-- Video output: MP4 (H.264), SBS frame width is doubled
+### 1️⃣ Guess the depth 🧠
 
-Video conversion preserves the original audio track when possible.
+A neural network looks at the flat image and outputs a **depth map** — a
+greyscale picture where bright means near and dark means far. It has never
+measured anything; it has simply seen enough photos to know that this shape,
+at this size, with this blur, is probably close.
 
-## Depth Pipelines (v2 vs v3)
+```
+     the photo                 the depth map
+   ┌────────────┐            ┌────────────┐
+   │  🏠        │            │ ░░░░░      │   ░ far  (background)
+   │      🌳    │    ──▶     │ ░░▓▓▓░     │   ▓ mid
+   │   🧍       │            │ ███▓▓░     │   █ near (the person)
+   └────────────┘            └────────────┘
+```
 
-StereoShift uses the same high-level flow for all depth models:
+A real one — a teddy bear, straight out of the model:
 
-1. Preprocess the input `CVPixelBuffer` into the model's expected size/format.
-2. Run Core ML inference.
-3. Decode the model output into a normalized depth buffer.
-4. Crop/resize the depth buffer back to the original media dimensions.
-5. Feed the depth buffer into the SBS renderer (shared for v2/v3).
+<p align="center">
+  <img src="docs/images/depth-map-example.png" alt="Depth map of a teddy bear: feet and belly bright (near), ears and background dark (far)" width="260">
+</p>
 
-Implementation references:
+Read it like a contour map. The **feet and belly are almost white** — they are
+closest to the lens. The **ears and shoulders fade to grey** as the bear curves
+away. The **background is pure black** — infinitely far. Even the nose picks up
+a bright spot, because it sticks out.
 
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Core/DepthEstimator.swift`
-- `/Users/easonsmith/Desktop/practice/StereoShift/StereoShift/StereoShift/Core/StereoRenderer.swift`
+That single greyscale image is all the geometry we get. Everything after this
+step is just acting on it.
 
-### Depth Anything v2 (Small F16/F32)
+This runs on the **Neural Engine**, the chip Apple built for exactly this.
 
-Model I/O:
+### 2️⃣ Sharpen the depth map ✂️
 
-- Input: one image feature (named `image`) as a `CVPixelBuffer` (BGRA).
-  - The generated interface notes: short side ~`518` and the long side should be a multiple of `14`.
-  - `DepthEstimator` aspect-fill **stretches** the image into the fixed model input so every
-    model pixel carries content (letterboxing wasted up to ~45% of the input on padding for
-    portrait shots and fed the model black bars), and records a content rect for crop-back.
-    Flexible-size models still aspect-fit with minimal padding to a multiple of 14.
-- Output: one image feature named `depth` as a grayscale `CVPixelBuffer` (`kCVPixelFormatType_OneComponent16Half`).
+The model works at roughly 518 px, so its depth map is small and blurry — its
+edges don't line up with the real edges in your photo. Warping with a sloppy
+depth map produces a visible halo around people.
 
-StereoShift postprocess:
+So the depth map is re-sharpened **using the colour image as a guide**: where
+the photo has a hard edge, the depth is forced to have one too.
 
-- Crop any padding away using the recorded content rect, then resize back to the original image/video size.
-- Standardize the resulting depth buffer into a grayscale BGRA `CVPixelBuffer` for downstream rendering.
+```
+   blurry depth edge          guided by colour           snapped depth edge
+     ▓▓▒▒░░░░                  │ real edge │                 ▓▓▓│░░░
+     ▓▓▒▒░░░░        +         │  is here  │      ──▶        ▓▓▓│░░░
+     ▓▓▒▒░░░░                  │           │                 ▓▓▓│░░░
+```
 
-### Depth Anything v3 (Small F16/F32)
+### 3️⃣ Shift every pixel by its depth ↔️
 
-Model I/O:
+Now build two images: one for the left eye, one for the right. Each pixel slides
+sideways by an amount taken straight from its depth.
 
-- Input: one image feature (named `image`) as a `CVPixelBuffer` (BGRA), fixed `518x518`.
-- Output: one `MLMultiArray` (named `var_7994`) with shape `1x518x518` (Float16 or Float32).
+```
+                       LEFT eye        RIGHT eye
+   near  █████████      → → →            ← ← ←        big shift
+   mid   ▓▓▓▓▓▓▓▓▓       → →              ← ←         some shift
+   far   ░░░░░░░░░        ·                ·          no shift
+                     ────────────────────────────
+                        the "screen plane"
+```
 
-StereoShift postprocess:
+Anything nearer than the screen plane pops **out** of the screen; anything
+further recedes **behind** it. The plane sits at the scene's middle depth, so
+the picture straddles the screen instead of floating awkwardly in front of it.
 
-- Convert the `MLMultiArray` to an 8-bit normalized depth map using percentile clipping to avoid outliers:
-  - F16: 1%..99%
-  - F32: 0.5%..99.5%
-- Invert polarity for v3 so the renderer always uses the convention: larger depth value = closer.
-- Crop/resize depth back to the original size like v2.
+The `3D Strength` slider is the one knob you touch: it scales how far pixels are
+allowed to move — **Subtle → Balanced → Strong**. It does not change the depth map;
+the AI's guess about what is near and far stays identical. Only the size of the
+shift changes.
 
-## SBS Rendering Pipeline (Metal GPU)
+That shift is capped at **2.5% of the frame width**. Past roughly that point your
+eyes have to diverge uncomfortably to fuse the image, which is what makes bad 3D
+give people headaches. The cap holds even at maximum strength.
 
-StereoShift uses a Metal compute shader pipeline for stereo rendering, running entirely on the GPU for maximum speed. The depth map reaches the GPU as the **raw float16 model output** (model space) — it is never quantized to 8 bits or pre-upscaled on the CPU. The pipeline consists of these compute passes in a single command buffer:
+### 4️⃣ Fill the gaps and stitch 🩹
 
-1. **Depth Refine** (`depthRefine` kernel): Joint bilateral filter on the depth map using the RGB frame as the guide. Depth comes from a ~518px model inference, so its edges are blurry and misaligned with image edges; this pass snaps depth discontinuities to image contours, eliminating warp halos. The content crop and the upsample to full resolution happen here in a single edge-aware step (a `depthCrop` parameter maps full-frame UVs into the model-space depth texture), and the same pass normalizes depth to [0, 1] using 2%/98% percentile bounds (histogrammed on the CPU from the raw float16 map) so every image uses the full disparity budget.
+Shifting a foreground object sideways uncovers background that was never
+photographed — a hole. StereoShift fills these while warping: for each output
+pixel it **scans** across possible source pixels, nearest-first. Two useful
+things fall out of that scan order for free:
 
-2. **Depth Dilate H + V** (`depthDilateAxis` kernel, per eye): Small separable max-filter dilation that pushes near depth across the silhouette's transition band (the model-to-output upsample residual plus the anti-aliased color fringe), so edge-mixed pixels travel with the foreground instead of shedding a ghost outline at background depth. The horizontal pass is **directional per eye** — it grows near depth only toward the side where that eye's disocclusion trails (right for the right eye, left for the left eye) — so the clean side of every silhouette keeps true background parallax. The scanline-search warp handles disocclusions itself, so the radius stays small (scaled to the upsample factor, not to `maxShift`).
+- 🥇 When several pixels compete for the same spot, the **nearest one wins** — which is exactly what real occlusion does.
+- 🩹 Inside a hole, the scan runs past the object's edge onto the background and **stretches it across the gap** — no separate repair pass needed.
 
-3. **Depth Feather H + V** (`depthGaussianAxis` kernel, per eye): Light separable Gaussian blur (σ ≈ 1.2 px) that anti-aliases the dilated depth steps so the warp's sub-step refinement lands smoothly, without smearing depth across edges.
+Finally the two eye images are copied into one double-width frame:
 
-4. **Stereo Warp — Left/Right Eye** (`stereoWarp` kernel, direction = ∓1): Occlusion-ordered scanline-search inverse warp around a convergence plane — `disparity = (depth − convergence) × maxShift` — placed at the scene's median depth, so content straddles the screen plane instead of floating entirely in front of it. For each output column the kernel scans candidate source offsets from the maximum pop-out disparity toward the maximum recede disparity (in half-pixel steps, up to a bounded iteration count) and stops at the first source column whose disparity maps it onto this pixel. Scanning from the pop-out side makes the nearest surface win wherever several sources overlap, and in disoccluded gaps the scan runs past the silhouette onto the background, stretching it naturally across the hole — occlusion ordering and hole fill both fall out of the scan order, with a final sub-step refinement sample for sub-pixel accuracy. Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
+```
+   ┌──────────┬──────────┐
+   │   LEFT   │  RIGHT   │   ← this is the file you get
+   └──────────┴──────────┘
+```
 
-5. **Compose SBS** (`composeSBS` kernel): Copies left and right eye textures side-by-side into a double-width output texture.
+For **video**, all of this repeats per frame, with the depth scale smoothed
+across frames so the 3D doesn't pulse. Audio is carried through untouched.
 
-Key implementation details:
+---
 
-- All passes use Metal compute kernels dispatched via `MTLComputeCommandEncoder`
-- CVPixelBuffer ↔ MTLTexture conversion uses `CVMetalTextureCache` for zero-copy GPU access
-- `maxShift` is derived from `baselinePerEye × 3D Strength × (width / 1440)` — proportional to frame width so all resolutions get the same perceived depth — and capped at 2.5% of width for comfort
-- For video, depth normalization statistics are exponentially smoothed across frames (`StereoRenderer.makeSBSVideoFrame`) to prevent depth-scale flicker
-- CPU and CIKernel render engines are preserved as fallbacks if Metal is unavailable; they still receive the full-resolution 8-bit postprocessed depth
+## 🎮 Under the hood: one GPU pass
 
-Implementation references:
+Steps 2–4 above are five Metal compute kernels, dispatched in a **single command
+buffer**, running on the raw model output — never quantised to 8-bit, never
+upscaled on the CPU.
 
-- `StereoShift/Core/StereoShaders.metal` — Metal compute kernels
-- `StereoShift/Core/MetalStereoRenderer.swift` — GPU pipeline manager
-- `StereoShift/Core/StereoRenderer.swift` — render engine routing
+```
+   RGB frame ──────────────────────────────┐
+                                           ▼
+   depth (518px, blurry)  ──▶  ① REFINE  ──▶ crisp full-res depth
+                                 edge-aware upscale + normalise
+                                           │
+                                           ├─────────────┬─────────────┐
+                                           ▼             ▼             │
+                                     ② DILATE      ② DILATE           │
+                                     (left eye)    (right eye)         │
+                                           │             │             │
+                                           ▼             ▼             │
+                                     ③ FEATHER     ③ FEATHER          │
+                                           │             │             │
+                                           ▼             ▼             │
+                                     ④ WARP ◀──────────────────────────┘
+                                     left        right
+                                           │             │
+                                           └──────┬──────┘
+                                                  ▼
+                                            ⑤ COMPOSE
+                                           ┌──────┬──────┐
+                                           │  L   │  R   │  ← double-width output
+                                           └──────┴──────┘
+```
 
-## Manual Test Checklist
+| # | Pass | Job |
+|:--:|:--|:--|
+| ① | **Depth Refine** | RGB-guided bilateral filter: crop, upsample and snap depth edges to image edges, all in one step |
+| ② | **Directional Dilate** | Grows near-depth across a silhouette's fuzzy band, only toward the side where that eye's hole opens |
+| ③ | **Feather** | Light Gaussian (σ ≈ 1.2 px) so the warp lands smoothly instead of on hard steps |
+| ④ | **Stereo Warp** | The occlusion-ordered scanline search described above, per eye |
+| ⑤ | **Compose SBS** | Copies both eyes into one double-width texture |
 
-- Portrait photo
-- Landscape photo
-- High-resolution photo (12MP)
-- Short video (5-10s)
-- Longer video (1-2 min)
+<details>
+<summary><b>A few implementation notes</b></summary>
 
-Verify:
+<br>
 
-- App does not crash
-- Output opens in Photos
-- Strength slider visibly changes depth effect
-- UI follows system light/dark appearance
+- `CVPixelBuffer ↔ MTLTexture` via `CVMetalTextureCache` — zero-copy GPU access.
+- Maximum shift is `baselinePerEye × Strength × (width / 1440)`, capped at **2.5%** of frame width for viewing comfort. Scaling by width means every resolution gets the same *perceived* depth.
+- Depth is normalised with 2% / 98% percentile bounds, so one bright outlier can't eat the disparity budget.
+- Behind-screen disparity tapers to zero near the left/right borders to avoid edge smearing.
+- CPU and CIKernel renderers are kept as fallbacks if Metal is unavailable.
+
+</details>
+
+---
+
+## 🧰 Tech stack
+
+| Layer | Technology |
+|:--|:--|
+| 🖼 UI | Swift + SwiftUI (iOS 17+) |
+| 🧠 Depth AI | Core ML — `Depth Anything V2 Small F16` |
+| 🎮 Rendering | Metal compute shaders — Apple's direct pipe to the GPU, so all 12 million pixels move at once instead of one after another |
+| 🎞 Media I/O | AVFoundation reader / writer |
+
+```
+StereoShift/
+├── App/        🚀  entry point, theme, language
+├── UI/         🎨  Home · Photo flow · Video flow · Gallery
+├── Core/       ⚙️  the whole conversion pipeline
+│   ├── DepthEstimator.swift        🧠 Core ML depth
+│   ├── StereoRenderer.swift        🧭 engine routing + depth stats
+│   ├── MetalStereoRenderer.swift   🎮 GPU pipeline manager
+│   ├── StereoShaders.metal         ✨ the compute kernels
+│   ├── VideoProcessor.swift        🎬 frame-by-frame video path
+│   └── SpatialMediaConverter.swift 🥽 MV-HEVC → SBS
+└── Resources/  📦  DepthAnythingV2SmallF16.mlpackage
+```
+
+---
+
+## 🚀 Getting started
+
+```bash
+# 1 · Fetch the depth model
+./scripts/download_depth_anything_v2.sh
+
+# 2 · Open the project
+open StereoShift.xcodeproj
+```
+
+**3** · Pick an iOS 17+ device or simulator → **Run** ▶️
+**4** · Choose a photo or video → drag **3D Strength** → tap **Generate** ✨
+
+```bash
+# Build (no signing needed)
+xcodebuild -project StereoShift.xcodeproj -scheme StereoShift \
+  -destination 'generic/platform=iOS Simulator' -configuration Debug build \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+---
+
+<div align="center">
+
+**Built with Swift, Metal and a lot of staring at edge artefacts.** 🥽
+
+</div>
