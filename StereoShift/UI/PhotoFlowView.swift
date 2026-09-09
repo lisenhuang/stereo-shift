@@ -10,6 +10,7 @@ struct PhotoFlowView: View {
     @Binding var sbsLayoutEnabled: Bool
     @Binding var stereo3DOptions: Stereo3DOptions
     @ObservedObject var galleryLibrary: AppGalleryLibrary
+    @ObservedObject var depthModelStore: DepthModelStore
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
 
@@ -19,6 +20,8 @@ struct PhotoFlowView: View {
     @State private var sourceEmbeddedDepth: CVPixelBuffer?
     @State private var outputImage: CGImage?
     @State private var outputFileURL: URL?
+    /// Depth model that produced `outputFileURL`; nil for spatial splits.
+    @State private var outputModel: DepthModel?
     @State private var isLoadingSelection = false
     @State private var isGenerating = false
     @State private var isSaving = false
@@ -157,6 +160,9 @@ struct PhotoFlowView: View {
         }
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()
+        }
+        .onChange(of: depthModelStore.selectedModel) { _, _ in
+            clearRenderCache()
         }
         .onChange(of: isGenerating) { _, newValue in
             updateScreenAwakeLock(isActive: newValue)
@@ -439,6 +445,7 @@ struct PhotoFlowView: View {
                     await MainActor.run {
                         outputImage = output
                         outputFileURL = fileURL
+                        outputModel = nil
                         saveMessageKey = nil
                         isGenerating = false
                         onGenerated()
@@ -466,13 +473,20 @@ struct PhotoFlowView: View {
 
         let renderer = pipeline.stereoRenderer
         let depthEstimator = pipeline.depthEstimator
+        let store = depthModelStore
         let appliedStrength = strength
         var appliedOptions = stereo3DOptions
-        appliedOptions.depthModel = .depthAnythingV2SmallF16
+        appliedOptions.depthModel = store.selectedModel
         appliedOptions.renderEngine = .metal
         appliedOptions.renderProfile = .ultraFast
+        let appliedModel = appliedOptions.depthModel
 
+        // Keeps model removal, benchmark and install off the estimator while it is in use.
+        store.beginConversion()
         generateTask = Task.detached(priority: .userInitiated) {
+            defer {
+                Task { @MainActor in store.endConversion() }
+            }
             do {
                 try Task.checkCancellation()
                 let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: sourceImage)
@@ -489,7 +503,11 @@ struct PhotoFlowView: View {
                 )
                 let output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
                 let jpegQuality: Float = 0.95
-                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
+                let fileURL = try TempFiles.writeJPEG(
+                    cgImage: output,
+                    prefix: Self.outputFilePrefix("stereoshift-photo", model: appliedModel),
+                    quality: jpegQuality
+                )
 
                 if Task.isCancelled {
                     TempFiles.removeItemIfExists(at: fileURL)
@@ -499,6 +517,7 @@ struct PhotoFlowView: View {
                 await MainActor.run {
                     outputImage = output
                     outputFileURL = fileURL
+                    outputModel = appliedModel
                     saveMessageKey = nil
                     isGenerating = false
                     onGenerated()
@@ -511,6 +530,14 @@ struct PhotoFlowView: View {
                     return
                 }
                 await MainActor.run {
+                    // A downloaded model that no longer loads is dropped from the
+                    // selection (the stack-level alert explains the switch); run once
+                    // more with the bundled model so the tap still yields a result.
+                    // A failure of the bundled model itself is a real error.
+                    if !appliedModel.isBundled, store.handleModelLoadFailure(appliedModel, error: error) {
+                        generateSBSPhoto()
+                        return
+                    }
                     isGenerating = false
                     errorMessage = error.localizedDescription
                 }
@@ -519,7 +546,17 @@ struct PhotoFlowView: View {
     }
 
     private func clearRenderCache() {
-        // No-op: strength changes no longer trigger automatic regeneration.
+        // No-op: strength changes no longer trigger automatic regeneration. Still called
+        // when the source or the selected depth model changes so a cache can return
+        // without touching the call sites.
+    }
+
+    /// Exported files carry the depth model id (`stereoshift-photo-<model>-<uuid>.jpg`)
+    /// so A/B outputs from different models stay distinguishable. Pure, hence
+    /// `nonisolated`: the detached render task calls it off the main actor.
+    nonisolated private static func outputFilePrefix(_ base: String, model: DepthModel?) -> String {
+        guard let model else { return base }
+        return "\(base)-\(model.rawValue)"
     }
 
     private func cancelGenerating() {
@@ -589,7 +626,10 @@ struct PhotoFlowView: View {
 
         do {
             let extensionName = outputFileURL.pathExtension.isEmpty ? "png" : outputFileURL.pathExtension
-            let temporaryExportURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-photo-export", fileExtension: extensionName)
+            let temporaryExportURL = try TempFiles.makeTemporaryFileURL(
+                prefix: Self.outputFilePrefix("stereoshift-photo-export", model: outputModel),
+                fileExtension: extensionName
+            )
             try FileManager.default.copyItem(at: outputFileURL, to: temporaryExportURL)
             saveToDiskSourceURL = temporaryExportURL
             showSaveToDiskMover = true
@@ -639,6 +679,8 @@ struct PhotoFlowView: View {
 
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                     .disabled(true)
+
+                depthModelRow
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)
@@ -655,5 +697,16 @@ struct PhotoFlowView: View {
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private var depthModelRow: some View {
+        HStack {
+            Text("Depth Model")
+                .font(.subheadline)
+            Spacer()
+            Text(verbatim: depthModelStore.selectedModel.displayName)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+        }
     }
 }

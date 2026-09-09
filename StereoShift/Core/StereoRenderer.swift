@@ -229,6 +229,7 @@ final class StereoRenderer {
             let width = CVPixelBufferGetWidth(rgb)
             let clampedStrength = max(0, min(1.5, strength))
             let preset = RefinedServerPreset.forProfile(options.renderProfile)
+            let tuning = options.depthModel.tuning
 
             var stats = metalDepthStats(for: rawDepth)
             if let session {
@@ -240,7 +241,7 @@ final class StereoRenderer {
                     // the several frames an EMA would take to catch up.
                     let alpha: Float = 0.4
                     let jump = max(abs(stats.lo - previous.lo), abs(stats.hi - previous.hi))
-                    if jump <= 0.12 {
+                    if jump <= tuning.temporalJumpThreshold {
                         stats = (
                             lo: previous.lo + ((stats.lo - previous.lo) * alpha),
                             hi: previous.hi + ((stats.hi - previous.hi) * alpha),
@@ -256,7 +257,7 @@ final class StereoRenderer {
             // so percentile normalization doesn't stretch depth-map quantization noise
             // into visible wobble on nearly-flat content (skies, walls, far landscapes).
             let range = max(stats.hi - stats.lo, 0.0001)
-            let rangeConfidence = min(1, range / 0.25)
+            let rangeConfidence = min(1, range / tuning.rangeConfidenceScale)
             let widthScale = Float(width) / 1440
             let maxShift = min(preset.baselinePerEye * clampedStrength * widthScale, Float(width) * 0.025) * rangeConfidence
 
@@ -273,6 +274,7 @@ final class StereoRenderer {
                         convergence: convergence,
                         depthMin: stats.lo,
                         depthMax: stats.hi,
+                        depthGamma: tuning.depthGamma,
                         depthCrop: rawDepth.normalizedCrop
                     )
                 )
@@ -309,6 +311,7 @@ final class StereoRenderer {
             let width = CVPixelBufferGetWidth(rgb)
             let clampedStrength = max(0, min(1.5, strength))
             let preset = RefinedServerPreset.forProfile(options.renderProfile)
+            let tuning = options.depthModel.tuning
 
             var stats = metalDepthStats(for: depth)
             if let session {
@@ -320,7 +323,7 @@ final class StereoRenderer {
                     // the several frames an EMA would take to catch up.
                     let alpha: Float = 0.4
                     let jump = max(abs(stats.lo - previous.lo), abs(stats.hi - previous.hi))
-                    if jump <= 0.12 {
+                    if jump <= tuning.temporalJumpThreshold {
                         stats = (
                             lo: previous.lo + ((stats.lo - previous.lo) * alpha),
                             hi: previous.hi + ((stats.hi - previous.hi) * alpha),
@@ -336,7 +339,7 @@ final class StereoRenderer {
             // so percentile normalization doesn't stretch depth-map quantization noise
             // into visible wobble on nearly-flat content (skies, walls, far landscapes).
             let range = max(stats.hi - stats.lo, 0.0001)
-            let rangeConfidence = min(1, range / 0.25)
+            let rangeConfidence = min(1, range / tuning.rangeConfidenceScale)
             let widthScale = Float(width) / 1440
             let maxShift = min(preset.baselinePerEye * clampedStrength * widthScale, Float(width) * 0.025) * rangeConfidence
 
@@ -352,7 +355,8 @@ final class StereoRenderer {
                         maxShift: maxShift,
                         convergence: convergence,
                         depthMin: stats.lo,
-                        depthMax: stats.hi
+                        depthMax: stats.hi,
+                        depthGamma: tuning.depthGamma
                     )
                 )
             } catch {
@@ -507,8 +511,8 @@ final class StereoRenderer {
         let stepX = max(1, Int(rect.width) / 192)
         let stepY = max(1, Int(rect.height) / 192)
 
-        // Raw model depth is normalized to [0, 1] (verified for Depth Anything v2);
-        // clamp defensively so an out-of-range future model can't skew the bounds.
+        // Raw model depth is normalized to [0, 1] by DepthOutputAdapter for every model;
+        // clamp defensively so a contract regression can't skew the bounds.
         let binCount = 4096
         var histogram = [Int](repeating: 0, count: binCount)
         var total = 0

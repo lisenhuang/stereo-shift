@@ -124,7 +124,9 @@ final class MetalStereoRenderer {
         // the left, so near depth is grown only toward that side. The clean side of
         // every silhouette keeps true background parallax, and keeping the radius
         // small keeps the fringe strip that rides along with the foreground narrow.
-        let modelScale = Float(width) / 518
+        // Upsample factor from the depth texture to the output; depth models of any
+        // resolution (518×392, 504×504, …) get the same transition-band coverage.
+        let modelScale = Float(width) / Float(max(rawDepthTexture.width, 1))
         let dilateHRadius = max(2, min(20, Int(min(modelScale * 2, maxShift * 0.5).rounded())))
         let dilateVRadius = max(1, min(6, dilateHRadius / 2))
         // Light feather: just enough to anti-alias dilated depth steps so the warp's

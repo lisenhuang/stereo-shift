@@ -28,11 +28,42 @@ enum StereoPipelineError: LocalizedError {
     case temporaryFileCreationFailed
     case photoLibraryAccessDenied
     case metalDeviceUnavailable
+    case modelContractViolation(String)
+    case depthOutputDegenerate
+    case modelNotInstalled(String)
+    case modelDownloadFailed(String)
+    case modelChecksumMismatch
+    case modelCompileFailed(String)
+    case insufficientStorage(requiredBytes: Int64)
+    case unsupportedDevice(String)
+    case modelBusy
+    case modelUpdateRefused(String)
 
     var errorDescription: String? {
         switch self {
         case .modelNotFound:
-            return "Depth model is missing. Add the required .mlmodelc to StereoShift/Resources and try again."
+            return "Depth model is missing. Download it from Settings, or add the .mlmodelc to StereoShift/Resources, and try again."
+        case let .modelContractViolation(reason):
+            return "Depth model does not match the expected input/output contract: \(reason)"
+        case .depthOutputDegenerate:
+            return "Depth model produced a flat or invalid depth map."
+        case let .modelNotInstalled(name):
+            return "\(name) is not installed. Download it from Settings."
+        case let .modelDownloadFailed(reason):
+            return "Model download failed: \(reason)"
+        case .modelChecksumMismatch:
+            return "Downloaded model file failed verification."
+        case let .modelCompileFailed(reason):
+            return "Model could not be prepared on this device: \(reason)"
+        case let .insufficientStorage(requiredBytes):
+            let formatted = ByteCountFormatter.string(fromByteCount: requiredBytes, countStyle: .file)
+            return "Not enough free space. About \(formatted) is required."
+        case let .unsupportedDevice(reason):
+            return "This model is not supported on this device: \(reason)"
+        case .modelBusy:
+            return "The depth model is busy. Wait for the current conversion to finish."
+        case let .modelUpdateRefused(reason):
+            return reason
         case .modelInputNotFound:
             return "Model input could not be resolved."
         case .modelOutputNotFound:

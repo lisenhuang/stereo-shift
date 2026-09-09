@@ -51,6 +51,7 @@ struct HomeView: View {
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
                                 stereo3DOptions: $stereo3DOptions,
                                 galleryLibrary: galleryLibrary,
+                                depthModelStore: pipeline.depthModelStore,
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
                                 },
@@ -67,6 +68,7 @@ struct HomeView: View {
                                 stereo3DOptions: $stereo3DOptions,
                                 subscriptionManager: subscriptionManager,
                                 galleryLibrary: galleryLibrary,
+                                depthModelStore: pipeline.depthModelStore,
                                 onRequireSubscription: {
                                     showVideoSubscriptionSheet = true
                                 },
@@ -99,6 +101,7 @@ struct HomeView: View {
                             .disabled(isProcessing)
                         }
 
+                        settingsLink
                         themeMenu
                         languageMenu
 
@@ -145,6 +148,7 @@ struct HomeView: View {
                 }
             }
         }
+        .modifier(DepthModelSelectionResetAlert(store: pipeline.depthModelStore))
     }
 
     private var headerCard: some View {
@@ -214,6 +218,15 @@ struct HomeView: View {
         } set: { value in
             appThemeRawValue = value.rawValue
         }
+    }
+
+    private var settingsLink: some View {
+        NavigationLink {
+            SettingsView(store: pipeline.depthModelStore, isConversionRunning: isProcessing)
+        } label: {
+            Label("Settings", systemImage: "gearshape")
+        }
+        .disabled(isProcessing)
     }
 
     private var themeMenu: some View {

@@ -2,9 +2,10 @@ import CoreImage
 import CoreML
 import Foundation
 
-/// Depth straight from the model, still in model-output space (float16 for Depth
-/// Anything v2) — not letterbox-cropped, not upscaled, not quantized to 8-bit.
-/// The Metal renderer consumes this directly so depth keeps full precision and the
+/// Depth straight from the model, in model-output space — not letterbox-cropped, not
+/// upscaled, not quantized to 8-bit. Every model reaches this shape through
+/// `DepthOutputAdapter`: OneComponent16Half, values in [0, 1], larger = nearer. The
+/// Metal renderer consumes it directly so depth keeps full precision and the
 /// joint-bilateral refine does a single edge-aware upsample to full resolution.
 struct RawDepthMap: @unchecked Sendable {
     /// Model-output-space depth buffer. Larger value = closer to the camera.
@@ -15,6 +16,27 @@ struct RawDepthMap: @unchecked Sendable {
     /// Pixel size of the source image the depth was predicted from.
     let originalWidth: Int
     let originalHeight: Int
+    /// Model that produced this map (drives per-model tuning and output labelling).
+    let sourceModel: DepthModel
+    /// Wall-clock seconds spent in `MLModel.prediction` for this map (0 when derived
+    /// from other maps, e.g. temporal blending).
+    let inferenceSeconds: Double
+
+    init(
+        depth: CVPixelBuffer,
+        contentRect: CGRect,
+        originalWidth: Int,
+        originalHeight: Int,
+        sourceModel: DepthModel = .bundledDefault,
+        inferenceSeconds: Double = 0
+    ) {
+        self.depth = depth
+        self.contentRect = contentRect
+        self.originalWidth = originalWidth
+        self.originalHeight = originalHeight
+        self.sourceModel = sourceModel
+        self.inferenceSeconds = inferenceSeconds
+    }
 
     /// `contentRect` expressed in normalized depth-texture coordinates
     /// (origin u/v + size u/v), ready for the GPU.
@@ -37,6 +59,24 @@ struct RawDepthMap: @unchecked Sendable {
     }
 }
 
+/// Timing of the most recent prediction, for the Settings benchmark and video ETA.
+struct DepthInferenceStats: Sendable {
+    let model: DepthModel
+    let seconds: Double
+    let computeUnits: MLComputeUnits
+    let timestamp: Date
+}
+
+/// Result of `DepthEstimator.benchmark(model:iterations:)`.
+struct DepthBenchmarkResult: Sendable {
+    let model: DepthModel
+    let iterations: Int
+    let loadSeconds: Double
+    let firstInferenceSeconds: Double
+    let medianInferenceSeconds: Double
+    let computeUnits: MLComputeUnits
+}
+
 actor DepthEstimator {
     private struct IntSize {
         var width: Int
@@ -49,20 +89,38 @@ actor DepthEstimator {
         let contentRect: CGRect
     }
 
+    private struct LoadedModel {
+        let model: MLModel
+        let computeUnits: MLComputeUnits
+        let url: URL
+    }
+
+    private struct RawPrediction {
+        let depth: CVPixelBuffer
+        let metadata: PreprocessMetadata
+        let inferenceSeconds: Double
+    }
+
     private let longSideMultiple: Int = 14
 
-    private var loadedModels: [DepthModel: MLModel] = [:]
+    private var loadedModels: [DepthModel: LoadedModel] = [:]
+    private var loadingTasks: [DepthModel: Task<LoadedModel, Error>] = [:]
     private var compiledModelURLs: [URL: URL] = [:]
+    private var inFlightPredictions = 0
+    private var lastInference: DepthInferenceStats?
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
+
+    // MARK: - Prediction API
 
     func predictDepth(pixelBuffer: CVPixelBuffer) async throws -> CVPixelBuffer {
         try await predictDepth(
             pixelBuffer: pixelBuffer,
-            model: .depthAnythingV2SmallF16,
+            model: .bundledDefault,
             quality: .quality
         )
     }
 
+    /// Full-resolution 8-bit depth for the CPU/CIKernel fallback paths.
     func predictDepth(pixelBuffer: CVPixelBuffer, model: DepthModel, quality: DepthQuality) async throws -> CVPixelBuffer {
         let raw = try await predictRawDepthBuffer(pixelBuffer: pixelBuffer, model: model, quality: quality)
         let depth = try postprocess(depth: raw.depth, metadata: raw.metadata)
@@ -90,86 +148,165 @@ actor DepthEstimator {
             depth: raw.depth,
             contentRect: contentRect,
             originalWidth: raw.metadata.originalSize.width,
-            originalHeight: raw.metadata.originalSize.height
+            originalHeight: raw.metadata.originalSize.height,
+            sourceModel: model,
+            inferenceSeconds: raw.inferenceSeconds
         )
     }
+
+    // MARK: - Model lifecycle API
+
+    /// Loads (and validates) a model ahead of first use so the first photo or frame
+    /// does not pay the load + Neural Engine compile cost.
+    func preload(_ model: DepthModel) async throws {
+        _ = try await loadModel(model)
+    }
+
+    func isLoaded(_ model: DepthModel) -> Bool {
+        loadedModels[model] != nil
+    }
+
+    func unload(_ model: DepthModel) {
+        loadedModels[model] = nil
+    }
+
+    func unloadAll() {
+        loadedModels.removeAll()
+    }
+
+    /// Memory-pressure hook: drops downloaded models when no prediction is running.
+    /// The bundled model is small and stays resident.
+    func unloadIfIdle() {
+        guard inFlightPredictions == 0 else { return }
+        loadedModels = loadedModels.filter { $0.key.isBundled }
+    }
+
+    func lastInferenceStats() -> DepthInferenceStats? {
+        lastInference
+    }
+
+    /// Loads the model, runs a warm-up prediction and `iterations` timed predictions on
+    /// a synthetic image. Used at install time (contract + warm-up) and by the Settings
+    /// benchmark. Refuses to run while a conversion is using the estimator.
+    func benchmark(model: DepthModel, iterations: Int = 5) async throws -> DepthBenchmarkResult {
+        guard inFlightPredictions == 0 else {
+            throw StereoPipelineError.modelBusy
+        }
+
+        let clock = ContinuousClock()
+        let loadStart = clock.now
+        let loaded = try await loadModel(model)
+        let loadSeconds = Self.seconds(clock.now - loadStart)
+        // A conversion may have started while the load was suspended; do not run the
+        // timed predictions alongside it.
+        guard inFlightPredictions == 0 else {
+            throw StereoPipelineError.modelBusy
+        }
+
+        let input = try Self.makeSyntheticInput(width: 512, height: 384)
+        let first = try await predictRawDepthBuffer(pixelBuffer: input, model: model, quality: .quality)
+
+        var timings: [Double] = []
+        for _ in 0..<max(1, iterations) {
+            let raw = try await predictRawDepthBuffer(pixelBuffer: input, model: model, quality: .quality)
+            timings.append(raw.inferenceSeconds)
+        }
+        timings.sort()
+
+        return DepthBenchmarkResult(
+            model: model,
+            iterations: timings.count,
+            loadSeconds: loadSeconds,
+            firstInferenceSeconds: first.inferenceSeconds,
+            medianInferenceSeconds: timings[timings.count / 2],
+            computeUnits: loaded.computeUnits
+        )
+    }
+
+    // MARK: - Prediction internals
 
     private func predictRawDepthBuffer(
         pixelBuffer: CVPixelBuffer,
         model depthModel: DepthModel,
         quality: DepthQuality
-    ) async throws -> (depth: CVPixelBuffer, metadata: PreprocessMetadata) {
-        let model = try loadModel(depthModel)
-        let prepared = try preprocess(pixelBuffer, depthModel: depthModel, model: model, quality: quality)
-        let provider = try featureProvider(for: prepared.pixelBuffer, model: model)
+    ) async throws -> RawPrediction {
+        let loaded = try await loadModel(depthModel)
+        let prepared = try preprocess(pixelBuffer, depthModel: depthModel, model: loaded.model, quality: quality)
+        let provider = try featureProvider(for: prepared.pixelBuffer, model: loaded.model)
 
+        inFlightPredictions += 1
+        defer { inFlightPredictions -= 1 }
+
+        let clock = ContinuousClock()
+        let start = clock.now
+        let model = loaded.model
         let prediction = try await Task.detached(priority: .userInitiated) {
             try model.prediction(from: provider)
         }.value
+        let inferenceSeconds = Self.seconds(clock.now - start)
 
-        var rawDepth = try depthOutput(from: prediction)
-        rawDepth = try invertDepthIfNeeded(rawDepth, model: depthModel)
-        // Hand the renderer a self-owned copy: Core ML output buffers are reused
-        // between predictions and are not guaranteed to be Metal-cache friendly.
-        rawDepth = try copyPixelBuffer(rawDepth)
-        return (rawDepth, prepared.metadata)
+        // Every model family lands in the same buffer shape here; nothing downstream
+        // needs to know whether the model emitted an image or a multi-array, or
+        // whether it predicts disparity or depth.
+        let rawDepth = try DepthOutputAdapter.canonicalDepth(from: prediction, spec: depthModel.outputSpec)
+
+        lastInference = DepthInferenceStats(
+            model: depthModel,
+            seconds: inferenceSeconds,
+            computeUnits: loaded.computeUnits,
+            timestamp: Date()
+        )
+        return RawPrediction(depth: rawDepth, metadata: prepared.metadata, inferenceSeconds: inferenceSeconds)
     }
 
-    private func copyPixelBuffer(_ source: CVPixelBuffer) throws -> CVPixelBuffer {
-        let width = CVPixelBufferGetWidth(source)
-        let height = CVPixelBufferGetHeight(source)
-        let format = CVPixelBufferGetPixelFormatType(source)
-        let copy = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: format)
+    // MARK: - Loading
 
-        CVPixelBufferLockBaseAddress(source, .readOnly)
-        CVPixelBufferLockBaseAddress(copy, [])
-        defer {
-            CVPixelBufferUnlockBaseAddress(copy, [])
-            CVPixelBufferUnlockBaseAddress(source, .readOnly)
+    private func loadModel(_ depthModel: DepthModel) async throws -> LoadedModel {
+        if let loaded = loadedModels[depthModel] {
+            return loaded
+        }
+        if let task = loadingTasks[depthModel] {
+            return try await task.value
         }
 
-        guard let sourceBase = CVPixelBufferGetBaseAddress(source),
-              let copyBase = CVPixelBufferGetBaseAddress(copy) else {
-            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        let task = Task<LoadedModel, Error> {
+            try await self.performLoad(depthModel)
         }
+        loadingTasks[depthModel] = task
+        defer { loadingTasks[depthModel] = nil }
 
-        let sourceBytesPerRow = CVPixelBufferGetBytesPerRow(source)
-        let copyBytesPerRow = CVPixelBufferGetBytesPerRow(copy)
-        let rowBytes = min(sourceBytesPerRow, copyBytesPerRow)
-        for y in 0..<height {
-            memcpy(
-                copyBase.advanced(by: y * copyBytesPerRow),
-                sourceBase.advanced(by: y * sourceBytesPerRow),
-                rowBytes
-            )
-        }
-        return copy
+        let loaded = try await task.value
+        loadedModels[depthModel] = loaded
+        return loaded
     }
 
-    private func invertDepthIfNeeded(_ depth: CVPixelBuffer, model: DepthModel) throws -> CVPixelBuffer {
-        // Only Depth Anything v2 Small F16 is packaged. Keep hook for future model variants.
-        _ = model
-        return depth
-    }
-
-    private func loadModel(_ depthModel: DepthModel) throws -> MLModel {
-        if let model = loadedModels[depthModel] {
-            return model
-        }
-
+    private func performLoad(_ depthModel: DepthModel) async throws -> LoadedModel {
         guard let modelURL = try locateModelURL(depthModel) else {
-            throw StereoPipelineError.modelNotFound
+            if depthModel.isBundled {
+                throw StereoPipelineError.modelNotFound
+            }
+            throw StereoPipelineError.modelNotInstalled(depthModel.displayName)
+        }
+
+        // Single-resident policy for downloaded models: a 0.35B ViT-L must never share
+        // memory with another download. The bundled model may stay resident.
+        if !depthModel.isBundled {
+            for key in loadedModels.keys where !key.isBundled && key != depthModel {
+                loadedModels[key] = nil
+            }
         }
 
         var lastError: Error?
-
-        for computeUnits in preferredComputeUnitOrder {
+        for computeUnits in computeUnitOrder(for: depthModel) {
             do {
                 let configuration = MLModelConfiguration()
                 configuration.computeUnits = computeUnits
-                let loadedModel = try MLModel(contentsOf: modelURL, configuration: configuration)
-                loadedModels[depthModel] = loadedModel
-                return loadedModel
+                let model = try await MLModel.load(contentsOf: modelURL, configuration: configuration)
+                // A contract mismatch is a wrong file, not a compute-unit problem.
+                try DepthOutputAdapter.validateContract(model: model, spec: depthModel.outputSpec)
+                return LoadedModel(model: model, computeUnits: computeUnits, url: modelURL)
+            } catch let error as StereoPipelineError {
+                throw error
             } catch {
                 lastError = error
             }
@@ -179,6 +316,15 @@ actor DepthEstimator {
             throw lastError
         }
         throw StereoPipelineError.modelNotFound
+    }
+
+    private func computeUnitOrder(for depthModel: DepthModel) -> [MLComputeUnits] {
+        var order = preferredComputeUnitOrder
+        if let preferred = depthModel.preferredComputeUnits {
+            order.removeAll { $0 == preferred }
+            order.insert(preferred, at: 0)
+        }
+        return order
     }
 
     private var preferredComputeUnitOrder: [MLComputeUnits] {
@@ -232,7 +378,13 @@ actor DepthEstimator {
         return (false, false)
     }
 
+    /// Resolution order: user-installed model (Application Support) → compiled model
+    /// in the bundle → package in the bundle (compiled on first use) → bundle scan.
     private func locateModelURL(_ depthModel: DepthModel) throws -> URL? {
+        if let installed = DepthModelLibrary.installedCompiledModelURL(for: depthModel) {
+            return installed
+        }
+
         let candidateNames = Set(depthModel.resourceNameCandidates)
 
         for name in depthModel.resourceNameCandidates {
@@ -290,6 +442,8 @@ actor DepthEstimator {
         return compiled
     }
 
+    // MARK: - Pre/post-processing
+
     private func featureProvider(for pixelBuffer: CVPixelBuffer, model: MLModel) throws -> MLFeatureProvider {
         guard let inputName = imageInputName(for: model) else {
             throw StereoPipelineError.modelInputNotFound
@@ -297,133 +451,6 @@ actor DepthEstimator {
 
         let value = MLFeatureValue(pixelBuffer: pixelBuffer)
         return try MLDictionaryFeatureProvider(dictionary: [inputName: value])
-    }
-
-    private func depthOutput(from provider: MLFeatureProvider) throws -> CVPixelBuffer {
-        for name in provider.featureNames {
-            if let imageBuffer = provider.featureValue(for: name)?.imageBufferValue {
-                return imageBuffer
-            }
-        }
-
-        for name in provider.featureNames {
-            if let array = provider.featureValue(for: name)?.multiArrayValue {
-                return try pixelBuffer(from: array)
-            }
-        }
-
-        throw StereoPipelineError.modelOutputNotFound
-    }
-
-    private func pixelBuffer(from array: MLMultiArray) throws -> CVPixelBuffer {
-        let shape = array.shape.map { Int(truncating: $0) }
-        guard shape.count >= 2 else {
-            throw StereoPipelineError.invalidDepthArrayShape
-        }
-
-        let height = shape[shape.count - 2]
-        let width = shape[shape.count - 1]
-        let strides = array.strides.map { Int(truncating: $0) }
-        let rowStride = strides[shape.count - 2]
-        let columnStride = strides[shape.count - 1]
-
-        var values = [Float](repeating: 0, count: width * height)
-        var minValue = Float.greatestFiniteMagnitude
-        var maxValue = -Float.greatestFiniteMagnitude
-
-        for y in 0..<height {
-            for x in 0..<width {
-                let linearIndex = (y * rowStride) + (x * columnStride)
-                let value = valueFromMultiArray(array, linearIndex: linearIndex)
-                values[(y * width) + x] = value
-                minValue = min(minValue, value)
-                maxValue = max(maxValue, value)
-            }
-        }
-
-        // Depth Anything v3 (and other depth models that output MLMultiArray) can produce occasional
-        // extreme outliers. Using raw min/max can collapse useful depth contrast (especially for
-        // Float32 models) and make results look worse than Float16. Use percentile clipping to
-        // stabilize normalization.
-        var normalizedMin = minValue
-        var normalizedMax = maxValue
-
-        if values.count > 0 {
-            // Deterministic sampling for performance (avoids sorting the full depth map).
-            let targetSamples = 4096
-            let step = max(1, values.count / max(1, targetSamples))
-            var sample: [Float] = []
-            sample.reserveCapacity(min(targetSamples, values.count))
-
-            var i = 0
-            while i < values.count {
-                sample.append(values[i])
-                i += step
-            }
-
-            if sample.count >= 4 {
-                sample.sort()
-                // Float32 models tend to exhibit larger outliers than Float16. Use a wider clip.
-                let lowPercentile: Double = array.dataType == .float32 ? 0.005 : 0.01
-                let highPercentile: Double = array.dataType == .float32 ? 0.995 : 0.99
-                let lowIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * lowPercentile).rounded(.down))))
-                let highIndex = max(0, min(sample.count - 1, Int((Double(sample.count - 1) * highPercentile).rounded(.down))))
-                let low = sample[lowIndex]
-                let high = sample[highIndex]
-
-                if low.isFinite, high.isFinite, high > low {
-                    normalizedMin = low
-                    normalizedMax = high
-                }
-            }
-        }
-
-        let range = max(normalizedMax - normalizedMin, 0.0001)
-        let pixelBuffer = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: kCVPixelFormatType_OneComponent8)
-
-        CVPixelBufferLockBaseAddress(pixelBuffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
-
-        guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer) else {
-            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
-        }
-
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(pixelBuffer)
-        let pointer = baseAddress.bindMemory(to: UInt8.self, capacity: bytesPerRow * height)
-
-        for y in 0..<height {
-            let row = pointer.advanced(by: y * bytesPerRow)
-            for x in 0..<width {
-                let value = values[(y * width) + x]
-                let clipped = max(normalizedMin, min(normalizedMax, value))
-                let normalized = (clipped - normalizedMin) / range
-                row[x] = UInt8(max(0, min(255, Int((normalized * 255).rounded()))))
-            }
-        }
-
-        return pixelBuffer
-    }
-
-    private func valueFromMultiArray(_ array: MLMultiArray, linearIndex: Int) -> Float {
-        switch array.dataType {
-        case .double:
-            let pointer = array.dataPointer.bindMemory(to: Double.self, capacity: array.count)
-            return Float(pointer[linearIndex])
-        case .float32:
-            let pointer = array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
-            return pointer[linearIndex]
-        case .float16:
-            let pointer = array.dataPointer.bindMemory(to: UInt16.self, capacity: array.count)
-            return Float(Float16(bitPattern: pointer[linearIndex]))
-        case .int32:
-            let pointer = array.dataPointer.bindMemory(to: Int32.self, capacity: array.count)
-            return Float(pointer[linearIndex])
-        case .int8:
-            let pointer = array.dataPointer.bindMemory(to: Int8.self, capacity: array.count)
-            return Float(pointer[linearIndex])
-        @unknown default:
-            return 0
-        }
     }
 
     private func preprocess(
@@ -575,6 +602,7 @@ actor DepthEstimator {
         // and fed the model black bars that contaminate depth near the content edge.
         // The model tolerates the aspect distortion, and the depth map is stretched
         // back over the source frame by the inverse mapping, so geometry round-trips.
+        // Works for any fixed input size, square (504×504) included.
         let targetSize = IntSize(width: max(target.width, 1), height: max(target.height, 1))
         return (model: targetSize, scaled: targetSize)
     }
@@ -603,5 +631,43 @@ actor DepthEstimator {
         }
 
         return IntSize(width: width, height: height)
+    }
+
+    // MARK: - Helpers
+
+    private static func seconds(_ duration: Duration) -> Double {
+        let components = duration.components
+        return Double(components.seconds) + (Double(components.attoseconds) / 1e18)
+    }
+
+    /// A BGRA test card (smooth gradient plus a bright disc) for warm-up and benchmarks.
+    /// Not a polarity reference — that needs a real photo with known near/far regions.
+    private static func makeSyntheticInput(width: Int, height: Int) throws -> CVPixelBuffer {
+        let buffer = try PixelBufferUtilities.makePixelBuffer(width: width, height: height, pixelFormat: kCVPixelFormatType_32BGRA)
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        guard let base = CVPixelBufferGetBaseAddress(buffer) else {
+            throw StereoPipelineError.pixelBufferBaseAddressUnavailable
+        }
+        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+        let centerX = Double(width) * 0.5
+        let centerY = Double(height) * 0.55
+        let radius = Double(min(width, height)) * 0.22
+
+        for y in 0..<height {
+            let row = base.advanced(by: y * bytesPerRow).bindMemory(to: UInt8.self, capacity: width * 4)
+            for x in 0..<width {
+                let dx = Double(x) - centerX
+                let dy = Double(y) - centerY
+                let inDisc = (dx * dx) + (dy * dy) < radius * radius
+                let shade = UInt8(40 + (Double(y) / Double(max(height - 1, 1))) * 150)
+                let offset = x * 4
+                row[offset] = inDisc ? 230 : shade          // B
+                row[offset + 1] = inDisc ? 200 : shade      // G
+                row[offset + 2] = inDisc ? 120 : shade      // R
+                row[offset + 3] = 255                       // A
+            }
+        }
+        return buffer
     }
 }

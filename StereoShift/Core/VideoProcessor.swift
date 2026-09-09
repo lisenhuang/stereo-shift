@@ -319,10 +319,16 @@ final class VideoProcessor {
         let width = CVPixelBufferGetWidth(curr)
         let height = CVPixelBufferGetHeight(curr)
 
-        guard CVPixelBufferGetPixelFormatType(prev) == kCVPixelFormatType_OneComponent16Half,
-              CVPixelBufferGetPixelFormatType(curr) == kCVPixelFormatType_OneComponent16Half,
-              CVPixelBufferGetWidth(prev) == width,
-              CVPixelBufferGetHeight(prev) == height,
+        // `DepthOutputAdapter` guarantees OneComponent16Half at model resolution for
+        // every model, so a mismatch here is a contract regression that would silently
+        // turn temporal smoothing off. Assert in DEBUG, degrade gracefully in release.
+        let buffersCompatible = CVPixelBufferGetPixelFormatType(prev) == kCVPixelFormatType_OneComponent16Half
+            && CVPixelBufferGetPixelFormatType(curr) == kCVPixelFormatType_OneComponent16Half
+            && CVPixelBufferGetWidth(prev) == width
+            && CVPixelBufferGetHeight(prev) == height
+        assert(buffersCompatible, "blendRawDepth: raw depth must be OneComponent16Half at a stable model resolution")
+
+        guard buffersCompatible,
               let output = try? PixelBufferUtilities.makePixelBuffer(
                   width: width,
                   height: height,
@@ -368,7 +374,9 @@ final class VideoProcessor {
             depth: output,
             contentRect: current.contentRect,
             originalWidth: current.originalWidth,
-            originalHeight: current.originalHeight
+            originalHeight: current.originalHeight,
+            sourceModel: current.sourceModel,
+            inferenceSeconds: current.inferenceSeconds
         )
     }
 

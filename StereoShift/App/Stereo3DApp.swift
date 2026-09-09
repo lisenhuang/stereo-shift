@@ -3,6 +3,10 @@ import SwiftUI
 
 @main
 struct Stereo3DApp: App {
+#if canImport(UIKit)
+    // Background URLSession launch events for depth model downloads (see AppDelegate).
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+#endif
     @AppStorage("appLanguage") private var appLanguageRawValue = AppLanguage.system.rawValue
     @AppStorage("appTheme") private var appThemeRawValue = AppTheme.system.rawValue
 

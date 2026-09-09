@@ -1,0 +1,190 @@
+{
+  "schemaVersion": 1,
+  "minAppBuild": 25,
+  "models": [
+    {
+      "id": "DepthAnythingV2SmallF16",
+      "version": "bundled",
+      "format": "bundled",
+      "packageName": "DepthAnythingV2SmallF16.mlpackage",
+      "tier": "small",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "sourceURL": "https://huggingface.co/apple/coreml-depth-anything-v2-small",
+      "inputWidth": 518,
+      "inputHeight": 392,
+      "minimumOS": "17.0",
+      "minimumPhysicalMemoryGB": null,
+      "recommendedPhysicalMemoryGB": null,
+      "estimatedPeakMemoryMB": null,
+      "visible": true,
+      "recommended": true,
+      "videoRecommended": true,
+      "files": [],
+      "provenance": {
+        "sourceRepo": "apple/coreml-depth-anything-v2-small",
+        "sourceRevision": null,
+        "converter": "Apple coremltools port (DepthAnythingV2SmallF16.mlpackage)"
+      }
+    },
+    {
+      "id": "DepthAnythingV3SmallF16",
+      "version": "2026.09.1",
+      "format": "mlpackage",
+      "packageName": "DepthAnythingV3_small_504.mlpackage",
+      "tier": "small",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "sourceURL": "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Small-CoreML",
+      "inputWidth": 504,
+      "inputHeight": 504,
+      "minimumOS": "17.0",
+      "minimumPhysicalMemoryGB": 3.0,
+      "recommendedPhysicalMemoryGB": 4.0,
+      "estimatedPeakMemoryMB": null,
+      "visible": true,
+      "recommended": false,
+      "videoRecommended": true,
+      "files": [
+        {
+          "path": "Manifest.json",
+          "urls": [
+            "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Small-CoreML/resolve/768d44df07d8d97f1cb6c1e231cfcd7928c3053e/DepthAnythingV3_small_504.mlpackage/Manifest.json",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3SmallF16-2026.09.1-Manifest.json"
+          ],
+          "bytes": 617,
+          "sha256": "2115f70a36f8a7c517cd077c613dc7fc9fb5f1c0968554987ef06a83f756504c"
+        },
+        {
+          "path": "Data/com.apple.CoreML/model.mlmodel",
+          "urls": [
+            "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Small-CoreML/resolve/768d44df07d8d97f1cb6c1e231cfcd7928c3053e/DepthAnythingV3_small_504.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3SmallF16-2026.09.1-Data_com.apple.CoreML_model.mlmodel"
+          ],
+          "bytes": 317344,
+          "sha256": "a020ba5653ae81cd04f10b52fb99624d14f3bda9ac84c00c2d9cb85c6a310c52"
+        },
+        {
+          "path": "Data/com.apple.CoreML/weights/weight.bin",
+          "urls": [
+            "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Small-CoreML/resolve/768d44df07d8d97f1cb6c1e231cfcd7928c3053e/DepthAnythingV3_small_504.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3SmallF16-2026.09.1-Data_com.apple.CoreML_weights_weight.bin"
+          ],
+          "bytes": 68565888,
+          "sha256": "a4c37eb95467b3e099af1ac34b73d15f5028e5522687e0682d6f7f93d98b7921"
+        }
+      ],
+      "provenance": {
+        "sourceRepo": "mlboydaisuke/Depth-Anything-3-Small-CoreML",
+        "sourceRevision": "768d44df07d8d97f1cb6c1e231cfcd7928c3053e",
+        "converter": "john-rocky/CoreML-Models conversion_scripts/convert_depth_anything_v3.py"
+      }
+    },
+    {
+      "id": "DepthAnythingV3BaseF16",
+      "version": "2026.09.1",
+      "format": "mlpackage",
+      "packageName": "DepthAnythingV3_base_504.mlpackage",
+      "tier": "base",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "sourceURL": "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Base-CoreML",
+      "inputWidth": 504,
+      "inputHeight": 504,
+      "minimumOS": "17.0",
+      "minimumPhysicalMemoryGB": 4.0,
+      "recommendedPhysicalMemoryGB": 6.0,
+      "estimatedPeakMemoryMB": null,
+      "visible": true,
+      "recommended": false,
+      "videoRecommended": false,
+      "files": [
+        {
+          "path": "Manifest.json",
+          "urls": [
+            "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Base-CoreML/resolve/8e2e01d73a6b78f89beaac573ce3a009cf1fbb50/DepthAnythingV3_base_504.mlpackage/Manifest.json",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3BaseF16-2026.09.1-Manifest.json"
+          ],
+          "bytes": 617,
+          "sha256": "20b752a53baf0102afce370e2b39288a8d98ebe24c095e987e90fc61542e58a7"
+        },
+        {
+          "path": "Data/com.apple.CoreML/model.mlmodel",
+          "urls": [
+            "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Base-CoreML/resolve/8e2e01d73a6b78f89beaac573ce3a009cf1fbb50/DepthAnythingV3_base_504.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3BaseF16-2026.09.1-Data_com.apple.CoreML_model.mlmodel"
+          ],
+          "bytes": 317533,
+          "sha256": "1e7e0943bae1c2cd8c58c6d8968f57f7a451b34f152104f80101f1aea535c233"
+        },
+        {
+          "path": "Data/com.apple.CoreML/weights/weight.bin",
+          "urls": [
+            "https://huggingface.co/mlboydaisuke/Depth-Anything-3-Base-CoreML/resolve/8e2e01d73a6b78f89beaac573ce3a009cf1fbb50/DepthAnythingV3_base_504.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3BaseF16-2026.09.1-Data_com.apple.CoreML_weights_weight.bin"
+          ],
+          "bytes": 233223744,
+          "sha256": "7823e9552eef8dff710bb9c51f7b5b7cdbc4c7bd7e06b1a434369f5e8bef1c8b"
+        }
+      ],
+      "provenance": {
+        "sourceRepo": "mlboydaisuke/Depth-Anything-3-Base-CoreML",
+        "sourceRevision": "8e2e01d73a6b78f89beaac573ce3a009cf1fbb50",
+        "converter": "john-rocky/CoreML-Models conversion_scripts/convert_depth_anything_v3.py"
+      }
+    },
+    {
+      "id": "DepthAnythingV3MonoLargeF16",
+      "version": "2026.09.1",
+      "format": "mlpackage",
+      "packageName": "DepthAnythingV3Mono.mlpackage",
+      "tier": "large",
+      "license": "Apache-2.0",
+      "licenseURL": "https://www.apache.org/licenses/LICENSE-2.0",
+      "sourceURL": "https://huggingface.co/sdkv2/DepthAnythingV3Mono-CoreML",
+      "inputWidth": 504,
+      "inputHeight": 504,
+      "minimumOS": "17.0",
+      "minimumPhysicalMemoryGB": 6.0,
+      "recommendedPhysicalMemoryGB": 8.0,
+      "estimatedPeakMemoryMB": null,
+      "visible": true,
+      "recommended": false,
+      "videoRecommended": false,
+      "files": [
+        {
+          "path": "Manifest.json",
+          "urls": [
+            "https://huggingface.co/sdkv2/DepthAnythingV3Mono-CoreML/resolve/b4e4b30b41a4ed5ea75f9764faf9ecf233abc7d6/DepthAnythingV3Mono.mlpackage/Manifest.json",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3MonoLargeF16-2026.09.1-Manifest.json"
+          ],
+          "bytes": 617,
+          "sha256": "e989933bd32fcb7b46e11642000ade454269f5f64597f1a689db7f86431e99fb"
+        },
+        {
+          "path": "Data/com.apple.CoreML/model.mlmodel",
+          "urls": [
+            "https://huggingface.co/sdkv2/DepthAnythingV3Mono-CoreML/resolve/b4e4b30b41a4ed5ea75f9764faf9ecf233abc7d6/DepthAnythingV3Mono.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3MonoLargeF16-2026.09.1-Data_com.apple.CoreML_model.mlmodel"
+          ],
+          "bytes": 323167,
+          "sha256": "646be564e8cc2390092445ee56cd3be3a372bcf3c4b66dbb76da793f1558409e"
+        },
+        {
+          "path": "Data/com.apple.CoreML/weights/weight.bin",
+          "urls": [
+            "https://huggingface.co/sdkv2/DepthAnythingV3Mono-CoreML/resolve/b4e4b30b41a4ed5ea75f9764faf9ecf233abc7d6/DepthAnythingV3Mono.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+            "https://github.com/lisenhuang/stereo-shift/releases/download/models-v1/DepthAnythingV3MonoLargeF16-2026.09.1-Data_com.apple.CoreML_weights_weight.bin"
+          ],
+          "bytes": 668145152,
+          "sha256": "81e54c69cb206ef53ce9aa8665917bc39baed7ebf76f9280c7fd07b9a411c9e9"
+        }
+      ],
+      "provenance": {
+        "sourceRepo": "sdkv2/DepthAnythingV3Mono-CoreML",
+        "sourceRevision": "b4e4b30b41a4ed5ea75f9764faf9ecf233abc7d6",
+        "converter": "sdkv2 coremltools conversion"
+      }
+    }
+  ]
+}
