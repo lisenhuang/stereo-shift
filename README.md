@@ -136,14 +136,81 @@ This runs on the **Neural Engine**, the chip Apple built for exactly this.
   <img src="docs/images/depth-anything-pipeline.png" alt="Depth Anything V2 pipeline: input image, pre-processing, DINOv2 encoder splitting the image into 14x14 patches, DPT depth head fusing multi-scale features, dense depth prediction, upsample to original resolution" width="820">
 </p>
 
-The image is cut into **14×14 patches** and fed through a frozen DINOv2 vision
-transformer, which is why input dimensions must be multiples of 14. Features are
-taken from four different depths of the network — shallow ones carry edges and
-texture, deep ones carry scene layout — and a DPT head fuses all four scales into
-one depth value per pixel.
+#### 🧩 "14×14 patches" — what that actually means
+
+This is the single most misread number in the diagram, so to be exact:
+
+> **14×14 is the size of each patch in pixels. It is not a 14-by-14 grid.**
+
+Every patch is a 14×14-pixel square. The *number* of patches changes with the
+image size. For the 518×392 input this app uses:
+
+```
+   518 ÷ 14 = 37 patches across
+   392 ÷ 14 = 28 patches down
+   ───────────────────────────
+   37 × 28  = 1,036 patches total
+```
+
+```
+   ←──────────────── 518 px ────────────────→
+   ┌────┬────┬────┬────┬────┬─── ... ───┬────┐   ┐
+   │ 14 │ 14 │ 14 │ 14 │ 14 │           │ 14 │   │
+   ├────┼────┼────┼────┼────┼─── ... ───┼────┤   │
+   │    │    │    │    │    │           │    │   │  392 px
+   ├────┼────┼────┼────┼────┼─── ... ───┼────┤   │  (28 rows)
+   │    │    │    │    │    │           │    │   │
+   └────┴────┴────┴────┴────┴─── ... ───┴────┘   ┘
+        37 columns, every tile square
+```
+
+So patches stay **square** whether the picture is square or rectangular. A
+rectangular image simply gets more patches in one direction than the other.
+
+That is also why dimensions must be **multiples of 14**: otherwise a strip along
+one edge would be too thin to form a complete patch, and the transformer has no
+way to handle a partial one.
+
+Each patch becomes one **token** — the same role a word plays in a language
+model. The network then weighs how every patch relates to every other patch,
+which is how it concludes that *this* patch is a nearby arm while *that* patch is
+a distant wall. Depth is not read off any single patch; it emerges from the
+comparison between all 1,036 of them.
+
+#### 🏗 The rest of the network
+
+Features are taken from four different depths of the transformer — shallow ones
+carry edges and texture, deep ones carry scene layout — and a DPT head fuses all
+four scales into one depth value per pixel.
 
 The output is **relative** depth, not metres. It tells you what is nearer than
 what, and nothing about absolute distance.
+
+#### 📐 How StereoShift fits your photo into that box
+
+The published model wants its shorter side at 518 px with the longer side a
+multiple of 14. The build shipped here is converted to a **fixed 518×392** input,
+which is landscape — so every portrait photo has to be made to fit. There are two
+ways to do that, and the choice turned out to matter:
+
+```
+     letterbox (rejected)                 aspect-fill stretch (used)
+  ┌──────┬──────────┬──────┐            ┌──────────────────────────┐
+  │██████│          │██████│            │                          │
+  │██████│  photo   │██████│            │     photo, squashed      │
+  │██████│          │██████│            │                          │
+  └──────┴──────────┴──────┘            └──────────────────────────┘
+   up to ~45% of the input                every patch carries real
+   spent on black bars — which            content; the aspect
+   the model then reads as                distortion is undone on
+   part of the scene                      the way back out
+```
+
+Letterboxing was wasting up to **~45%** of the model input on black bars for
+portrait shots, and those bars contaminated the depth near the content edge. So
+the image is stretched to fill the box instead. The model tolerates the
+distortion, a content rect is recorded, and the depth map is mapped back over the
+original frame by the inverse transform — so the geometry round-trips.
 
 </details>
 
