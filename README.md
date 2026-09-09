@@ -2,11 +2,15 @@
 
 # 🥽 StereoShift
 
-### Turn any flat photo or video into 3D — entirely on your iPhone.
+### Turn any flat photo or video into 3D — entirely on your own device.
 
 `2D in` → `AI depth` → `GPU stereo warp` → `Side-by-Side 3D out`
 
 **iOS 17+ · SwiftUI · Core ML · Metal · 100% on-device · No servers, no uploads**
+
+### 📲 [Download on the App Store](https://apps.apple.com/app/id6759077023)
+
+Runs on **iPhone and Mac**.
 
 </div>
 
@@ -26,7 +30,7 @@ You give it an ordinary photo or video. It gives you back a **side-by-side 3D**
 version you can watch in a VR headset, on a 3D display, or with cheap cardboard
 glasses.
 
-No cloud. No account. No upload. Everything happens on the phone, in seconds.
+No cloud. No account. No upload. Everything happens on your device, in seconds.
 
 | | Feature | Notes |
 |:--:|:--|:--|
@@ -67,6 +71,16 @@ act on it:
 ---
 
 ## ⚙️ How 2D becomes 3D — the four moves
+
+The whole conversion on one page:
+
+<p align="center">
+  <img src="docs/images/sbs-conversion-overview.png" alt="Overview: single image, estimate depth, convert depth to disparity, warp into left and right views, handle holes, combine side-by-side, view in 3D" width="720">
+</p>
+
+> 📌 That diagram is the **general** recipe for depth-based stereo conversion.
+> StereoShift follows it up to the warp, then diverges at hole filling — it does
+> not run an inpainting model. See step 4️⃣.
 
 ```
   ┌───────────┐    ┌───────────┐    ┌───────────┐    ┌───────────┐
@@ -112,6 +126,26 @@ That single greyscale image is all the geometry we get. Everything after this
 step is just acting on it.
 
 This runs on the **Neural Engine**, the chip Apple built for exactly this.
+
+<details>
+<summary>🔬 <b>What happens inside the model</b> (click to expand)</summary>
+
+<br>
+
+<p align="center">
+  <img src="docs/images/depth-anything-pipeline.png" alt="Depth Anything V2 pipeline: input image, pre-processing, DINOv2 encoder splitting the image into 14x14 patches, DPT depth head fusing multi-scale features, dense depth prediction, upsample to original resolution" width="820">
+</p>
+
+The image is cut into **14×14 patches** and fed through a frozen DINOv2 vision
+transformer, which is why input dimensions must be multiples of 14. Features are
+taken from four different depths of the network — shallow ones carry edges and
+texture, deep ones carry scene layout — and a DPT head fuses all four scales into
+one depth value per pixel.
+
+The output is **relative** depth, not metres. It tells you what is nearer than
+what, and nothing about absolute distance.
+
+</details>
 
 ### 2️⃣ Sharpen the depth map ✂️
 
@@ -179,9 +213,70 @@ across frames so the 3D doesn't pulse. Audio is carried through untouched.
 
 ---
 
+## 🧭 An honest limitation: shifting is not rotating
+
+A question worth answering before someone in the audience asks it.
+
+With a **real** stereo camera, the two lenses sit in different places, so each one
+sees the object from a slightly different angle — the left lens catches a little
+more of the object's left side. The object has not turned; the *viewpoint* moved.
+
+```
+        the object                    two real cameras
+       ┌──────┐                    (different viewpoints)
+      /      /│
+     /______/ │              👁 ────────────────── 👁
+     │      │ │            left                 right
+     │      │/          sees more of          sees more of
+     └──────┘            its left side         its right side
+```
+
+StereoShift does **not** do that. It slides pixels sideways. No surface ever
+turns to face you differently. There are two levels of quality here, and it is
+worth being upfront about which one this is:
+
+| | Approach | What it does | Cost |
+|:--|:--|:--|:--|
+| ✅ | **Pixel shifting** *(what this app does)* | Slide pixels horizontally by their depth | Real-time, on-device, offline |
+| 🔬 | **True 3D reprojection** | Lift pixels into 3D points, move a virtual camera, project back | Heavier, more correct perspective |
+
+But even proper reprojection hits a wall with a single photo, and this is the
+part that cannot be engineered away:
+
+```
+   the camera saw this           move the viewpoint right →
+     ┌───────┐                     ┌───────┐\
+     │ FRONT │                     │       │ \
+     │       │                     │       │  \  ← this side was never
+     └───────┘                     └───────┘___\    photographed
+```
+
+The depth map knows *"there is a surface here in 3D"*. It has no idea *"this is
+what the hidden side looks like"* — because that information was never in the
+photo. Systems that chase maximum quality bolt an AI inpainting or novel-view
+model onto the end to invent those pixels. StereoShift deliberately does not:
+that would cost a model load, a lot of time per frame, and it would hallucinate.
+
+### 👻 So that's where ghost edges come from
+
+Every visible artefact in depth-based stereo traces back to this same root — the
+photo simply does not contain what the second eye needs to see:
+
+| Artefact | Cause | What StereoShift does about it |
+|:--|:--|:--|
+| 🕳 **Holes / gaps** | Shifting the foreground uncovers background that was never captured | The scanline warp runs past the silhouette and stretches real background across the gap |
+| 👻 **Ghost / double edges** | Foreground and background pixels compete for the same output pixel | Scanning nearest-first means the foreground always wins |
+| ✂️ **Halos around hair, fingers, glasses** | Depth boundaries are slightly wrong on thin detail, so neighbours shift by different amounts | RGB-guided refine snaps depth edges to image edges |
+| 🌫 **Soft or duplicated edges** | Sub-pixel shifting and resampling smear the boundary | Directional dilate plus a sub-pixel refinement sample |
+
+Which is the point of the whole GPU pipeline below: **each pass exists to kill one
+of those four artefacts.** None of them is decoration.
+
+---
+
 ## 🎮 Under the hood: one GPU pass
 
-Steps 2–4 above are five Metal compute kernels, dispatched in a **single command
+Moves 2–4 above are five Metal compute kernels, dispatched in a **single command
 buffer**, running on the raw model output — never quantised to 8-bit, never
 upscaled on the CPU.
 
