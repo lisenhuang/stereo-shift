@@ -868,9 +868,14 @@ final class StereoRenderer {
         let rawShiftMap: [Float]? = shouldBuildShiftMap
             ? depthMap.map { max(0, min(1, $0)) * baselinePerEye }
             : nil
-        let shiftMap: [Float]? = (needsHighQualityEdges && (rawShiftMap != nil))
-            ? guidedSmoothShiftMap(rawShiftMap!, guide: rgb, width: width, height: height, baselinePerEye: baselinePerEye)
-            : rawShiftMap
+        // Plain `if let` rather than a ternary with a force-unwrap: the latter crashes the Xcode 27
+        // Swift optimizer ("Found ownership error?!" in CopyPropagation) in Release builds.
+        let shiftMap: [Float]?
+        if needsHighQualityEdges, let rawShiftMap {
+            shiftMap = guidedSmoothShiftMap(rawShiftMap, guide: rgb, width: width, height: height, baselinePerEye: baselinePerEye)
+        } else {
+            shiftMap = rawShiftMap
+        }
 
         var left = [UInt8](repeating: 0, count: width * height * 4)
         var right = [UInt8](repeating: 0, count: width * height * 4)
