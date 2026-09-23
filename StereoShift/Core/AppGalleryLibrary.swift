@@ -352,6 +352,22 @@ final class AppGalleryLibrary: ObservableObject {
         return try? generateThumbnail(for: item.url, type: item.type)
     }
 
+    /// Rewrites the item's thumbnail at the current size (used to upgrade legacy thumbnails).
+    static func regenerateThumbnail(for item: GalleryItem) -> URL? {
+        try? generateThumbnail(for: item.url, type: item.type)
+    }
+
+    /// Thumbnails written before the Photos-style grid were capped at 320 px on the long side,
+    /// which leaves a cropped SBS eye too soft for a 3-column grid.
+    static func isLegacyThumbnail(pixelWidth: Int, pixelHeight: Int) -> Bool {
+        max(pixelWidth, pixelHeight) <= legacyThumbnailMaxPixelSize
+    }
+
+    /// Thumbnails are fit inside this box so the short side of each SBS eye stays around 480 px
+    /// (enough for a 3-column grid on 3x screens) while extra-wide SBS stays bounded.
+    private static let thumbnailMaxSize = CGSize(width: 2048, height: 480)
+    private static let legacyThumbnailMaxPixelSize = 320
+
     private static func copyToGalleryAndCreateThumbnail(sourceURL: URL, type: GalleryMediaType) throws -> (mediaURL: URL, thumbnailURL: URL?) {
         let destinationURL = try copyMediaFileToGallery(sourceURL: sourceURL, type: type)
         let thumbnailURL = try? generateThumbnail(for: destinationURL, type: type)
@@ -381,7 +397,7 @@ final class AppGalleryLibrary: ObservableObject {
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
             kCGImageSourceShouldCacheImmediately: true,
-            kCGImageSourceThumbnailMaxPixelSize: 320
+            kCGImageSourceThumbnailMaxPixelSize: imageThumbnailMaxPixelSize(for: imageSource)
         ]
 
         guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(imageSource, 0, thumbnailOptions as CFDictionary) else {
@@ -391,23 +407,46 @@ final class AppGalleryLibrary: ObservableObject {
         try writeJPEG(image: thumbnail, to: destinationURL)
     }
 
+    /// ImageIO only takes a long-side limit, so derive the one that fits `thumbnailMaxSize`.
+    private static func imageThumbnailMaxPixelSize(for imageSource: CGImageSource) -> Int {
+        let fallback = Int(thumbnailMaxSize.height)
+        guard
+            let properties = CGImageSourceCopyPropertiesAtIndex(imageSource, 0, nil) as? [CFString: Any],
+            let width = properties[kCGImagePropertyPixelWidth] as? Int,
+            let height = properties[kCGImagePropertyPixelHeight] as? Int,
+            width > 0, height > 0
+        else {
+            return fallback
+        }
+
+        // EXIF orientations 5–8 are rotated by 90°, so the displayed width is the stored height.
+        let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+        let isRotated = (5...8).contains(orientation)
+        let displayWidth = CGFloat(isRotated ? height : width)
+        let displayHeight = CGFloat(isRotated ? width : height)
+
+        let scale = min(thumbnailMaxSize.width / displayWidth, thumbnailMaxSize.height / displayHeight, 1)
+        return max(1, Int((max(displayWidth, displayHeight) * scale).rounded()))
+    }
+
     private static func generateVideoThumbnail(from sourceURL: URL, destinationURL: URL) throws {
         let asset = AVAsset(url: sourceURL)
         let imageGenerator = AVAssetImageGenerator(asset: asset)
         imageGenerator.appliesPreferredTrackTransform = true
-        imageGenerator.maximumSize = CGSize(width: 320, height: 320)
+        imageGenerator.maximumSize = thumbnailMaxSize
 
         let cgImage = try imageGenerator.copyCGImage(at: .zero, actualTime: nil)
         try writeJPEG(image: cgImage, to: destinationURL)
     }
 
     private static func writeJPEG(image: CGImage, to destinationURL: URL) throws {
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
+        // Write beside the destination and swap it in, so a thumbnail being upgraded is never
+        // missing or half-written while the grid or Web Share reads it.
+        let temporaryURL = destinationURL.appendingPathExtension("tmp")
+        try? FileManager.default.removeItem(at: temporaryURL)
 
         guard let imageDestination = CGImageDestinationCreateWithURL(
-            destinationURL as CFURL,
+            temporaryURL as CFURL,
             UTType.jpeg.identifier as CFString,
             1,
             nil
@@ -421,7 +460,14 @@ final class AppGalleryLibrary: ObservableObject {
         CGImageDestinationAddImage(imageDestination, image, options as CFDictionary)
 
         guard CGImageDestinationFinalize(imageDestination) else {
+            try? FileManager.default.removeItem(at: temporaryURL)
             throw StereoPipelineError.temporaryFileCreationFailed
+        }
+
+        if FileManager.default.fileExists(atPath: destinationURL.path) {
+            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: temporaryURL)
+        } else {
+            try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
         }
     }
 

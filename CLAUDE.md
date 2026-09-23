@@ -2,6 +2,20 @@
 
 Guidance for AI assistants (Claude Code) working in this repository.
 
+## ⚠️ ALWAYS sync with GitHub before modifying anything
+
+Before making **any** change in this repo (code, resources, docs, or build settings), check
+whether GitHub has newer commits and, if so, pull and rebase onto them first:
+
+```bash
+git fetch origin
+git log --oneline HEAD..@{u}          # any output = newer commits on GitHub
+git pull --rebase --autostash         # only if the line above printed commits
+```
+
+If the rebase hits conflicts, stop and ask the user rather than resolving them silently.
+This is a sync step only; the "never commit automatically" rule below still applies.
+
 ## ⚠️ ALWAYS bump the version + build number on every code change
 
 Whenever you change app code (Swift, Metal, resources, or build settings) as part of a
@@ -15,16 +29,16 @@ Both keys live in `StereoShift.xcodeproj/project.pbxproj` and each appears **8 t
 (StereoShift + StereoShiftShareExtension targets × Debug/Release × build configs).
 **All occurrences must stay identical** — update every one, or the build is inconsistent.
 
-Current values: `MARKETING_VERSION = 1.4.0`, `CURRENT_PROJECT_VERSION = 24`.
+Current values: `MARKETING_VERSION = 1.5.0`, `CURRENT_PROJECT_VERSION = 25`.
 
 Quick way to bump the build number across all 8 occurrences (run from repo root, then
 verify with the grep below):
 
 ```bash
-# Build number: 24 -> 25 (the FROM value must match "Current values" above)
-sed -i '' 's/CURRENT_PROJECT_VERSION = 24;/CURRENT_PROJECT_VERSION = 25;/g' StereoShift.xcodeproj/project.pbxproj
-# Version: 1.4.0 -> 1.4.1
-sed -i '' 's/MARKETING_VERSION = 1.4.0;/MARKETING_VERSION = 1.4.1;/g' StereoShift.xcodeproj/project.pbxproj
+# Build number: 25 -> 26 (the FROM value must match "Current values" above)
+sed -i '' 's/CURRENT_PROJECT_VERSION = 25;/CURRENT_PROJECT_VERSION = 26;/g' StereoShift.xcodeproj/project.pbxproj
+# Version: 1.5.0 -> 1.5.1
+sed -i '' 's/MARKETING_VERSION = 1.5.0;/MARKETING_VERSION = 1.5.1;/g' StereoShift.xcodeproj/project.pbxproj
 
 # Verify both now show a single, updated value across all 8 sites:
 grep -oE '(MARKETING_VERSION|CURRENT_PROJECT_VERSION) = [^;]+' StereoShift.xcodeproj/project.pbxproj | sort | uniq -c

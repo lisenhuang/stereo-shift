@@ -79,6 +79,8 @@ struct HomeView: View {
                             )
                         }
 
+                        redditFooterLink
+
                         Color.clear
                             .frame(height: 1)
                             .id(bottomAnchorID)
@@ -99,8 +101,17 @@ struct HomeView: View {
                             .disabled(isProcessing)
                         }
 
-                        themeMenu
-                        languageMenu
+                        Button {
+                            CommunityLinks.openSubreddit()
+                        } label: {
+                            Label {
+                                Text("StereoShift on Reddit")
+                            } icon: {
+                                Image("RedditIcon")
+                            }
+                        }
+
+                        preferencesMenu
 
                         NavigationLink {
                             GalleryView(
@@ -157,6 +168,25 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var redditFooterLink: some View {
+        Button {
+            CommunityLinks.openSubreddit()
+        } label: {
+            HStack(spacing: 6) {
+                Image("RedditIcon")
+                    .resizable()
+                    .frame(width: 18, height: 18)
+                Text("Share your 3D creations on r/StereoShift")
+                    .underline()
+            }
+            .font(.footnote.weight(.medium))
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+        .padding(.top, 8)
     }
 
     private var modePicker: some View {
@@ -216,28 +246,29 @@ struct HomeView: View {
         }
     }
 
-    private var themeMenu: some View {
+    /// Theme and language share one menu so the toolbar keeps four items; a fifth pushes
+    /// Gallery into an overflow menu on iOS 18 and on narrower iPhones.
+    private var preferencesMenu: some View {
         Menu {
-            Picker("Theme", selection: selectedThemeBinding) {
+            Picker(selection: selectedThemeBinding) {
                 ForEach(AppTheme.allCases) { theme in
                     Text(theme.displayNameKey).tag(theme)
                 }
+            } label: {
+                Label("Theme", systemImage: "circle.lefthalf.filled")
             }
-        } label: {
-            Label("Theme", systemImage: "circle.lefthalf.filled")
-        }
-        .disabled(isProcessing)
-    }
+            .pickerStyle(.menu)
 
-    private var languageMenu: some View {
-        Menu {
-            Picker("Language", selection: selectedLanguageBinding) {
+            Picker(selection: selectedLanguageBinding) {
                 ForEach(AppLanguage.allCases) { language in
                     Text(verbatim: language.displayName).tag(language)
                 }
+            } label: {
+                Label("Language", systemImage: "globe")
             }
+            .pickerStyle(.menu)
         } label: {
-            Label("Language", systemImage: "globe")
+            Label("Settings", systemImage: "gearshape")
         }
         .disabled(isProcessing)
     }
