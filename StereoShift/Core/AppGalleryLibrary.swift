@@ -90,16 +90,6 @@ final class AppGalleryLibrary: ObservableObject {
         }
     }
 
-    func clearAll() async throws {
-        try await Task.detached(priority: .utility) {
-            try Self.deleteAllMedia()
-        }.value
-
-        await MainActor.run {
-            items = []
-        }
-    }
-
     static func loadItemsForWeb() throws -> [GalleryItem] {
         let directory = try galleryDirectory()
         let files = try FileManager.default.contentsOfDirectory(
@@ -158,30 +148,6 @@ final class AppGalleryLibrary: ObservableObject {
         }
         removeThumbnailIfExists(for: url)
         try FileManager.default.removeItem(at: url)
-    }
-
-    private static func deleteAllMedia() throws {
-        let directory = try galleryDirectory()
-        let files = try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-
-        for url in files {
-            try FileManager.default.removeItem(at: url)
-        }
-
-        let thumbnailDirectory = try thumbnailsDirectory()
-        let thumbnailFiles = try FileManager.default.contentsOfDirectory(
-            at: thumbnailDirectory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-
-        for url in thumbnailFiles {
-            try FileManager.default.removeItem(at: url)
-        }
     }
 
     static func galleryDirectory() throws -> URL {

@@ -13,14 +13,20 @@ struct ResultPreviewView: View {
     let title: LocalizedStringKey
     let media: PreviewMedia
     var allowsFullscreenPreview: Bool = false
+    /// Full-bleed layout for the gallery sheet: no card or title, media at its own aspect ratio,
+    /// and videos play inline with the system controls instead of needing fullscreen.
+    var isEdgeToEdge: Bool = false
 
     @State private var player: AVPlayer?
     @State private var isShowingFullscreen = false
+    @State private var videoAspectRatio: CGFloat?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title)
-                .font(.headline)
+            if !isEdgeToEdge {
+                Text(title)
+                    .font(.headline)
+            }
 
             Group {
                 switch media {
@@ -40,7 +46,12 @@ struct ResultPreviewView: View {
 
                 case let .video(url):
                     VideoPlayer(player: player)
-                        .allowsHitTesting(false)
+                        .aspectRatio(isEdgeToEdge ? (videoAspectRatio ?? 16 / 9) : nil, contentMode: .fit)
+                        .allowsHitTesting(isEdgeToEdge)
+                        .task(id: url) {
+                            guard isEdgeToEdge else { return }
+                            videoAspectRatio = await Self.displayAspectRatio(of: url)
+                        }
                         .onAppear {
                             if player?.currentItem?.asset as? AVURLAsset == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
                                 player = AVPlayer(url: url)
@@ -64,15 +75,15 @@ struct ResultPreviewView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 220)
+            .frame(minHeight: isEdgeToEdge ? nil : 220)
             .contentShape(Rectangle())
             .onTapGesture {
-                if allowsFullscreenPreview {
+                if tapOpensFullscreen {
                     openFullscreen()
                 }
             }
             .overlay {
-                if allowsFullscreenPreview {
+                if tapOpensFullscreen {
                     Button {
                         openFullscreen()
                     } label: {
@@ -82,10 +93,12 @@ struct ResultPreviewView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: isEdgeToEdge ? 0 : 16, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.secondary.opacity(0.2))
+                if !isEdgeToEdge {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.secondary.opacity(0.2))
+                }
             }
             .overlay(alignment: .topTrailing) {
                 if allowsFullscreenPreview {
@@ -102,8 +115,13 @@ struct ResultPreviewView: View {
                 }
             }
         }
-        .padding(16)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .padding(isEdgeToEdge ? 0 : 16)
+        .background {
+            if !isEdgeToEdge {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .fill(.thinMaterial)
+            }
+        }
         .fullScreenCover(isPresented: $isShowingFullscreen, onDismiss: {
             FullscreenVideoPlaybackCenter.shared.stopAndReset()
         }) {
@@ -113,6 +131,28 @@ struct ResultPreviewView: View {
 
     private func openFullscreen() {
         isShowingFullscreen = true
+    }
+
+    /// Inline video keeps its own controls, so only the corner button opens fullscreen there.
+    private var tapOpensFullscreen: Bool {
+        guard allowsFullscreenPreview else { return false }
+        if isEdgeToEdge, case .video = media {
+            return false
+        }
+        return true
+    }
+
+    private static func displayAspectRatio(of url: URL) async -> CGFloat? {
+        guard
+            let track = try? await AVURLAsset(url: url).loadTracks(withMediaType: .video).first,
+            let properties = try? await track.load(.naturalSize, .preferredTransform)
+        else {
+            return nil
+        }
+        let size = properties.0.applying(properties.1)
+        let width = abs(size.width)
+        let height = abs(size.height)
+        return width > 0 && height > 0 ? width / height : nil
     }
 
     private var previewUnavailableView: some View {

@@ -8,7 +8,6 @@
 "Before Selecting" = "قبل الاختيار";
 "Balanced" = "متوازن";
 "Cancel" = "إلغاء";
-"Clear All" = "مسح الكل";
 "Close" = "إغلاق";
 "Continue" = "متابعة";
 "Convert Spatial to SBS" = "تحويل المحتوى المكاني إلى SBS";
@@ -18,7 +17,6 @@
 "Confirm" = "تأكيد";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "أنشئ صورًا وفيديوهات مجسمة يمين-يسار دون اتصال، أو افصل الوسائط المكانية مباشرة إلى SBS.";
 "Delete" = "حذف";
-"Delete all items from In-App Gallery?" = "حذف كل العناصر من المعرض داخل التطبيق؟";
 "Delete this item from In-App Gallery?" = "حذف هذا العنصر من المعرض داخل التطبيق؟";
 "Connect to Wi-Fi to start Web Share." = "اتصل بشبكة Wi-Fi أو شغّل نقطة الاتصال الشخصية لبدء مشاركة الويب.";
 "Done" = "تم";
@@ -131,7 +129,6 @@
 "1 Video Selected" = "تم تحديد فيديو واحد";
 "%lld Videos Selected" = "تم تحديد %lld فيديوهات";
 "%lld Items Selected" = "تم تحديد %lld عناصر";
-"Refresh" = "تحديث";
 "Showing Photos Only" = "عرض الصور فقط";
 "Showing Videos Only" = "عرض الفيديوهات فقط";
 "Show All" = "عرض الكل";
@@ -140,3 +137,16 @@
 "Delete selected items?" = "حذف العناصر المحددة؟";
 "This will remove the selected items from In-App Gallery." = "ستتم إزالة العناصر المحددة من معرض التطبيق.";
 "Settings" = "الإعدادات";
+"Details" = "التفاصيل";
+"Date" = "التاريخ";
+"Format" = "التنسيق";
+"Resolution" = "الدقة";
+"Each Eye" = "كل عين";
+"Duration" = "المدة";
+"Frame Rate" = "معدل الإطارات";
+"Bitrate" = "معدل البت";
+"Audio" = "الصوت";
+"None" = "لا يوجد";
+"Color Profile" = "ملف تعريف الألوان";
+"Bit Depth" = "عمق البت";
+"File Size" = "حجم الملف";

@@ -8,7 +8,6 @@
 "Before Selecting" = "चुनने से पहले";
 "Balanced" = "संतुलित";
 "Cancel" = "रद्द करें";
-"Clear All" = "सब साफ करें";
 "Close" = "बंद करें";
 "Continue" = "जारी रखें";
 "Convert Spatial to SBS" = "स्पैशियल को SBS में बदलें";
@@ -18,7 +17,6 @@
 "Confirm" = "पुष्टि करें";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "ऑफलाइन बाएं-दाएं स्टीरियो फोटो और वीडियो बनाएं, या स्पैशियल मीडिया को सीधे SBS में विभाजित करें।";
 "Delete" = "हटाएं";
-"Delete all items from In-App Gallery?" = "इन-ऐप गैलरी से सभी आइटम हटाएं?";
 "Delete this item from In-App Gallery?" = "इन-ऐप गैलरी से यह आइटम हटाएं?";
 "Connect to Wi-Fi to start Web Share." = "वेब शेयर शुरू करने के लिए Wi-Fi से जुड़ें या पर्सनल हॉटस्पॉट चालू करें।";
 "Done" = "पूरा";
@@ -131,7 +129,6 @@
 "1 Video Selected" = "1 वीडियो चुना गया";
 "%lld Videos Selected" = "%lld वीडियो चुने गए";
 "%lld Items Selected" = "%lld आइटम चुने गए";
-"Refresh" = "रीफ़्रेश करें";
 "Showing Photos Only" = "केवल फ़ोटो दिखाई जा रही हैं";
 "Showing Videos Only" = "केवल वीडियो दिखाए जा रहे हैं";
 "Show All" = "सभी दिखाएँ";
@@ -140,3 +137,16 @@
 "Delete selected items?" = "चुने गए आइटम हटाएँ?";
 "This will remove the selected items from In-App Gallery." = "इससे चुने गए आइटम इन-ऐप गैलरी से हट जाएँगे।";
 "Settings" = "सेटिंग्स";
+"Details" = "विवरण";
+"Date" = "तारीख";
+"Format" = "फ़ॉर्मैट";
+"Resolution" = "रिज़ॉल्यूशन";
+"Each Eye" = "हर आँख";
+"Duration" = "अवधि";
+"Frame Rate" = "फ़्रेम दर";
+"Bitrate" = "बिटरेट";
+"Audio" = "ऑडियो";
+"None" = "कोई नहीं";
+"Color Profile" = "कलर प्रोफ़ाइल";
+"Bit Depth" = "बिट डेप्थ";
+"File Size" = "फ़ाइल का आकार";

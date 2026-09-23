@@ -21,8 +21,6 @@ struct GalleryView: View {
     @State private var isShowingDiskImporter = false
     @State private var isImporting = false
     @State private var importMessageKey: LocalizedStringKey?
-    @State private var isClearingAll = false
-    @State private var showClearAllConfirmation = false
     @State private var isDeletingSelection = false
     @State private var showDeleteSelectionConfirmation = false
     @State private var showVideoSubscriptionSheet = false
@@ -100,29 +98,13 @@ struct GalleryView: View {
                 } else {
                     filterMenu
 
-                    Button("Select") {
+                    Button {
                         isSelecting = true
                         selectedItemIDs.removeAll()
-                    }
-                    .disabled(filteredItems.isEmpty || isClearingAll || isImporting || isDeletingSelection)
-
-                    Menu {
-                        Button {
-                            galleryLibrary.reload()
-                        } label: {
-                            Label("Refresh", systemImage: "arrow.clockwise")
-                        }
-
-                        Button(role: .destructive) {
-                            showClearAllConfirmation = true
-                        } label: {
-                            Label("Clear All", systemImage: "trash")
-                        }
-                        .disabled(galleryLibrary.items.isEmpty)
                     } label: {
-                        Image(systemName: "ellipsis.circle")
+                        Label("Select", systemImage: "checkmark.circle")
                     }
-                    .disabled(isClearingAll || isImporting || isDeletingSelection)
+                    .disabled(filteredItems.isEmpty || isImporting || isDeletingSelection)
                 }
             }
 
@@ -231,17 +213,7 @@ struct GalleryView: View {
         } message: {
             Text("Please choose left-right side-by-side 3D images or videos.")
         }
-        .alert("Delete all items from In-App Gallery?", isPresented: $showClearAllConfirmation) {
-            Button("Delete", role: .destructive) {
-                clearAllItems()
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .confirmationDialog(
-            "Delete selected items?",
-            isPresented: $showDeleteSelectionConfirmation,
-            titleVisibility: .visible
-        ) {
+        .alert("Delete selected items?", isPresented: $showDeleteSelectionConfirmation) {
             Button("Delete", role: .destructive) {
                 deleteSelectedItems()
             }
@@ -311,7 +283,7 @@ struct GalleryView: View {
                     : "line.3.horizontal.decrease.circle.fill"
             )
         }
-        .disabled(galleryLibrary.items.isEmpty || isClearingAll || isImporting || isDeletingSelection)
+        .disabled(galleryLibrary.items.isEmpty || isImporting || isDeletingSelection)
     }
 
     private var filterStatusRow: some View {
@@ -361,7 +333,7 @@ struct GalleryView: View {
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isClearingAll || isImporting || isSelecting || isDeletingSelection)
+                .disabled(isImporting || isSelecting || isDeletingSelection)
 
                 if supportsDiskImport {
                     Button {
@@ -371,7 +343,7 @@ struct GalleryView: View {
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
                     .buttonStyle(.bordered)
-                    .disabled(isClearingAll || isImporting || isSelecting || isDeletingSelection)
+                    .disabled(isImporting || isSelecting || isDeletingSelection)
                 }
             }
 
@@ -394,7 +366,6 @@ struct GalleryView: View {
                 }
                 .buttonStyle(.bordered)
                 .disabled(
-                    isClearingAll ||
                     isImporting ||
                     isSelecting ||
                     isDeletingSelection ||
@@ -440,7 +411,7 @@ struct GalleryView: View {
                             }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
-                            .disabled(isClearingAll || isImporting)
+                            .disabled(isImporting)
                         }
 
                         Text("Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops.")
@@ -545,26 +516,6 @@ struct GalleryView: View {
         }
 
         showVideoSubscriptionSheet = true
-    }
-
-    private func clearAllItems() {
-        importMessageKey = nil
-        isClearingAll = true
-        Task {
-            do {
-                try await galleryLibrary.clearAll()
-                await MainActor.run {
-                    selectedItem = nil
-                    exitSelectionMode()
-                    isClearingAll = false
-                }
-            } catch {
-                await MainActor.run {
-                    isClearingAll = false
-                    errorMessage = error.localizedDescription
-                }
-            }
-        }
     }
 
     private func toggleSelection(for item: GalleryItem) {
@@ -1359,58 +1310,67 @@ private struct GalleryItemDetailView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 14) {
-                    ResultPreviewView(title: "Preview", media: previewMedia, allowsFullscreenPreview: true)
+                    ResultPreviewView(
+                        title: "Preview",
+                        media: previewMedia,
+                        allowsFullscreenPreview: true,
+                        isEdgeToEdge: true
+                    )
 
-                    HStack(spacing: 12) {
-                        Button {
-                            showShareSheet = true
-                        } label: {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isSaving || isSavingToDisk || isDeleting)
-
-                        Button(action: saveToPhotos) {
-                            Group {
-                                if isSaving {
-                                    Label("Saving…", systemImage: "square.and.arrow.down")
-                                } else {
-                                    Label("Save to Photos", systemImage: "square.and.arrow.down")
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .center)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isSaving || isSavingToDisk || isDeleting)
-
-                        if supportsDiskSave {
+                    VStack(spacing: 14) {
+                        HStack(spacing: 12) {
                             Button {
-                                showDiskExportPicker = true
+                                showShareSheet = true
                             } label: {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(isSaving || isSavingToDisk || isDeleting)
+
+                            Button(action: saveToPhotos) {
                                 Group {
-                                    if isSavingToDisk {
-                                        Label("Saving…", systemImage: "internaldrive")
+                                    if isSaving {
+                                        Label("Saving…", systemImage: "square.and.arrow.down")
                                     } else {
-                                        Label("Save to Disk", systemImage: "internaldrive")
+                                        Label("Save to Photos", systemImage: "square.and.arrow.down")
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .center)
                             }
                             .buttonStyle(.bordered)
                             .disabled(isSaving || isSavingToDisk || isDeleting)
-                        }
-                    }
 
-                    if let saveMessageKey {
-                        Text(saveMessageKey)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                            if supportsDiskSave {
+                                Button {
+                                    showDiskExportPicker = true
+                                } label: {
+                                    Group {
+                                        if isSavingToDisk {
+                                            Label("Saving…", systemImage: "internaldrive")
+                                        } else {
+                                            Label("Save to Disk", systemImage: "internaldrive")
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                }
+                                .buttonStyle(.bordered)
+                                .disabled(isSaving || isSavingToDisk || isDeleting)
+                            }
+                        }
+
+                        if let saveMessageKey {
+                            Text(saveMessageKey)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+
+                        GalleryMediaDetailsView(item: item)
                     }
+                    .padding(.horizontal, 16)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 20)
+                .padding(.bottom, 20)
             }
             .navigationTitle(itemTypeTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -1563,6 +1523,256 @@ private struct GalleryItemDetailView: View {
                 }
             }
         }
+    }
+}
+
+/// Photos-style info panel under the preview: when it was saved, how big it is and how it is encoded.
+private struct GalleryMediaDetailsView: View {
+    let item: GalleryItem
+    @State private var details: GalleryMediaDetails?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Details")
+                .font(.headline)
+
+            VStack(spacing: 0) {
+                row("Date") {
+                    Text(item.createdAt, format: .dateTime.year().month(.wide).day().hour().minute())
+                }
+
+                if let details {
+                    if let format = details.format {
+                        row("Format") { Text(verbatim: format) }
+                    }
+                    if let size = details.pixelSize {
+                        row("Resolution") { Text(verbatim: Self.dimensions(size.width, size.height)) }
+                        // Every gallery item is SBS, so each eye is the left or right half of the frame.
+                        row("Each Eye") { Text(verbatim: Self.dimensions(size.width / 2, size.height)) }
+                    }
+                    if let duration = details.duration {
+                        row("Duration") { Text(verbatim: Self.duration(duration)) }
+                    }
+                    if let frameRate = details.frameRate {
+                        row("Frame Rate") { Text(verbatim: Self.frameRate(frameRate)) }
+                    }
+                    if let bitrate = details.bitrate {
+                        row("Bitrate") { Text(verbatim: Self.bitrate(bitrate)) }
+                    }
+                    if item.type == .video {
+                        row("Audio") {
+                            if let audio = details.audioCodec {
+                                Text(verbatim: audio)
+                            } else {
+                                Text("None")
+                            }
+                        }
+                    }
+                    if let colorProfile = details.colorProfile {
+                        row("Color Profile") { Text(verbatim: colorProfile) }
+                    }
+                    if let bitDepth = details.bitDepth {
+                        row("Bit Depth") { Text(verbatim: "\(bitDepth)-bit") }
+                    }
+                    if let fileSize = details.fileSize {
+                        row("File Size", showsDivider: false) {
+                            Text(verbatim: ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file))
+                        }
+                    }
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: item.id) {
+            details = await GalleryMediaDetails.load(for: item)
+        }
+    }
+
+    private func row<Value: View>(
+        _ title: LocalizedStringKey,
+        showsDivider: Bool = true,
+        @ViewBuilder value: () -> Value
+    ) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(title)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 12)
+                value()
+                    .multilineTextAlignment(.trailing)
+                    .monospacedDigit()
+                    .textSelection(.enabled)
+            }
+            .font(.subheadline)
+            .padding(.vertical, 10)
+
+            if showsDivider {
+                Divider()
+            }
+        }
+    }
+
+    private static func dimensions(_ width: Int, _ height: Int) -> String {
+        "\(width) × \(height)"
+    }
+
+    private static func duration(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
+        let remainder = total % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainder)
+        }
+        return String(format: "%d:%02d", minutes, remainder)
+    }
+
+    private static func frameRate(_ fps: Float) -> String {
+        let rounded = (fps * 100).rounded() / 100
+        let text = rounded == rounded.rounded() ? String(Int(rounded)) : String(format: "%.2f", rounded)
+        return "\(text) fps"
+    }
+
+    private static func bitrate(_ bitsPerSecond: Float) -> String {
+        if bitsPerSecond >= 1_000_000 {
+            return String(format: "%.1f Mbps", bitsPerSecond / 1_000_000)
+        }
+        return String(format: "%.0f kbps", bitsPerSecond / 1_000)
+    }
+}
+
+private struct GalleryMediaDetails {
+    var format: String?
+    var pixelSize: (width: Int, height: Int)?
+    var fileSize: Int64?
+    var duration: Double?
+    var frameRate: Float?
+    var bitrate: Float?
+    var audioCodec: String?
+    var colorProfile: String?
+    var bitDepth: Int?
+
+    static func load(for item: GalleryItem) async -> GalleryMediaDetails {
+        var details: GalleryMediaDetails
+        switch item.type {
+        case .image:
+            // ImageIO reads synchronously, so keep it off the main actor.
+            details = await Task.detached(priority: .utility) {
+                var imageDetails = GalleryMediaDetails()
+                imageDetails.loadImageProperties(from: item.url)
+                return imageDetails
+            }.value
+        case .video:
+            details = GalleryMediaDetails()
+            await details.loadVideoProperties(from: item.url)
+        }
+
+        if let size = try? item.url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+            details.fileSize = Int64(size)
+        }
+        return details
+    }
+
+    private mutating func loadImageProperties(from url: URL) {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else { return }
+
+        if let typeIdentifier = CGImageSourceGetType(source) as String?,
+           let fileExtension = UTType(typeIdentifier)?.preferredFilenameExtension {
+            format = fileExtension.uppercased()
+        }
+
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            return
+        }
+        if let width = properties[kCGImagePropertyPixelWidth] as? Int,
+           let height = properties[kCGImagePropertyPixelHeight] as? Int {
+            // EXIF orientations 5–8 are rotated by 90°, so the displayed width is the stored height.
+            let orientation = properties[kCGImagePropertyOrientation] as? Int ?? 1
+            pixelSize = (5...8).contains(orientation) ? (height, width) : (width, height)
+        }
+        colorProfile = properties[kCGImagePropertyProfileName] as? String
+        bitDepth = properties[kCGImagePropertyDepth] as? Int
+    }
+
+    private mutating func loadVideoProperties(from url: URL) async {
+        let asset = AVURLAsset(url: url)
+        let container = url.pathExtension.uppercased()
+
+        if let time = try? await asset.load(.duration), time.isNumeric {
+            duration = time.seconds
+        }
+
+        if let track = try? await asset.loadTracks(withMediaType: .video).first,
+           let trackProperties = try? await track.load(
+               .naturalSize,
+               .preferredTransform,
+               .nominalFrameRate,
+               .estimatedDataRate,
+               .formatDescriptions
+           ) {
+            let (naturalSize, transform, fps, dataRate, descriptions) = trackProperties
+            let displaySize = naturalSize.applying(transform)
+            pixelSize = (Int(abs(displaySize.width).rounded()), Int(abs(displaySize.height).rounded()))
+            frameRate = fps > 0 ? fps : nil
+            bitrate = dataRate > 0 ? dataRate : nil
+
+            if let codec = descriptions.first.map({ Self.videoCodecName(CMFormatDescriptionGetMediaSubType($0)) }) {
+                format = container.isEmpty ? codec : "\(container) · \(codec)"
+            } else {
+                format = container.isEmpty ? nil : container
+            }
+        } else if !container.isEmpty {
+            format = container
+        }
+
+        if let audioTrack = try? await asset.loadTracks(withMediaType: .audio).first,
+           let descriptions = try? await audioTrack.load(.formatDescriptions),
+           let description = descriptions.first {
+            audioCodec = Self.audioCodecName(CMFormatDescriptionGetMediaSubType(description))
+        }
+    }
+
+    private static func videoCodecName(_ codec: FourCharCode) -> String {
+        switch codec {
+        case kCMVideoCodecType_H264:
+            return "H.264"
+        case kCMVideoCodecType_HEVC, kCMVideoCodecType_HEVCWithAlpha:
+            return "HEVC"
+        case kCMVideoCodecType_AppleProRes422, kCMVideoCodecType_AppleProRes422HQ,
+             kCMVideoCodecType_AppleProRes422LT, kCMVideoCodecType_AppleProRes422Proxy,
+             kCMVideoCodecType_AppleProRes4444, kCMVideoCodecType_AppleProRes4444XQ:
+            return "ProRes"
+        default:
+            return fourCCString(codec)
+        }
+    }
+
+    private static func audioCodecName(_ codec: FourCharCode) -> String {
+        switch codec {
+        case kAudioFormatMPEG4AAC, kAudioFormatMPEG4AAC_HE, kAudioFormatMPEG4AAC_HE_V2, kAudioFormatMPEG4AAC_LD:
+            return "AAC"
+        case kAudioFormatLinearPCM:
+            return "PCM"
+        case kAudioFormatAppleLossless:
+            return "ALAC"
+        case kAudioFormatOpus:
+            return "Opus"
+        default:
+            return fourCCString(codec)
+        }
+    }
+
+    private static func fourCCString(_ code: FourCharCode) -> String {
+        let bytes = [24, 16, 8, 0].map { UInt8((code >> $0) & 0xFF) }
+        return String(bytes: bytes, encoding: .ascii)?.trimmingCharacters(in: .whitespaces) ?? "\(code)"
     }
 }
 

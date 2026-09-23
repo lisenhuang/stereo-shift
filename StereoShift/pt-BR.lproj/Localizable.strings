@@ -8,7 +8,6 @@
 "Before Selecting" = "Antes de selecionar";
 "Balanced" = "Equilibrado";
 "Cancel" = "Cancelar";
-"Clear All" = "Limpar Tudo";
 "Close" = "Fechar";
 "Continue" = "Continuar";
 "Convert Spatial to SBS" = "Converter espacial para SBS";
@@ -18,7 +17,6 @@
 "Confirm" = "Confirmar";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "Crie fotos e videos estereoscopicos esquerda-direita offline, ou separe a midia espacial diretamente em SBS.";
 "Delete" = "Excluir";
-"Delete all items from In-App Gallery?" = "Excluir todos os itens da Galeria Interna?";
 "Delete this item from In-App Gallery?" = "Excluir este item da Galeria Interna?";
 "Connect to Wi-Fi to start Web Share." = "Conecte ao Wi-Fi ou ative o Acesso Pessoal para iniciar o compartilhamento Web.";
 "Done" = "Concluido";
@@ -131,7 +129,6 @@
 "1 Video Selected" = "1 vídeo selecionado";
 "%lld Videos Selected" = "%lld vídeos selecionados";
 "%lld Items Selected" = "%lld itens selecionados";
-"Refresh" = "Atualizar";
 "Showing Photos Only" = "Mostrando só fotos";
 "Showing Videos Only" = "Mostrando só vídeos";
 "Show All" = "Mostrar tudo";
@@ -140,3 +137,16 @@
 "Delete selected items?" = "Apagar os itens selecionados?";
 "This will remove the selected items from In-App Gallery." = "Os itens selecionados serão removidos da galeria do app.";
 "Settings" = "Ajustes";
+"Details" = "Detalhes";
+"Date" = "Data";
+"Format" = "Formato";
+"Resolution" = "Resolução";
+"Each Eye" = "Cada olho";
+"Duration" = "Duração";
+"Frame Rate" = "Taxa de quadros";
+"Bitrate" = "Taxa de bits";
+"Audio" = "Áudio";
+"None" = "Nenhum";
+"Color Profile" = "Perfil de cor";
+"Bit Depth" = "Profundidade de bits";
+"File Size" = "Tamanho do arquivo";

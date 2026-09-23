@@ -8,7 +8,6 @@
 "Before Selecting" = "選択前の確認";
 "Balanced" = "バランス";
 "Cancel" = "キャンセル";
-"Clear All" = "すべて削除";
 "Close" = "閉じる";
 "Continue" = "続ける";
 "Convert Spatial to SBS" = "空間メディアをSBSに変換";
@@ -18,7 +17,6 @@
 "Confirm" = "確認";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "オフラインで左右ステレオ写真・動画を作成、または空間メディアを直接SBSに分離します。";
 "Delete" = "削除";
-"Delete all items from In-App Gallery?" = "アプリ内ギャラリーのすべての項目を削除しますか？";
 "Delete this item from In-App Gallery?" = "この項目をアプリ内ギャラリーから削除しますか？";
 "Connect to Wi-Fi to start Web Share." = "Web共有を開始するにはWi-Fiに接続するか、インターネット共有をオンにしてください。";
 "Done" = "完了";
@@ -131,7 +129,6 @@
 "1 Video Selected" = "1本のビデオを選択中";
 "%lld Videos Selected" = "%lld本のビデオを選択中";
 "%lld Items Selected" = "%lld項目を選択中";
-"Refresh" = "更新";
 "Showing Photos Only" = "写真のみ表示中";
 "Showing Videos Only" = "ビデオのみ表示中";
 "Show All" = "すべて表示";
@@ -140,3 +137,16 @@
 "Delete selected items?" = "選択した項目を削除しますか？";
 "This will remove the selected items from In-App Gallery." = "選択した項目がアプリ内ギャラリーから削除されます。";
 "Settings" = "設定";
+"Details" = "詳細";
+"Date" = "日付";
+"Format" = "フォーマット";
+"Resolution" = "解像度";
+"Each Eye" = "片目あたり";
+"Duration" = "長さ";
+"Frame Rate" = "フレームレート";
+"Bitrate" = "ビットレート";
+"Audio" = "オーディオ";
+"None" = "なし";
+"Color Profile" = "カラープロファイル";
+"Bit Depth" = "ビット深度";
+"File Size" = "ファイルサイズ";

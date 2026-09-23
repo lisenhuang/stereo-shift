@@ -8,7 +8,6 @@
 "Before Selecting" = "선택 전 안내";
 "Balanced" = "균형";
 "Cancel" = "취소";
-"Clear All" = "모두 지우기";
 "Close" = "닫기";
 "Continue" = "계속";
 "Convert Spatial to SBS" = "공간 미디어를 SBS로 변환";
@@ -18,7 +17,6 @@
 "Confirm" = "확인";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "오프라인으로 좌우 스테레오 사진/동영상을 만들거나 공간 미디어를 바로 SBS로 분리하세요.";
 "Delete" = "삭제";
-"Delete all items from In-App Gallery?" = "앱 내 갤러리의 모든 항목을 삭제할까요?";
 "Delete this item from In-App Gallery?" = "이 항목을 앱 내 갤러리에서 삭제할까요?";
 "Connect to Wi-Fi to start Web Share." = "웹 공유를 시작하려면 Wi-Fi에 연결하거나 개인용 핫스팟을 켜세요.";
 "Done" = "완료";
@@ -131,7 +129,6 @@
 "1 Video Selected" = "비디오 1개 선택됨";
 "%lld Videos Selected" = "비디오 %lld개 선택됨";
 "%lld Items Selected" = "항목 %lld개 선택됨";
-"Refresh" = "새로 고침";
 "Showing Photos Only" = "사진만 표시 중";
 "Showing Videos Only" = "비디오만 표시 중";
 "Show All" = "모두 보기";
@@ -140,3 +137,16 @@
 "Delete selected items?" = "선택한 항목을 삭제하시겠습니까?";
 "This will remove the selected items from In-App Gallery." = "선택한 항목이 앱 내 갤러리에서 삭제됩니다.";
 "Settings" = "설정";
+"Details" = "세부 정보";
+"Date" = "날짜";
+"Format" = "포맷";
+"Resolution" = "해상도";
+"Each Eye" = "한쪽 눈";
+"Duration" = "길이";
+"Frame Rate" = "프레임률";
+"Bitrate" = "비트레이트";
+"Audio" = "오디오";
+"None" = "없음";
+"Color Profile" = "색상 프로파일";
+"Bit Depth" = "비트 심도";
+"File Size" = "파일 크기";

@@ -8,7 +8,6 @@
 "Before Selecting" = "选择前提示";
 "Balanced" = "平衡";
 "Cancel" = "取消";
-"Clear All" = "清空全部";
 "Close" = "关闭";
 "Continue" = "继续";
 "Convert Spatial to SBS" = "将空间媒体转换为 SBS";
@@ -18,7 +17,6 @@
 "Confirm" = "确认";
 "Create left-right stereo photos and videos offline, or split spatial media directly into SBS." = "离线生成左右立体照片和视频，或直接将空间媒体拆分为 SBS。";
 "Delete" = "删除";
-"Delete all items from In-App Gallery?" = "要清空应用内画廊的全部项目吗？";
 "Delete this item from In-App Gallery?" = "要从应用内画廊删除此项目吗？";
 "Connect to Wi-Fi to start Web Share." = "请连接 Wi-Fi 或开启个人热点后再启动网页共享。";
 "Done" = "完成";
@@ -131,7 +129,6 @@
 "1 Video Selected" = "已选择 1 个视频";
 "%lld Videos Selected" = "已选择 %lld 个视频";
 "%lld Items Selected" = "已选择 %lld 个项目";
-"Refresh" = "刷新";
 "Showing Photos Only" = "仅显示照片";
 "Showing Videos Only" = "仅显示视频";
 "Show All" = "显示全部";
@@ -140,3 +137,16 @@
 "Delete selected items?" = "要删除所选项目吗？";
 "This will remove the selected items from In-App Gallery." = "所选项目将从应用内画廊中删除。";
 "Settings" = "设置";
+"Details" = "详细信息";
+"Date" = "日期";
+"Format" = "格式";
+"Resolution" = "分辨率";
+"Each Eye" = "单眼画面";
+"Duration" = "时长";
+"Frame Rate" = "帧率";
+"Bitrate" = "码率";
+"Audio" = "音频";
+"None" = "无";
+"Color Profile" = "颜色描述文件";
+"Bit Depth" = "位深度";
+"File Size" = "文件大小";
