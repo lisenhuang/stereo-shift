@@ -25,6 +25,7 @@ struct HomeView: View {
     @StateObject private var subscriptionManager = SubscriptionManager()
     @StateObject private var updateChecker = AppUpdateChecker()
     @Environment(\.openURL) private var openURL
+    @Environment(\.scenePhase) private var scenePhase
     @State private var mode: Mode = .photo
     @State private var inputMode: InputMediaMode = .regular2D
     @State private var strength: Float = 0.80
@@ -32,10 +33,16 @@ struct HomeView: View {
     @State private var stereo3DOptions = Stereo3DOptions()
     @State private var isProcessing = false
     @State private var showVideoSubscriptionSheet = false
+    @State private var pendingInstagramImport: PendingInstagramImport?
+    @State private var handledInstagramRequests = Set<UUID>()
+    @State private var deferredInstagramRequestID: UUID?
+    @State private var navigationPath = NavigationPath()
+    @State private var importedInstagramMedia: ImportedInstagramMedia?
+    @State private var importGeneration = UUID()
     private let bottomAnchorID = "content-bottom-anchor"
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navigationPath) {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 20) {
@@ -51,6 +58,7 @@ struct HomeView: View {
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
                                 stereo3DOptions: $stereo3DOptions,
                                 galleryLibrary: galleryLibrary,
+                                importedFileURL: importedInstagramMedia?.kind == .photo ? importedInstagramMedia?.url : nil,
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
                                 },
@@ -58,6 +66,7 @@ struct HomeView: View {
                                     isProcessing = processing
                                 }
                             )
+                            .id(importGeneration)
                         } else if mode == .video {
                             VideoFlowView(
                                 pipeline: pipeline,
@@ -67,6 +76,7 @@ struct HomeView: View {
                                 stereo3DOptions: $stereo3DOptions,
                                 subscriptionManager: subscriptionManager,
                                 galleryLibrary: galleryLibrary,
+                                importedFileURL: importedInstagramMedia?.kind == .video ? importedInstagramMedia?.url : nil,
                                 onRequireSubscription: {
                                     showVideoSubscriptionSheet = true
                                 },
@@ -77,6 +87,7 @@ struct HomeView: View {
                                     isProcessing = processing
                                 }
                             )
+                            .id(importGeneration)
                         }
 
                         redditFooterLink
@@ -125,6 +136,33 @@ struct HomeView: View {
                         .disabled(isProcessing)
                     }
                 }
+                .sheet(item: $pendingInstagramImport) { request in
+                    InstagramImportView(request: request) { media in
+                        if let previous = importedInstagramMedia {
+                            TempFiles.removeItemIfExists(at: previous.url)
+                        }
+                        importedInstagramMedia = media
+                        inputMode = .regular2D
+                        mode = media.kind == .photo ? .photo : .video
+                        importGeneration = UUID()
+                    }
+                }
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .active { refreshInstagramInbox() }
+                }
+                .onOpenURL { url in
+                    guard let id = InstagramHandoff.requestID(from: url) else { return }
+                    guard pendingInstagramImport?.id != id else { return }
+                    deferredInstagramRequestID = id
+                    handledInstagramRequests.remove(id)
+                    refreshInstagramInbox()
+                }
+                .onChange(of: isProcessing) { _, processing in
+                    if !processing { refreshInstagramInbox() }
+                }
+                .onChange(of: showVideoSubscriptionSheet) { _, presented in
+                    if !presented { refreshInstagramInbox() }
+                }
                 .sheet(isPresented: $showVideoSubscriptionSheet) {
                     VideoSubscriptionPaywallView(subscriptionManager: subscriptionManager)
                 }
@@ -152,10 +190,29 @@ struct HomeView: View {
                     Text("A new version of StereoShift is available with the latest improvements.")
                 }
                 .task {
-                    await updateChecker.check()
+                    refreshInstagramInbox()
+                    if pendingInstagramImport == nil { await updateChecker.check() }
                 }
             }
         }
+    }
+
+    private func refreshInstagramInbox() {
+        guard scenePhase == .active, !isProcessing, !showVideoSubscriptionSheet,
+              pendingInstagramImport == nil,
+              let pending = try? InstagramShareInbox.pending() else { return }
+        let request: PendingInstagramImport?
+        if let id = deferredInstagramRequestID {
+            request = pending.first { $0.id == id }
+            deferredInstagramRequestID = nil
+        } else {
+            request = pending.last { !handledInstagramRequests.contains($0.id) }
+        }
+        guard let request else { return }
+        handledInstagramRequests.insert(request.id)
+        updateChecker.dismiss()
+        navigationPath = NavigationPath()
+        pendingInstagramImport = request
     }
 
     private var headerCard: some View {
@@ -217,6 +274,10 @@ struct HomeView: View {
         Binding {
             mode
         } set: { newValue in
+            if newValue != mode, let importedInstagramMedia {
+                TempFiles.removeItemIfExists(at: importedInstagramMedia.url)
+                self.importedInstagramMedia = nil
+            }
             mode = newValue
         }
     }

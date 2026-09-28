@@ -7,3 +7,12 @@
 "Importing…" = "इंपोर्ट हो रहा है…";
 "No supported items found." = "कोई समर्थित आइटम नहीं मिले।";
 
+
+/* Experimental Instagram import */
+"Add media or an Instagram link to StereoShift?" = "StereoShift में मीडिया या Instagram लिंक जोड़ें?";
+"Link saved. Open StereoShift and tap Instagram Import to continue." = "लिंक सहेजा गया। जारी रखने के लिए StereoShift खोलें और Instagram से आयात पर टैप करें।";
+"No supported media found. Share an Instagram post or Reel link, or a photo or video file." = "समर्थित मीडिया नहीं मिला। Instagram पोस्ट या रील का लिंक, या फ़ोटो या वीडियो फ़ाइल साझा करें।";
+
+"Opening StereoShift…" = "StereoShift खुल रहा है…";
+"Link saved. Open StereoShift to continue automatically." = "लिंक सहेजा गया। अपने आप जारी रखने के लिए StereoShift खोलें।";
+"Open StereoShift" = "StereoShift खोलें";

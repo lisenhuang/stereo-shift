@@ -12,12 +12,14 @@ struct VideoFlowView: View {
     @Binding var stereo3DOptions: Stereo3DOptions
     @ObservedObject var subscriptionManager: SubscriptionManager
     @ObservedObject var galleryLibrary: AppGalleryLibrary
+    let importedFileURL: URL?
     let onRequireSubscription: () -> Void
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
 
     @Environment(\.requestReview) private var requestReview
 
+    @State private var didLoadImportedFile = false
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceVideoURL: URL?
     @State private var outputVideoURL: URL?
@@ -144,8 +146,15 @@ struct VideoFlowView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isProcessing)
+        .onAppear {
+            if !didLoadImportedFile, let importedFileURL {
+                didLoadImportedFile = true
+                loadSelectedVideoFile(importedFileURL)
+            }
+        }
         .onChange(of: selectedItem) { _, newValue in
-            loadSelectedVideo(newValue)
+            // File imports clear picker selection after loading their own source.
+            if newValue != nil { loadSelectedVideo(newValue) }
         }
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()

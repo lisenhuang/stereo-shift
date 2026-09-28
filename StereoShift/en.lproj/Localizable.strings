@@ -156,3 +156,18 @@
 "White dots on a black strip above both views help you align your eyes." = "White dots on a black strip above both views help you align your eyes.";
 
 "Billed weekly. Renews automatically until canceled." = "Billed weekly. Renews automatically until canceled.";
+
+/* Experimental Instagram import */
+"Instagram Import" = "Instagram Import";
+"Experimental" = "Experimental";
+"Instagram link" = "Instagram link";
+"Import for 3D" = "Import for 3D";
+"Loading..." = "Loading...";
+"Try importing a public Instagram post or Reel. Some posts cannot be downloaded. Photo posts import the cover image only." = "Try importing a public Instagram post or Reel. Some posts cannot be downloaded. Photo posts import the cover image only.";
+"Shared from Instagram" = "Shared from Instagram";
+"Paste an Instagram post or Reel link." = "Paste an Instagram post or Reel link.";
+"This file is too large for link import (250 MB maximum). Save it first and import it from Photos." = "This file is too large for link import (250 MB maximum). Save it first and import it from Photos.";
+"The downloaded file could not be opened as a photo or video." = "The downloaded file could not be opened as a photo or video.";
+"Instagram did not return the media for this post. Please try again." = "Instagram did not return the media for this post. Please try again.";
+"Instagram requires a signed-in session to access this post." = "Instagram requires a signed-in session to access this post.";
+"Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram is temporarily limiting downloads on this connection. Please try again later.";

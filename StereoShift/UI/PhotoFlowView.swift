@@ -10,9 +10,11 @@ struct PhotoFlowView: View {
     @Binding var sbsLayoutEnabled: Bool
     @Binding var stereo3DOptions: Stereo3DOptions
     @ObservedObject var galleryLibrary: AppGalleryLibrary
+    let importedFileURL: URL?
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
 
+    @State private var didLoadImportedFile = false
     @State private var selectedItem: PhotosPickerItem?
     @State private var sourceImage: CGImage?
     @State private var sourceSpatialPair: StereoImagePair?
@@ -152,8 +154,15 @@ struct PhotoFlowView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: isGenerating)
+        .onAppear {
+            if !didLoadImportedFile, let importedFileURL {
+                didLoadImportedFile = true
+                loadSelectedPhotoFile(importedFileURL)
+            }
+        }
         .onChange(of: selectedItem) { _, newValue in
-            loadSelectedPhoto(newValue)
+            // File imports clear picker selection after loading their own source.
+            if newValue != nil { loadSelectedPhoto(newValue) }
         }
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()

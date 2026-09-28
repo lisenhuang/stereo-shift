@@ -156,3 +156,18 @@
 "White dots on a black strip above both views help you align your eyes." = "تساعدك النقاط البيضاء على شريط أسود فوق كلا المنظورين على محاذاة عينيك.";
 
 "Billed weekly. Renews automatically until canceled." = "تُحصّل الرسوم أسبوعيًا. يتجدد تلقائيًا حتى الإلغاء.";
+
+/* Experimental Instagram import */
+"Instagram Import" = "استيراد من Instagram";
+"Experimental" = "تجريبي";
+"Instagram link" = "رابط Instagram";
+"Import for 3D" = "استيراد للتحويل إلى 3D";
+"Loading..." = "جارٍ التحميل...";
+"Try importing a public Instagram post or Reel. Some posts cannot be downloaded. Photo posts import the cover image only." = "جرّب استيراد منشور أو ريل عام من Instagram. لا يمكن تنزيل بعض المنشورات. يُستورد غلاف منشورات الصور فقط.";
+"Shared from Instagram" = "تمت مشاركته من Instagram";
+"Paste an Instagram post or Reel link." = "ألصق رابط منشور أو ريل من Instagram.";
+"This file is too large for link import (250 MB maximum). Save it first and import it from Photos." = "هذا الملف أكبر من الحد المسموح للاستيراد عبر الرابط (250 MB كحد أقصى). احفظه أولًا ثم استورده من تطبيق الصور.";
+"The downloaded file could not be opened as a photo or video." = "تعذر فتح الملف الذي تم تنزيله كصورة أو فيديو.";
+"Instagram did not return the media for this post. Please try again." = "لم يُرجع Instagram الوسائط لهذا المنشور. يُرجى المحاولة مرة أخرى.";
+"Instagram requires a signed-in session to access this post." = "يتطلب Instagram تسجيل الدخول للوصول إلى هذا المنشور.";
+"Instagram is temporarily limiting downloads on this connection. Please try again later." = "يحدّ Instagram مؤقتًا من التنزيلات عبر هذا الاتصال. يُرجى المحاولة لاحقًا.";

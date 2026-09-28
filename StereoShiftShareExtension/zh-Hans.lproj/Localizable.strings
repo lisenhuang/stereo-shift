@@ -7,3 +7,12 @@
 "Importing…" = "导入中…";
 "No supported items found." = "未找到支持的项目。";
 
+
+/* Experimental Instagram import */
+"Add media or an Instagram link to StereoShift?" = "将媒体或 Instagram 链接添加到 StereoShift？";
+"Link saved. Open StereoShift and tap Instagram Import to continue." = "链接已保存。打开 StereoShift 并点击“Instagram 导入”以继续。";
+"No supported media found. Share an Instagram post or Reel link, or a photo or video file." = "未找到支持的媒体。请分享 Instagram 帖子或 Reels 链接，或照片、视频文件。";
+
+"Opening StereoShift…" = "正在打开 StereoShift…";
+"Link saved. Open StereoShift to continue automatically." = "链接已保存。打开 StereoShift 即可自动继续。";
+"Open StereoShift" = "打开 StereoShift";

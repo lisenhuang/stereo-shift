@@ -7,3 +7,12 @@
 "Importing…" = "가져오는 중…";
 "No supported items found." = "지원되는 항목을 찾을 수 없습니다.";
 
+
+/* Experimental Instagram import */
+"Add media or an Instagram link to StereoShift?" = "미디어 또는 Instagram 링크를 StereoShift에 추가할까요?";
+"Link saved. Open StereoShift and tap Instagram Import to continue." = "링크가 저장되었습니다. StereoShift를 열고 Instagram 가져오기를 탭하여 계속하세요.";
+"No supported media found. Share an Instagram post or Reel link, or a photo or video file." = "지원하는 미디어를 찾지 못했습니다. Instagram 게시물이나 릴스 링크 또는 사진이나 동영상 파일을 공유하세요.";
+
+"Opening StereoShift…" = "StereoShift 여는 중…";
+"Link saved. Open StereoShift to continue automatically." = "링크가 저장되었습니다. StereoShift를 열면 자동으로 계속됩니다.";
+"Open StereoShift" = "StereoShift 열기";

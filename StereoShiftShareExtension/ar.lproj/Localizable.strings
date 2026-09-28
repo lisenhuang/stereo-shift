@@ -7,3 +7,12 @@
 "Importing…" = "جارٍ الاستيراد…";
 "No supported items found." = "لم يتم العثور على عناصر مدعومة.";
 
+
+/* Experimental Instagram import */
+"Add media or an Instagram link to StereoShift?" = "هل تريد إضافة وسائط أو رابط Instagram إلى StereoShift؟";
+"Link saved. Open StereoShift and tap Instagram Import to continue." = "تم حفظ الرابط. افتح StereoShift واضغط على استيراد من Instagram للمتابعة.";
+"No supported media found. Share an Instagram post or Reel link, or a photo or video file." = "لم يتم العثور على وسائط مدعومة. شارك رابط منشور أو ريل من Instagram، أو ملف صورة أو فيديو.";
+
+"Opening StereoShift…" = "جارٍ فتح StereoShift…";
+"Link saved. Open StereoShift to continue automatically." = "تم حفظ الرابط. افتح StereoShift للمتابعة تلقائيًا.";
+"Open StereoShift" = "فتح StereoShift";

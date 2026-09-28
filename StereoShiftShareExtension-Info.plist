@@ -28,6 +28,10 @@
 		<dict>
 			<key>NSExtensionActivationRule</key>
 			<dict>
+				<key>NSExtensionActivationSupportsWebURLWithMaxCount</key>
+				<integer>20</integer>
+				<key>NSExtensionActivationSupportsText</key>
+				<true/>
 				<key>NSExtensionActivationSupportsImageWithMaxCount</key>
 				<integer>20</integer>
 				<key>NSExtensionActivationSupportsMovieWithMaxCount</key>

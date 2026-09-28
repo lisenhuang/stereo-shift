@@ -156,3 +156,18 @@
 "White dots on a black strip above both views help you align your eyes." = "दोनों दृश्यों के ऊपर काली पट्टी पर सफ़ेद बिंदु आपकी नज़रों को संरेखित करने में मदद करते हैं।";
 
 "Billed weekly. Renews automatically until canceled." = "हर हफ़्ते शुल्क लिया जाता है। रद्द करने तक अपने आप नवीनीकृत होता है।";
+
+/* Experimental Instagram import */
+"Instagram Import" = "Instagram से आयात";
+"Experimental" = "प्रयोगात्मक";
+"Instagram link" = "Instagram लिंक";
+"Import for 3D" = "3D के लिए आयात करें";
+"Loading..." = "लोड हो रहा है...";
+"Try importing a public Instagram post or Reel. Some posts cannot be downloaded. Photo posts import the cover image only." = "Instagram की सार्वजनिक पोस्ट या रील आयात करके देखें। कुछ पोस्ट डाउनलोड नहीं की जा सकतीं। फ़ोटो पोस्ट से केवल कवर इमेज आयात होती है।";
+"Shared from Instagram" = "Instagram से साझा किया गया";
+"Paste an Instagram post or Reel link." = "Instagram पोस्ट या रील का लिंक पेस्ट करें।";
+"This file is too large for link import (250 MB maximum). Save it first and import it from Photos." = "यह फ़ाइल लिंक से आयात करने के लिए बहुत बड़ी है (अधिकतम 250 MB)। पहले इसे सहेजें और फिर फ़ोटो से आयात करें।";
+"The downloaded file could not be opened as a photo or video." = "डाउनलोड की गई फ़ाइल को फ़ोटो या वीडियो के रूप में नहीं खोला जा सका।";
+"Instagram did not return the media for this post. Please try again." = "Instagram ने इस पोस्ट का मीडिया नहीं लौटाया। कृपया फिर से कोशिश करें।";
+"Instagram requires a signed-in session to access this post." = "इस पोस्ट को देखने के लिए Instagram में साइन इन करना ज़रूरी है।";
+"Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram इस कनेक्शन पर डाउनलोड अस्थायी रूप से सीमित कर रहा है। कृपया बाद में फिर से कोशिश करें।";

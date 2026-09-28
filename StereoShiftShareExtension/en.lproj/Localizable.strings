@@ -7,3 +7,12 @@
 "Importing…" = "Importing…";
 "No supported items found." = "No supported items found.";
 
+
+/* Experimental Instagram import */
+"Add media or an Instagram link to StereoShift?" = "Add media or an Instagram link to StereoShift?";
+"Link saved. Open StereoShift and tap Instagram Import to continue." = "Link saved. Open StereoShift and tap Instagram Import to continue.";
+"No supported media found. Share an Instagram post or Reel link, or a photo or video file." = "No supported media found. Share an Instagram post or Reel link, or a photo or video file.";
+
+"Opening StereoShift…" = "Opening StereoShift…";
+"Link saved. Open StereoShift to continue automatically." = "Link saved. Open StereoShift to continue automatically.";
+"Open StereoShift" = "Open StereoShift";

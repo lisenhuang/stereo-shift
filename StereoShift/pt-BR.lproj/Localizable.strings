@@ -156,3 +156,18 @@
 "White dots on a black strip above both views help you align your eyes." = "Pontos brancos em uma faixa preta acima das duas imagens ajudam a alinhar o olhar.";
 
 "Billed weekly. Renews automatically until canceled." = "Cobrança semanal. Renova automaticamente até o cancelamento.";
+
+/* Experimental Instagram import */
+"Instagram Import" = "Importar do Instagram";
+"Experimental" = "Experimental";
+"Instagram link" = "Link do Instagram";
+"Import for 3D" = "Importar para 3D";
+"Loading..." = "Carregando...";
+"Try importing a public Instagram post or Reel. Some posts cannot be downloaded. Photo posts import the cover image only." = "Experimente importar uma publicação ou um Reel público do Instagram. Algumas publicações não podem ser baixadas. Publicações de fotos importam apenas a imagem de capa.";
+"Shared from Instagram" = "Compartilhado do Instagram";
+"Paste an Instagram post or Reel link." = "Cole um link de uma publicação ou um Reel do Instagram.";
+"This file is too large for link import (250 MB maximum). Save it first and import it from Photos." = "Este arquivo é grande demais para importar por link (máximo de 250 MB). Salve-o primeiro e importe pelo app Fotos.";
+"The downloaded file could not be opened as a photo or video." = "Não foi possível abrir o arquivo baixado como foto ou vídeo.";
+"Instagram did not return the media for this post. Please try again." = "O Instagram não retornou a mídia desta publicação. Tente novamente.";
+"Instagram requires a signed-in session to access this post." = "É necessário entrar no Instagram para acessar esta publicação.";
+"Instagram is temporarily limiting downloads on this connection. Please try again later." = "O Instagram está limitando temporariamente os downloads nesta conexão. Tente novamente mais tarde.";

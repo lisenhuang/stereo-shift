@@ -156,3 +156,18 @@
 "White dots on a black strip above both views help you align your eyes." = "左右の映像の上にある黒い帯の白い点が、視線を合わせるのに役立ちます。";
 
 "Billed weekly. Renews automatically until canceled." = "毎週請求されます。キャンセルするまで自動更新されます。";
+
+/* Experimental Instagram import */
+"Instagram Import" = "Instagramから読み込む";
+"Experimental" = "試験的機能";
+"Instagram link" = "Instagramリンク";
+"Import for 3D" = "3D変換用に読み込む";
+"Loading..." = "読み込み中...";
+"Try importing a public Instagram post or Reel. Some posts cannot be downloaded. Photo posts import the cover image only." = "Instagramの公開投稿やリールの読み込みを試せます。ダウンロードできない投稿もあります。写真の投稿ではカバー画像のみを読み込みます。";
+"Shared from Instagram" = "Instagramから共有";
+"Paste an Instagram post or Reel link." = "Instagramの投稿またはリールのリンクを貼り付けてください。";
+"This file is too large for link import (250 MB maximum). Save it first and import it from Photos." = "リンクから読み込めるサイズを超えています（最大250 MB）。先に保存してから「写真」から読み込んでください。";
+"The downloaded file could not be opened as a photo or video." = "ダウンロードしたファイルを写真または動画として開けませんでした。";
+"Instagram did not return the media for this post. Please try again." = "Instagram からこの投稿のメディアを取得できませんでした。もう一度お試しください。";
+"Instagram requires a signed-in session to access this post." = "この投稿にアクセスするには Instagram へのログインが必要です。";
+"Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram がこの接続からのダウンロードを一時的に制限しています。しばらくしてからお試しください。";

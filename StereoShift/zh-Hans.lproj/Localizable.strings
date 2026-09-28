@@ -156,3 +156,18 @@
 "White dots on a black strip above both views help you align your eyes." = "在左右画面上方的黑色条带中添加白色圆点，帮助双眼对齐。";
 
 "Billed weekly. Renews automatically until canceled." = "按周收费，自动续订，直至取消。";
+
+/* Experimental Instagram import */
+"Instagram Import" = "Instagram 导入";
+"Experimental" = "实验功能";
+"Instagram link" = "Instagram 链接";
+"Import for 3D" = "导入以转换为 3D";
+"Loading..." = "正在加载...";
+"Try importing a public Instagram post or Reel. Some posts cannot be downloaded. Photo posts import the cover image only." = "尝试导入公开的 Instagram 帖子或 Reels。部分帖子无法下载。照片帖子仅导入封面图片。";
+"Shared from Instagram" = "从 Instagram 分享";
+"Paste an Instagram post or Reel link." = "请粘贴 Instagram 帖子或 Reels 链接。";
+"This file is too large for link import (250 MB maximum). Save it first and import it from Photos." = "此文件过大，无法通过链接导入（最大 250 MB）。请先保存，再从“照片”导入。";
+"The downloaded file could not be opened as a photo or video." = "下载的文件无法作为照片或视频打开。";
+"Instagram did not return the media for this post. Please try again." = "Instagram 未返回此帖子的媒体，请重试。";
+"Instagram requires a signed-in session to access this post." = "Instagram 要求登录后才能访问此帖子。";
+"Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram 暂时限制了当前网络的下载，请稍后重试。";
