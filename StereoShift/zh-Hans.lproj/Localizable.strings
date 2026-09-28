@@ -150,3 +150,9 @@
 "Color Profile" = "颜色描述文件";
 "Bit Depth" = "位深度";
 "File Size" = "文件大小";
+
+/* Focus dots */
+"Add Focus Dots" = "添加对焦圆点";
+"White dots on a black strip above both views help you align your eyes." = "在左右画面上方的黑色条带中添加白色圆点，帮助双眼对齐。";
+
+"Billed weekly. Renews automatically until canceled." = "按周收费，自动续订，直至取消。";

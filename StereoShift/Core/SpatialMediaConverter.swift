@@ -21,22 +21,24 @@ enum SpatialMediaConverter {
         case right
     }
 
-    static func makeSBSImage(from pair: StereoImagePair) throws -> CGImage {
+    static func makeSBSImage(from pair: StereoImagePair, focusDotsEnabled: Bool = false) throws -> CGImage {
         let targetWidth = min(pair.left.width, pair.right.width)
         let targetHeight = min(pair.left.height, pair.right.height)
 
         let leftBuffer = try makeBuffer(from: pair.left, targetSize: CGSize(width: targetWidth, height: targetHeight))
         let rightBuffer = try makeBuffer(from: pair.right, targetSize: CGSize(width: targetWidth, height: targetHeight))
         let sbsBuffer = try makeSBSPixelBuffer(left: leftBuffer, right: rightBuffer)
-        return try PixelBufferUtilities.makeCGImage(from: sbsBuffer, context: PixelBufferUtilities.sharedCIContext)
+        let exportBuffer = try StereoFocusDots.addingIfEnabled(to: sbsBuffer, enabled: focusDotsEnabled)
+        return try PixelBufferUtilities.makeCGImage(from: exportBuffer, context: PixelBufferUtilities.sharedCIContext)
     }
 
     static func processSpatialVideo(
         inputURL: URL,
+        focusDotsEnabled: Bool = false,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
         do {
-            return try await processSpatialVideoUsingTaggedBuffers(inputURL: inputURL, progress: progress)
+            return try await processSpatialVideoUsingTaggedBuffers(inputURL: inputURL, focusDotsEnabled: focusDotsEnabled, progress: progress)
         } catch {
             if error is CancellationError {
                 throw StereoPipelineError.processingCancelled
@@ -49,7 +51,7 @@ enum SpatialMediaConverter {
             let taggedPathDescription = (error as NSError).localizedDescription
 
             do {
-                return try await processSpatialVideoUsingLayerReaders(inputURL: inputURL, progress: progress)
+                return try await processSpatialVideoUsingLayerReaders(inputURL: inputURL, focusDotsEnabled: focusDotsEnabled, progress: progress)
             } catch {
                 if error is CancellationError {
                     throw StereoPipelineError.processingCancelled
@@ -72,6 +74,7 @@ enum SpatialMediaConverter {
 
     private static func processSpatialVideoUsingTaggedBuffers(
         inputURL: URL,
+        focusDotsEnabled: Bool = false,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
         let asset = AVAsset(url: inputURL)
@@ -131,7 +134,8 @@ enum SpatialMediaConverter {
 
                     let left = try makeUprightAndScaledBuffer(from: rawPair.left, transform: preferredTransform, targetSize: processingSize)
                     let right = try makeUprightAndScaledBuffer(from: rawPair.right, transform: preferredTransform, targetSize: processingSize)
-                    let sbsFrame = try makeSBSPixelBuffer(left: left, right: right)
+                    let sbsBuffer = try makeSBSPixelBuffer(left: left, right: right)
+                    let sbsFrame = try StereoFocusDots.addingIfEnabled(to: sbsBuffer, enabled: focusDotsEnabled)
                     let processedSeconds = max(CMTimeGetSeconds(presentationTime), 0)
 
                     return PreparedSpatialFrame(
@@ -142,11 +146,8 @@ enum SpatialMediaConverter {
                 }
 
                 if writer == nil || writerInput == nil || adaptor == nil {
-                    guard let processingSize else {
-                        throw StereoPipelineError.exportFailed
-                    }
-                    let outputWidth = Int(processingSize.width) * 2
-                    let outputHeight = Int(processingSize.height)
+                    let outputWidth = CVPixelBufferGetWidth(frame.sbsFrame)
+                    let outputHeight = CVPixelBufferGetHeight(frame.sbsFrame)
                     let created = try makeWriterContext(outputURL: outputURL, width: outputWidth, height: outputHeight)
                     writer = created.writer
                     writerInput = created.input
@@ -223,6 +224,7 @@ enum SpatialMediaConverter {
 
     private static func processSpatialVideoUsingLayerReaders(
         inputURL: URL,
+        focusDotsEnabled: Bool = false,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
         let asset = AVAsset(url: inputURL)
@@ -301,7 +303,8 @@ enum SpatialMediaConverter {
 
                     let left = try makeUprightAndScaledBuffer(from: leftRawBuffer, transform: preferredTransform, targetSize: processingSize)
                     let right = try makeUprightAndScaledBuffer(from: rightRawBuffer, transform: preferredTransform, targetSize: processingSize)
-                    let sbsFrame = try makeSBSPixelBuffer(left: left, right: right)
+                    let sbsBuffer = try makeSBSPixelBuffer(left: left, right: right)
+                    let sbsFrame = try StereoFocusDots.addingIfEnabled(to: sbsBuffer, enabled: focusDotsEnabled)
                     let processedSeconds = max(CMTimeGetSeconds(presentationTime), 0)
 
                     return PreparedSpatialFrame(
@@ -312,11 +315,8 @@ enum SpatialMediaConverter {
                 }
 
                 if writer == nil || writerInput == nil || adaptor == nil {
-                    guard let processingSize else {
-                        throw StereoPipelineError.exportFailed
-                    }
-                    let outputWidth = Int(processingSize.width) * 2
-                    let outputHeight = Int(processingSize.height)
+                    let outputWidth = CVPixelBufferGetWidth(frame.sbsFrame)
+                    let outputHeight = CVPixelBufferGetHeight(frame.sbsFrame)
                     let created = try makeWriterContext(outputURL: outputURL, width: outputWidth, height: outputHeight)
                     writer = created.writer
                     writerInput = created.input

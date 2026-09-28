@@ -81,7 +81,11 @@ final class VideoProcessor {
 
         let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
         let outputWidth = Int(processingSize.width) * 2
-        let outputHeight = Int(processingSize.height)
+        let outputHeight = StereoFocusDots.outputHeight(
+            width: outputWidth,
+            height: Int(processingSize.height),
+            enabled: options.focusDotsEnabled
+        )
 
         // Scale bitrate with output pixel rate (~0.1 bits/pixel) so the doubled-width
         // SBS frame isn't starved at higher resolutions.
@@ -185,8 +189,9 @@ final class VideoProcessor {
                     session: temporalSession
                 )
 
+                let exportFrame = try StereoFocusDots.addingIfEnabled(to: stereoFrame, enabled: options.focusDotsEnabled)
                 try await append(
-                    pixelBuffer: stereoFrame,
+                    pixelBuffer: exportFrame,
                     at: presentationTime,
                     to: adaptor,
                     writerInput: writerInput,

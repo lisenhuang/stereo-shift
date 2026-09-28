@@ -150,3 +150,9 @@
 "Color Profile" = "カラープロファイル";
 "Bit Depth" = "ビット深度";
 "File Size" = "ファイルサイズ";
+
+/* Focus dots */
+"Add Focus Dots" = "焦点ガイドの点を追加";
+"White dots on a black strip above both views help you align your eyes." = "左右の映像の上にある黒い帯の白い点が、視線を合わせるのに役立ちます。";
+
+"Billed weekly. Renews automatically until canceled." = "毎週請求されます。キャンセルするまで自動更新されます。";

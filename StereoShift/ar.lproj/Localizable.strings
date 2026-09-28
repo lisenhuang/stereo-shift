@@ -150,3 +150,9 @@
 "Color Profile" = "ملف تعريف الألوان";
 "Bit Depth" = "عمق البت";
 "File Size" = "حجم الملف";
+
+/* Focus dots */
+"Add Focus Dots" = "إضافة نقاط تركيز";
+"White dots on a black strip above both views help you align your eyes." = "تساعدك النقاط البيضاء على شريط أسود فوق كلا المنظورين على محاذاة عينيك.";
+
+"Billed weekly. Renews automatically until canceled." = "تُحصّل الرسوم أسبوعيًا. يتجدد تلقائيًا حتى الإلغاء.";

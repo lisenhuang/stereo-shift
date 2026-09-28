@@ -22,9 +22,9 @@ struct VideoSubscriptionPaywallView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
-                    subscriptionPlansSection
+                    purchaseSection(title: "One-Time Purchase", productID: SubscriptionManager.lifetimeVideoProductID)
 
-                    oneTimePurchaseSection
+                    purchaseSection(title: "Subscription", productID: SubscriptionManager.weeklyVideoProductID)
 
                     legalLinksSection
                 }
@@ -62,61 +62,16 @@ struct VideoSubscriptionPaywallView: View {
         }
     }
 
-    @ViewBuilder
-    private var subscriptionPlansSection: some View {
+    private func purchaseSection(title: LocalizedStringKey, productID: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Subscription")
-                .font(.headline)
-
-            if #available(iOS 17.0, macOS 14.0, *) {
-                SubscriptionStoreView(productIDs: [SubscriptionManager.weeklyVideoProductID])
-                    .storeButton(.visible, for: .restorePurchases)
-                    .storeButton(.visible, for: .policies)
-                    .subscriptionStorePolicyDestination(url: AppLegalLinks.privacyPolicy, for: .privacyPolicy)
-                    .subscriptionStorePolicyDestination(url: AppLegalLinks.termsOfUse, for: .termsOfService)
-            } else {
-                legacyPlansSection
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private var oneTimePurchaseSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("One-Time Purchase")
+            Text(title)
                 .font(.headline)
 
             if subscriptionManager.isLoadingProducts {
                 ProgressView("Loading plans…")
                     .frame(maxWidth: .infinity, alignment: .leading)
-            } else if let product = subscriptionManager.products.first(where: { $0.id == SubscriptionManager.lifetimeVideoProductID }) {
-                Button {
-                    Task {
-                        await subscriptionManager.purchase(product)
-                    }
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(product.displayName)
-                                .font(.headline)
-                            Text(product.description)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .multilineTextAlignment(.leading)
-                        }
-
-                        Spacer()
-
-                        Text(product.displayPrice)
-                            .font(.headline)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-                    .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .disabled(subscriptionManager.isPurchasing)
+            } else if let product = subscriptionManager.products.first(where: { $0.id == productID }) {
+                purchaseButton(for: product)
             } else {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("No subscription plans available right now.")
@@ -136,8 +91,51 @@ struct VideoSubscriptionPaywallView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private func purchaseButton(for product: Product) -> some View {
+        Button {
+            Task {
+                await subscriptionManager.purchase(product)
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(product.displayName)
+                        .font(.headline)
+                    Text(product.description)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                    if product.id == SubscriptionManager.weeklyVideoProductID {
+                        Text("Billed weekly. Renews automatically until canceled.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .multilineTextAlignment(.leading)
+
+                Spacer()
+
+                Text(product.displayPrice)
+                    .font(.headline)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(14)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(subscriptionManager.isPurchasing)
+    }
+
     private var legalLinksSection: some View {
         VStack(alignment: .leading, spacing: 8) {
+            Button("Restore Purchases") {
+                Task {
+                    await subscriptionManager.restorePurchases()
+                }
+            }
+            .disabled(subscriptionManager.isPurchasing)
+
             Link("Privacy Policy", destination: AppLegalLinks.privacyPolicy)
             Link("Terms of Use (EULA)", destination: AppLegalLinks.termsOfUse)
         }
@@ -146,49 +144,4 @@ struct VideoSubscriptionPaywallView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    @ViewBuilder
-    private var legacyPlansSection: some View {
-        if subscriptionManager.products.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("No subscription plans available right now.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-
-                Button("Retry") {
-                    Task {
-                        await subscriptionManager.refreshProducts()
-                    }
-                }
-                .buttonStyle(.bordered)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else if let product = subscriptionManager.products.first(where: { $0.id == SubscriptionManager.weeklyVideoProductID }) {
-            Button {
-                Task {
-                    await subscriptionManager.purchase(product)
-                }
-            } label: {
-                HStack(alignment: .firstTextBaseline, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(product.displayName)
-                            .font(.headline)
-                        Text(product.description)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.leading)
-                    }
-
-                    Spacer()
-
-                    Text(product.displayPrice)
-                        .font(.headline)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .disabled(subscriptionManager.isPurchasing)
-        }
-    }
 }

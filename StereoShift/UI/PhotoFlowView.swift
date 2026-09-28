@@ -418,6 +418,7 @@ struct PhotoFlowView: View {
     private func generateSBSPhoto() {
         generateTask?.cancel()
         isGenerating = true
+        let focusDotsEnabled = stereo3DOptions.focusDotsEnabled
 
         if inputMode == .spatial {
             guard let sourceSpatialPair else {
@@ -428,7 +429,7 @@ struct PhotoFlowView: View {
             generateTask = Task.detached(priority: .userInitiated) {
                 do {
                     try Task.checkCancellation()
-                    let output = try SpatialMediaConverter.makeSBSImage(from: sourceSpatialPair)
+                    let output = try SpatialMediaConverter.makeSBSImage(from: sourceSpatialPair, focusDotsEnabled: focusDotsEnabled)
                     let fileURL = try TempFiles.writePNG(cgImage: output, prefix: "stereoshift-spatial-photo")
 
                     if Task.isCancelled {
@@ -487,7 +488,8 @@ struct PhotoFlowView: View {
                     strength: appliedStrength,
                     options: appliedOptions
                 )
-                let output = try PixelBufferUtilities.makeCGImage(from: outputBuffer)
+                let exportBuffer = try StereoFocusDots.addingIfEnabled(to: outputBuffer, enabled: appliedOptions.focusDotsEnabled)
+                let output = try PixelBufferUtilities.makeCGImage(from: exportBuffer)
                 let jpegQuality: Float = 0.95
                 let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
 
@@ -652,6 +654,16 @@ struct PhotoFlowView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+
+            Toggle(isOn: $stereo3DOptions.focusDotsEnabled) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Add Focus Dots")
+                    Text("White dots on a black strip above both views help you align your eyes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(isGenerating)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

@@ -106,6 +106,7 @@ enum StereoRenderProfile: String, CaseIterable, Sendable {
 }
 
 struct Stereo3DOptions: Hashable, Sendable {
+    var focusDotsEnabled = false
     // Keep using server-like generation (simple min/max depth normalize + integer pixel shifts).
     var generationMethod: StereoGenerationMethod = .serverLike
     var depthModel: DepthModel = .depthAnythingV2SmallF16

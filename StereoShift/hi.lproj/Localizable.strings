@@ -150,3 +150,9 @@
 "Color Profile" = "कलर प्रोफ़ाइल";
 "Bit Depth" = "बिट डेप्थ";
 "File Size" = "फ़ाइल का आकार";
+
+/* Focus dots */
+"Add Focus Dots" = "फ़ोकस बिंदु जोड़ें";
+"White dots on a black strip above both views help you align your eyes." = "दोनों दृश्यों के ऊपर काली पट्टी पर सफ़ेद बिंदु आपकी नज़रों को संरेखित करने में मदद करते हैं।";
+
+"Billed weekly. Renews automatically until canceled." = "हर हफ़्ते शुल्क लिया जाता है। रद्द करने तक अपने आप नवीनीकृत होता है।";

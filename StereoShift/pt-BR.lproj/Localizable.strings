@@ -150,3 +150,9 @@
 "Color Profile" = "Perfil de cor";
 "Bit Depth" = "Profundidade de bits";
 "File Size" = "Tamanho do arquivo";
+
+/* Focus dots */
+"Add Focus Dots" = "Adicionar pontos de foco";
+"White dots on a black strip above both views help you align your eyes." = "Pontos brancos em uma faixa preta acima das duas imagens ajudam a alinhar o olhar.";
+
+"Billed weekly. Renews automatically until canceled." = "Cobrança semanal. Renova automaticamente até o cancelamento.";

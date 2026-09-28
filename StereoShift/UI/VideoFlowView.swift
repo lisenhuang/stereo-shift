@@ -422,7 +422,10 @@ struct VideoFlowView: View {
 
                 let outputURL: URL
                 if usingSpatialMode {
-                    outputURL = try await SpatialMediaConverter.processSpatialVideo(inputURL: sourceVideoURL) { update in
+                    outputURL = try await SpatialMediaConverter.processSpatialVideo(
+                        inputURL: sourceVideoURL,
+                        focusDotsEnabled: appliedOptions.focusDotsEnabled
+                    ) { update in
                         Task { @MainActor in
                             progressValue = update
                         }
@@ -678,6 +681,16 @@ struct VideoFlowView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
+
+            Toggle(isOn: $stereo3DOptions.focusDotsEnabled) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Add Focus Dots")
+                    Text("White dots on a black strip above both views help you align your eyes.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(isProcessing)
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))

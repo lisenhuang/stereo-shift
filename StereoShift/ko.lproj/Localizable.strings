@@ -150,3 +150,9 @@
 "Color Profile" = "색상 프로파일";
 "Bit Depth" = "비트 심도";
 "File Size" = "파일 크기";
+
+/* Focus dots */
+"Add Focus Dots" = "초점 맞춤 점 추가";
+"White dots on a black strip above both views help you align your eyes." = "양쪽 화면 위 검은 띠의 흰색 점이 시선을 맞추는 데 도움을 줍니다.";
+
+"Billed weekly. Renews automatically until canceled." = "매주 결제됩니다. 취소할 때까지 자동 갱신됩니다.";
