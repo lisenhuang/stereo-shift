@@ -37,7 +37,7 @@ struct VideoFlowView: View {
     @State private var saveToDiskSourceURL = FileManager.default.temporaryDirectory
         .appendingPathComponent("stereoshift-video-export-placeholder")
     @State private var limitToFirstTenSeconds = true
-    @State private var sourceVideoDurationSeconds: Double?
+    @State private var sourceVideoMetadata: SourceVideoMetadata?
 
     @State private var selectionTask: Task<Void, Never>?
     @State private var processingTask: Task<Void, Never>?
@@ -55,7 +55,8 @@ struct VideoFlowView: View {
             }
 
             if let sourceVideoURL {
-                ResultPreviewView(title: "Input", media: .video(sourceVideoURL), allowsFullscreenPreview: true)
+                ResultPreviewView(title: "Input", media: .video(sourceVideoURL),
+                                  subtitle: sourceVideoMetadata?.summary, allowsFullscreenPreview: true)
                 pickerControls
             }
 
@@ -70,7 +71,11 @@ struct VideoFlowView: View {
             .disabled(!canGenerate)
 
             if let outputVideoURL {
-                ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL), allowsFullscreenPreview: true)
+                ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL),
+                                  allowsFullscreenPreview: true,
+                                  canOpenFullscreen: subscriptionManager.canAccessVideo,
+                                  onRequireFullscreenAccess: onRequireSubscription,
+                                  allowsInlinePlayback: true)
 
                 VStack(spacing: 10) {
                     Button(action: saveOutputToInAppGallery) {
@@ -116,11 +121,14 @@ struct VideoFlowView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isProcessing || isSaving)
+
+                    RedditPostButton()
+                        .disabled(isProcessing || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputVideoURL]) { completed in
                         guard completed else { return }
-                        scheduleReviewPromptAfterVideoExport()
+                        scheduleReviewPromptAfterExport()
                     }
                 }
 
@@ -158,6 +166,9 @@ struct VideoFlowView: View {
         }
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()
+        }
+        .onChange(of: subscriptionManager.canAccessVideo) { _, hasAccess in
+            if !hasAccess { limitToFirstTenSeconds = true }
         }
         .onChange(of: isProcessing) { _, newValue in
             updateScreenAwakeLock(isActive: newValue)
@@ -201,7 +212,7 @@ struct VideoFlowView: View {
             switch result {
             case .success:
                 saveMessageKey = "Saved to Disk."
-                scheduleReviewPromptAfterVideoExport()
+                scheduleReviewPromptAfterExport()
             case let .failure(error):
                 if !isUserCancelledError(error) {
                     errorMessage = error.localizedDescription
@@ -286,7 +297,7 @@ struct VideoFlowView: View {
         processingTask?.cancel()
 
         sourceVideoURL = nil
-        sourceVideoDurationSeconds = nil
+        sourceVideoMetadata = nil
         if let oldOutput = outputVideoURL {
             TempFiles.removeItemIfExists(at: oldOutput)
         }
@@ -304,7 +315,7 @@ struct VideoFlowView: View {
 
         guard let item else {
             sourceVideoURL = nil
-            sourceVideoDurationSeconds = nil
+            sourceVideoMetadata = nil
             if let oldOutput = outputVideoURL {
                 TempFiles.removeItemIfExists(at: oldOutput)
             }
@@ -313,7 +324,7 @@ struct VideoFlowView: View {
         }
 
         sourceVideoURL = nil
-        sourceVideoDurationSeconds = nil
+        sourceVideoMetadata = nil
         if let oldOutput = outputVideoURL {
             TempFiles.removeItemIfExists(at: oldOutput)
         }
@@ -329,12 +340,12 @@ struct VideoFlowView: View {
                 }
 
                 let loadedURL = try await MediaPicker.loadVideoURL(from: item)
-                let loadedDuration = try await videoDurationSeconds(for: loadedURL)
+                let loadedMetadata = try await SourceVideoMetadata.load(from: loadedURL)
                 if Task.isCancelled { return }
 
                 await MainActor.run {
                     sourceVideoURL = loadedURL
-                    sourceVideoDurationSeconds = loadedDuration
+                    sourceVideoMetadata = loadedMetadata
                     if let oldOutput = outputVideoURL {
                         TempFiles.removeItemIfExists(at: oldOutput)
                     }
@@ -365,7 +376,7 @@ struct VideoFlowView: View {
     private func loadSelectedVideoFile(_ url: URL) {
         selectionTask?.cancel()
         sourceVideoURL = nil
-        sourceVideoDurationSeconds = nil
+        sourceVideoMetadata = nil
         if let oldOutput = outputVideoURL {
             TempFiles.removeItemIfExists(at: oldOutput)
         }
@@ -384,13 +395,13 @@ struct VideoFlowView: View {
                 let loadedURL = try await Task.detached(priority: .userInitiated) {
                     try MediaPicker.loadVideoURL(fromFileURL: url)
                 }.value
-                let loadedDuration = try await videoDurationSeconds(for: loadedURL)
+                let loadedMetadata = try await SourceVideoMetadata.load(from: loadedURL)
                 if Task.isCancelled { return }
 
                 await MainActor.run {
                     selectedItem = nil
                     sourceVideoURL = loadedURL
-                    sourceVideoDurationSeconds = loadedDuration
+                    sourceVideoMetadata = loadedMetadata
                     if let oldOutput = outputVideoURL {
                         TempFiles.removeItemIfExists(at: oldOutput)
                     }
@@ -422,7 +433,8 @@ struct VideoFlowView: View {
         appliedOptions.renderEngine = .metal
         appliedOptions.renderProfile = .ultraFast
         let usingSpatialMode = inputMode == .spatial
-        let shouldLimitDuration = !usingSpatialMode && limitToFirstTenSeconds && (sourceVideoDurationSeconds ?? .infinity) > 10.0
+        // Enforce access here too, even if a previous paid session left the switch off.
+        let shouldLimitDuration = !subscriptionManager.canAccessVideo || limitToFirstTenSeconds
         let maxDurationSeconds = shouldLimitDuration ? 10.0 : nil
 
         processingTask = Task.detached(priority: .userInitiated) {
@@ -433,7 +445,8 @@ struct VideoFlowView: View {
                 if usingSpatialMode {
                     outputURL = try await SpatialMediaConverter.processSpatialVideo(
                         inputURL: sourceVideoURL,
-                        focusDotsEnabled: appliedOptions.focusDotsEnabled
+                        focusDotsEnabled: appliedOptions.focusDotsEnabled,
+                        maxDurationSeconds: maxDurationSeconds
                     ) { update in
                         Task { @MainActor in
                             progressValue = update
@@ -513,6 +526,7 @@ struct VideoFlowView: View {
                 await MainActor.run {
                     isSaving = false
                     saveMessageKey = "Saved to In-App Gallery."
+                    scheduleReviewPromptAfterExport()
                 }
             } catch {
                 await MainActor.run {
@@ -538,7 +552,7 @@ struct VideoFlowView: View {
                 await MainActor.run {
                     isSaving = false
                     saveMessageKey = "Saved to Photos."
-                    scheduleReviewPromptAfterVideoExport()
+                    scheduleReviewPromptAfterExport()
                 }
             } catch {
                 await MainActor.run {
@@ -564,14 +578,14 @@ struct VideoFlowView: View {
         }
     }
 
-    private func scheduleReviewPromptAfterVideoExport() {
-        ReviewPrompter.shared.recordSuccessfulVideoExport()
-        guard ReviewPrompter.shared.shouldPromptNow else { return }
+    private func scheduleReviewPromptAfterExport() {
+        ReviewPrompter.shared.recordSuccessfulExport(isPaidUser: subscriptionManager.canAccessVideo)
+        guard subscriptionManager.canAccessVideo, ReviewPrompter.shared.shouldPromptNow else { return }
 
         reviewPromptTask?.cancel()
         reviewPromptTask = Task {
             try? await Task.sleep(for: ReviewPrompter.promptDelay)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, subscriptionManager.canAccessVideo, ReviewPrompter.shared.shouldPromptNow else { return }
             ReviewPrompter.shared.recordPromptShown()
             requestReview()
         }
@@ -601,16 +615,6 @@ struct VideoFlowView: View {
         let minutes = total / 60
         let remaining = total % 60
         return String(format: "%02d:%02d", minutes, remaining)
-    }
-
-    private func videoDurationSeconds(for url: URL) async throws -> Double {
-        let asset = AVAsset(url: url)
-        let duration = try await asset.load(.duration)
-        let seconds = CMTimeGetSeconds(duration)
-        if seconds.isFinite {
-            return max(0, seconds)
-        }
-        return 0
     }
 
     private var strengthLabelKey: LocalizedStringKey {
@@ -674,9 +678,6 @@ struct VideoFlowView: View {
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)
                     .disabled(true)
 
-                if (sourceVideoDurationSeconds ?? 0) > 10 {
-                    Toggle("Only convert first 10 seconds for testing", isOn: $limitToFirstTenSeconds)
-                }
             } else {
                 Text("Spatial media is converted by separating left and right views. The depth model is not used.")
                     .font(.subheadline)
@@ -689,6 +690,19 @@ struct VideoFlowView: View {
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+            }
+
+            if (sourceVideoMetadata?.durationSeconds ?? 0) > 10 {
+                Toggle("Only convert first 10 seconds for testing", isOn: Binding(
+                    get: { !subscriptionManager.canAccessVideo || limitToFirstTenSeconds },
+                    set: { enabled in
+                        guard enabled || subscriptionManager.canAccessVideo else {
+                            onRequireSubscription()
+                            return
+                        }
+                        limitToFirstTenSeconds = enabled
+                    }
+                ))
             }
 
             Toggle(isOn: $stereo3DOptions.focusDotsEnabled) {

@@ -106,16 +106,16 @@
 "Theme" = "テーマ";
 "Video" = "動画";
 "One-Time Purchase" = "買い切り";
-"Unlock Video" = "動画機能を解除";
-"Unlock Video Conversion" = "動画変換を解除";
+"Unlock Exports" = "書き出しを解除";
+"Unlock StereoShift" = "StereoShift を解除";
 "Video features require an active subscription." = "動画機能には有効なサブスクリプションが必要です。";
-"Video Subscription" = "動画サブスクリプション";
-"Video conversion and spatial video split to SBS are available to subscribers." = "動画変換と空間ビデオのSBS分離はサブスクユーザーのみ利用できます。";
+"Upgrade" = "アップグレード";
+"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "動画全体の変換、全画面プレビュー、写真と動画の保存・共有を利用できます。";
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Web共有の実行中はStereoShiftを前面に保ってください。アプリがバックグラウンドに移ると共有は停止します。";
 "简体中文" = "簡体字中国語";
 "한국어" = "韓国語";
 "StereoShift on Reddit" = "RedditのStereoShift";
-"Share your 3D creations on r/StereoShift" = "3D作品をr/StereoShiftでシェアしよう";
+"View 3D creations on r/StereoShift" = "r/StereoShift で3D作品を見る";
 "Filter" = "フィルタ";
 "All Items" = "すべての項目";
 "Photos" = "写真";
@@ -171,3 +171,23 @@
 "Instagram did not return the media for this post. Please try again." = "Instagram からこの投稿のメディアを取得できませんでした。もう一度お試しください。";
 "Instagram requires a signed-in session to access this post." = "この投稿にアクセスするには Instagram へのログインが必要です。";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram がこの接続からのダウンロードを一時的に制限しています。しばらくしてからお試しください。";
+
+"Post to r/StereoShift" = "r/StereoShift に投稿";
+
+"Play" = "再生";
+
+"Pause" = "一時停止";
+
+"Playback position" = "再生位置";
+
+"Choose a photo" = "写真を選択";
+
+"Choose an image or video" = "画像または動画を選択";
+
+"Select one item to convert to 3D." = "3Dに変換する項目を1つ選んでください。";
+
+"Choose another item" = "別の項目を選択";
+
+"Photo %lld" = "写真 %lld";
+
+"Video %lld" = "動画 %lld";

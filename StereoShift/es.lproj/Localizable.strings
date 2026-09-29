@@ -106,16 +106,16 @@
 "Theme" = "Tema";
 "Video" = "Video";
 "One-Time Purchase" = "Compra unica";
-"Unlock Video" = "Desbloquear video";
-"Unlock Video Conversion" = "Desbloquear conversion de video";
+"Unlock Exports" = "Desbloquear exportaciones";
+"Unlock StereoShift" = "Desbloquear StereoShift";
 "Video features require an active subscription." = "Las funciones de video requieren una suscripcion activa.";
-"Video Subscription" = "Suscripcion de video";
-"Video conversion and spatial video split to SBS are available to subscribers." = "La conversion de video y la separacion de video espacial a SBS estan disponibles para suscriptores.";
+"Upgrade" = "Mejorar";
+"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "Desbloquea la conversión de vídeos completos, las vistas previas a pantalla completa y la opción de guardar y compartir fotos y vídeos.";
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Manten StereoShift en primer plano mientras Web Share esta en ejecucion. Si la app pasa a segundo plano, el uso compartido se detiene.";
 "简体中文" = "Chino simplificado";
 "한국어" = "Coreano";
 "StereoShift on Reddit" = "StereoShift en Reddit";
-"Share your 3D creations on r/StereoShift" = "Comparte tus creaciones 3D en r/StereoShift";
+"View 3D creations on r/StereoShift" = "Mira creaciones 3D en r/StereoShift";
 "Filter" = "Filtrar";
 "All Items" = "Todos los elementos";
 "Photos" = "Fotos";
@@ -171,3 +171,23 @@
 "Instagram did not return the media for this post. Please try again." = "Instagram no devolvió el contenido de esta publicación. Inténtalo de nuevo.";
 "Instagram requires a signed-in session to access this post." = "Instagram requiere iniciar sesión para acceder a esta publicación.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram está limitando temporalmente las descargas en esta conexión. Inténtalo más tarde.";
+
+"Post to r/StereoShift" = "Publicar en r/StereoShift";
+
+"Play" = "Reproducir";
+
+"Pause" = "Pausar";
+
+"Playback position" = "Posición de reproducción";
+
+"Choose a photo" = "Elige una foto";
+
+"Choose an image or video" = "Elige una imagen o un vídeo";
+
+"Select one item to convert to 3D." = "Selecciona un elemento para convertirlo a 3D.";
+
+"Choose another item" = "Elegir otro elemento";
+
+"Photo %lld" = "Foto %lld";
+
+"Video %lld" = "Vídeo %lld";

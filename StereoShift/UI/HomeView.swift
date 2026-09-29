@@ -34,7 +34,6 @@ struct HomeView: View {
     @State private var isProcessing = false
     @State private var showVideoSubscriptionSheet = false
     @State private var pendingInstagramImport: PendingInstagramImport?
-    @State private var handledInstagramRequests = Set<UUID>()
     @State private var deferredInstagramRequestID: UUID?
     @State private var navigationPath = NavigationPath()
     @State private var importedInstagramMedia: ImportedInstagramMedia?
@@ -57,8 +56,12 @@ struct HomeView: View {
                                 strength: $strength,
                                 sbsLayoutEnabled: $sbsLayoutEnabled,
                                 stereo3DOptions: $stereo3DOptions,
+                                subscriptionManager: subscriptionManager,
                                 galleryLibrary: galleryLibrary,
                                 importedFileURL: importedInstagramMedia?.kind == .photo ? importedInstagramMedia?.url : nil,
+                                onRequireSubscription: {
+                                    showVideoSubscriptionSheet = true
+                                },
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
                                 },
@@ -148,13 +151,15 @@ struct HomeView: View {
                     }
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active { refreshInstagramInbox() }
+                    if phase == .active {
+                        refreshInstagramInbox()
+                        Task { await updateChecker.check() }
+                    }
                 }
                 .onOpenURL { url in
                     guard let id = InstagramHandoff.requestID(from: url) else { return }
                     guard pendingInstagramImport?.id != id else { return }
                     deferredInstagramRequestID = id
-                    handledInstagramRequests.remove(id)
                     refreshInstagramInbox()
                 }
                 .onChange(of: isProcessing) { _, processing in
@@ -169,7 +174,11 @@ struct HomeView: View {
                 .alert(
                     "Update Available",
                     isPresented: Binding(
-                        get: { updateChecker.availableUpdate != nil },
+                        get: {
+                            updateChecker.availableUpdate != nil && scenePhase == .active
+                                && pendingInstagramImport == nil && !isProcessing
+                                && !showVideoSubscriptionSheet && navigationPath.isEmpty
+                        },
                         set: { isPresented in
                             if !isPresented {
                                 updateChecker.dismiss()
@@ -191,7 +200,7 @@ struct HomeView: View {
                 }
                 .task {
                     refreshInstagramInbox()
-                    if pendingInstagramImport == nil { await updateChecker.check() }
+                    await updateChecker.check()
                 }
             }
         }
@@ -199,18 +208,10 @@ struct HomeView: View {
 
     private func refreshInstagramInbox() {
         guard scenePhase == .active, !isProcessing, !showVideoSubscriptionSheet,
-              pendingInstagramImport == nil,
-              let pending = try? InstagramShareInbox.pending() else { return }
-        let request: PendingInstagramImport?
-        if let id = deferredInstagramRequestID {
-            request = pending.first { $0.id == id }
-            deferredInstagramRequestID = nil
-        } else {
-            request = pending.last { !handledInstagramRequests.contains($0.id) }
-        }
-        guard let request else { return }
-        handledInstagramRequests.insert(request.id)
-        updateChecker.dismiss()
+              pendingInstagramImport == nil else { return }
+        let requestID = deferredInstagramRequestID
+        deferredInstagramRequestID = nil
+        guard let request = try? InstagramShareInbox.takePending(requestID: requestID) else { return }
         navigationPath = NavigationPath()
         pendingInstagramImport = request
     }
@@ -235,7 +236,7 @@ struct HomeView: View {
                 Image("RedditIcon")
                     .resizable()
                     .frame(width: 18, height: 18)
-                Text("Share your 3D creations on r/StereoShift")
+                Text("View 3D creations on r/StereoShift")
                     .underline()
             }
             .font(.footnote.weight(.medium))

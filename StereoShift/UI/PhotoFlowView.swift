@@ -1,5 +1,6 @@
 import CoreVideo
 import PhotosUI
+import StoreKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -9,10 +10,15 @@ struct PhotoFlowView: View {
     @Binding var strength: Float
     @Binding var sbsLayoutEnabled: Bool
     @Binding var stereo3DOptions: Stereo3DOptions
+    @ObservedObject var subscriptionManager: SubscriptionManager
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let importedFileURL: URL?
+    let onRequireSubscription: () -> Void
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
+
+    @Environment(\.requestReview) private var requestReview
+    @State private var reviewPromptTask: Task<Void, Never>?
 
     @State private var didLoadImportedFile = false
     @State private var selectedItem: PhotosPickerItem?
@@ -79,7 +85,10 @@ struct PhotoFlowView: View {
             .disabled(!canGenerate)
 
             if let outputImage {
-                ResultPreviewView(title: "SBS Output", media: .image(outputImage), allowsFullscreenPreview: true)
+                ResultPreviewView(title: "SBS Output", media: .image(outputImage),
+                                  allowsFullscreenPreview: true,
+                                  canOpenFullscreen: subscriptionManager.canAccessVideo,
+                                  onRequireFullscreenAccess: onRequireSubscription)
             }
 
             if let outputFileURL {
@@ -120,16 +129,21 @@ struct PhotoFlowView: View {
                     }
 
                     Button {
-                        showShareSheet = true
+                        presentShareSheet()
                     } label: {
                         Label("Share", systemImage: "square.and.arrow.up")
                             .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isGenerating || isSaving)
+
+                    RedditPostButton()
+                        .disabled(isGenerating || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
-                    ShareSheet(items: [outputFileURL])
+                    ShareSheet(items: [outputFileURL]) { completed in
+                        if completed { scheduleReviewPromptAfterExport() }
+                    }
                 }
 
                 if let saveMessageKey {
@@ -175,6 +189,7 @@ struct PhotoFlowView: View {
             updateScreenAwakeLock(isActive: false)
             selectionTask?.cancel()
             generateTask?.cancel()
+            reviewPromptTask?.cancel()
             onProcessingStateChanged(false)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { _ in errorMessage = nil })) {
@@ -208,6 +223,7 @@ struct PhotoFlowView: View {
             switch result {
             case .success:
                 saveMessageKey = "Saved to Disk."
+                scheduleReviewPromptAfterExport()
             case let .failure(error):
                 if !isUserCancelledError(error) {
                     errorMessage = error.localizedDescription
@@ -552,7 +568,32 @@ struct PhotoFlowView: View {
         }
     }
 
+    private func scheduleReviewPromptAfterExport() {
+        ReviewPrompter.shared.recordSuccessfulExport(isPaidUser: subscriptionManager.canAccessVideo)
+        guard subscriptionManager.canAccessVideo, ReviewPrompter.shared.shouldPromptNow else { return }
+
+        reviewPromptTask?.cancel()
+        reviewPromptTask = Task {
+            try? await Task.sleep(for: ReviewPrompter.promptDelay)
+            guard !Task.isCancelled, subscriptionManager.canAccessVideo, ReviewPrompter.shared.shouldPromptNow else { return }
+            ReviewPrompter.shared.recordPromptShown()
+            requestReview()
+        }
+    }
+
+    private func presentShareSheet() {
+        guard subscriptionManager.canAccessVideo else {
+            onRequireSubscription()
+            return
+        }
+        showShareSheet = true
+    }
+
     private func saveOutputToInAppGallery() {
+        guard subscriptionManager.canAccessVideo else {
+            onRequireSubscription()
+            return
+        }
         guard let outputFileURL else { return }
         isSaving = true
         saveMessageKey = nil
@@ -563,6 +604,7 @@ struct PhotoFlowView: View {
                 await MainActor.run {
                     isSaving = false
                     saveMessageKey = "Saved to In-App Gallery."
+                    scheduleReviewPromptAfterExport()
                 }
             } catch {
                 await MainActor.run {
@@ -574,6 +616,10 @@ struct PhotoFlowView: View {
     }
 
     private func saveOutputToPhotos() {
+        guard subscriptionManager.canAccessVideo else {
+            onRequireSubscription()
+            return
+        }
         guard let outputFileURL else { return }
         isSaving = true
         saveMessageKey = nil
@@ -584,6 +630,7 @@ struct PhotoFlowView: View {
                 await MainActor.run {
                     isSaving = false
                     saveMessageKey = "Saved to Photos."
+                    scheduleReviewPromptAfterExport()
                 }
             } catch {
                 await MainActor.run {
@@ -595,6 +642,10 @@ struct PhotoFlowView: View {
     }
 
     private func saveOutputToDisk() {
+        guard subscriptionManager.canAccessVideo else {
+            onRequireSubscription()
+            return
+        }
         guard let outputFileURL else { return }
         saveMessageKey = nil
 

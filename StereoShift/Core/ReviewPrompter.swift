@@ -1,18 +1,10 @@
 import Foundation
 
-/// Decides whether asking for an App Store review is worth it right now.
-///
-/// StoreKit silently drops requests past three per 365 days, so an ask is not free: one
-/// spent at a forgettable moment is one that is no longer available at a good one. Every
-/// rule below exists to keep the yearly budget for users who already like the app.
+/// Requests a review after three successful paid photo or video saves/shares.
 @MainActor
 final class ReviewPrompter {
     static let shared = ReviewPrompter()
-
-    /// Video is the paid feature and every export costs the user real minutes of waiting,
-    /// so three finished videos already marks an invested user. A photo-based threshold
-    /// would have to be far higher — a photo is a couple of seconds of effort.
-    static let minimumVideoExports = 3
+    static let minimumExports = 3
 
     static let cooldownDays = 90
 
@@ -22,7 +14,7 @@ final class ReviewPrompter {
 
     /// Everything the decision depends on, so the rules can be exercised in isolation.
     struct Snapshot: Sendable {
-        var successfulVideoExports: Int
+        var successfulExports: Int
         var lastPromptedVersion: String?
         var lastPromptedAt: Date?
         var currentVersion: String
@@ -30,7 +22,7 @@ final class ReviewPrompter {
         var didPromptThisSession: Bool
     }
 
-    private static let videoExportCountKey = "review_prompt_successful_video_exports"
+    private static let exportCountKey = "review_prompt_successful_video_exports"
     private static let lastPromptedVersionKey = "review_prompt_last_version"
     private static let lastPromptedAtKey = "review_prompt_last_date"
 
@@ -47,7 +39,7 @@ final class ReviewPrompter {
 
     static func shouldPrompt(for snapshot: Snapshot) -> Bool {
         guard !snapshot.didPromptThisSession else { return false }
-        guard snapshot.successfulVideoExports >= minimumVideoExports else { return false }
+        guard snapshot.successfulExports >= minimumExports else { return false }
         // A new release is a fresh, legitimate opportunity; the same one is not.
         guard snapshot.lastPromptedVersion != snapshot.currentVersion else { return false }
 
@@ -64,9 +56,10 @@ final class ReviewPrompter {
         Self.shouldPrompt(for: snapshot())
     }
 
-    func recordSuccessfulVideoExport() {
-        let count = userDefaults.integer(forKey: Self.videoExportCountKey)
-        userDefaults.set(count + 1, forKey: Self.videoExportCountKey)
+    func recordSuccessfulExport(isPaidUser: Bool) {
+        guard isPaidUser else { return }
+        let count = userDefaults.integer(forKey: Self.exportCountKey)
+        userDefaults.set(count + 1, forKey: Self.exportCountKey)
     }
 
     /// Call this immediately before presenting: StoreKit never reports back whether the
@@ -80,7 +73,7 @@ final class ReviewPrompter {
     private func snapshot(now: Date = Date()) -> Snapshot {
         let storedTimestamp = userDefaults.object(forKey: Self.lastPromptedAtKey) as? Double
         return Snapshot(
-            successfulVideoExports: userDefaults.integer(forKey: Self.videoExportCountKey),
+            successfulExports: userDefaults.integer(forKey: Self.exportCountKey),
             lastPromptedVersion: userDefaults.string(forKey: Self.lastPromptedVersionKey),
             lastPromptedAt: storedTimestamp.map { Date(timeIntervalSince1970: $0) },
             currentVersion: currentVersion,

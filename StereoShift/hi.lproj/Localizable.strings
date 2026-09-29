@@ -106,16 +106,16 @@
 "Theme" = "थीम";
 "Video" = "वीडियो";
 "One-Time Purchase" = "एक बार की खरीद";
-"Unlock Video" = "वीडियो अनलॉक करें";
-"Unlock Video Conversion" = "वीडियो कन्वर्ज़न अनलॉक करें";
+"Unlock Exports" = "निर्यात अनलॉक करें";
+"Unlock StereoShift" = "StereoShift अनलॉक करें";
 "Video features require an active subscription." = "वीडियो फीचर्स के लिए सक्रिय सदस्यता जरूरी है।";
-"Video Subscription" = "वीडियो सदस्यता";
-"Video conversion and spatial video split to SBS are available to subscribers." = "वीडियो कन्वर्ज़न और स्पैशियल वीडियो को SBS में विभाजित करना केवल सब्सक्राइबर के लिए उपलब्ध है।";
+"Upgrade" = "अपग्रेड";
+"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "पूरे वीडियो का रूपांतरण, फ़ुलस्क्रीन प्रीव्यू और फ़ोटो व वीडियो सहेजना और शेयर करना अनलॉक करें।";
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "वेब शेयर चलने के दौरान StereoShift को फोरग्राउंड में रखें। ऐप बैकग्राउंड में जाने पर शेयरिंग रुक जाएगी।";
 "简体中文" = "सरलीकृत चीनी";
 "한국어" = "कोरियाई";
 "StereoShift on Reddit" = "Reddit पर StereoShift";
-"Share your 3D creations on r/StereoShift" = "अपनी 3D रचनाएँ r/StereoShift पर शेयर करें";
+"View 3D creations on r/StereoShift" = "r/StereoShift पर 3D रचनाएँ देखें";
 "Filter" = "फ़िल्टर";
 "All Items" = "सभी आइटम";
 "Photos" = "फ़ोटो";
@@ -171,3 +171,23 @@
 "Instagram did not return the media for this post. Please try again." = "Instagram ने इस पोस्ट का मीडिया नहीं लौटाया। कृपया फिर से कोशिश करें।";
 "Instagram requires a signed-in session to access this post." = "इस पोस्ट को देखने के लिए Instagram में साइन इन करना ज़रूरी है।";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram इस कनेक्शन पर डाउनलोड अस्थायी रूप से सीमित कर रहा है। कृपया बाद में फिर से कोशिश करें।";
+
+"Post to r/StereoShift" = "r/StereoShift पर पोस्ट करें";
+
+"Play" = "चलाएँ";
+
+"Pause" = "रोकें";
+
+"Playback position" = "प्लेबैक की स्थिति";
+
+"Choose a photo" = "एक फ़ोटो चुनें";
+
+"Choose an image or video" = "एक इमेज या वीडियो चुनें";
+
+"Select one item to convert to 3D." = "3D में बदलने के लिए एक आइटम चुनें।";
+
+"Choose another item" = "दूसरा आइटम चुनें";
+
+"Photo %lld" = "फ़ोटो %lld";
+
+"Video %lld" = "वीडियो %lld";

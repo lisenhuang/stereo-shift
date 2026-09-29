@@ -35,10 +35,11 @@ enum SpatialMediaConverter {
     static func processSpatialVideo(
         inputURL: URL,
         focusDotsEnabled: Bool = false,
+        maxDurationSeconds: Double? = nil,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
         do {
-            return try await processSpatialVideoUsingTaggedBuffers(inputURL: inputURL, focusDotsEnabled: focusDotsEnabled, progress: progress)
+            return try await processSpatialVideoUsingTaggedBuffers(inputURL: inputURL, focusDotsEnabled: focusDotsEnabled, maxDurationSeconds: maxDurationSeconds, progress: progress)
         } catch {
             if error is CancellationError {
                 throw StereoPipelineError.processingCancelled
@@ -51,7 +52,7 @@ enum SpatialMediaConverter {
             let taggedPathDescription = (error as NSError).localizedDescription
 
             do {
-                return try await processSpatialVideoUsingLayerReaders(inputURL: inputURL, focusDotsEnabled: focusDotsEnabled, progress: progress)
+                return try await processSpatialVideoUsingLayerReaders(inputURL: inputURL, focusDotsEnabled: focusDotsEnabled, maxDurationSeconds: maxDurationSeconds, progress: progress)
             } catch {
                 if error is CancellationError {
                     throw StereoPipelineError.processingCancelled
@@ -75,6 +76,7 @@ enum SpatialMediaConverter {
     private static func processSpatialVideoUsingTaggedBuffers(
         inputURL: URL,
         focusDotsEnabled: Bool = false,
+        maxDurationSeconds: Double? = nil,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
         let asset = AVAsset(url: inputURL)
@@ -84,13 +86,17 @@ enum SpatialMediaConverter {
         }
 
         let duration = try await asset.load(.duration)
-        let totalDurationSeconds = max(CMTimeGetSeconds(duration), 0.001)
+        let fullDurationSeconds = max(CMTimeGetSeconds(duration), 0.001)
+        let totalDurationSeconds = maxDurationSeconds.map { max(0.001, min($0, fullDurationSeconds)) } ?? fullDurationSeconds
         let preferredTransform = try await videoTrack.load(.preferredTransform)
 
         let outputURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-spatial-video", fileExtension: "mp4")
         TempFiles.removeItemIfExists(at: outputURL)
 
         let reader = try AVAssetReader(asset: asset)
+        if maxDurationSeconds != nil {
+            reader.timeRange = CMTimeRange(start: .zero, duration: CMTime(seconds: totalDurationSeconds, preferredTimescale: 600))
+        }
         let readerOutput = makeLayerReaderOutput(track: videoTrack, layerIDs: [0, 1])
         guard reader.canAdd(readerOutput) else {
             throw StereoPipelineError.readerSetupFailed
@@ -225,6 +231,7 @@ enum SpatialMediaConverter {
     private static func processSpatialVideoUsingLayerReaders(
         inputURL: URL,
         focusDotsEnabled: Bool = false,
+        maxDurationSeconds: Double? = nil,
         progress: @escaping @Sendable (VideoProcessingProgress) -> Void
     ) async throws -> URL {
         let asset = AVAsset(url: inputURL)
@@ -234,7 +241,8 @@ enum SpatialMediaConverter {
         }
 
         let duration = try await asset.load(.duration)
-        let totalDurationSeconds = max(CMTimeGetSeconds(duration), 0.001)
+        let fullDurationSeconds = max(CMTimeGetSeconds(duration), 0.001)
+        let totalDurationSeconds = maxDurationSeconds.map { max(0.001, min($0, fullDurationSeconds)) } ?? fullDurationSeconds
         let preferredTransform = try await videoTrack.load(.preferredTransform)
 
         let outputURL = try TempFiles.makeTemporaryFileURL(prefix: "stereoshift-spatial-video", fileExtension: "mp4")
@@ -246,6 +254,11 @@ enum SpatialMediaConverter {
 
         let leftReader = try AVAssetReader(asset: asset)
         let rightReader = try AVAssetReader(asset: asset)
+        if maxDurationSeconds != nil {
+            let range = CMTimeRange(start: .zero, duration: CMTime(seconds: totalDurationSeconds, preferredTimescale: 600))
+            leftReader.timeRange = range
+            rightReader.timeRange = range
+        }
         let leftOutput = makeLayerReaderOutput(track: videoTrack, layerIDs: [layerPair.leftLayerID])
         let rightOutput = makeLayerReaderOutput(track: videoTrack, layerIDs: [layerPair.rightLayerID])
 

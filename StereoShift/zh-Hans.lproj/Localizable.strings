@@ -106,16 +106,16 @@
 "Theme" = "主题";
 "Video" = "视频";
 "One-Time Purchase" = "一次性购买";
-"Unlock Video" = "解锁视频功能";
-"Unlock Video Conversion" = "解锁视频转换";
+"Unlock Exports" = "解锁导出";
+"Unlock StereoShift" = "解锁 StereoShift";
 "Video features require an active subscription." = "视频功能需要有效订阅。";
-"Video Subscription" = "视频订阅";
-"Video conversion and spatial video split to SBS are available to subscribers." = "视频转换和空间视频拆分为 SBS 仅对订阅用户开放。";
+"Upgrade" = "升级";
+"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "解锁完整视频转换、全屏预览以及照片和视频的保存与分享。";
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "网页共享运行时，请保持 StereoShift 在前台；若应用切到后台，共享会停止。";
 "简体中文" = "简体中文";
 "한국어" = "韩语";
 "StereoShift on Reddit" = "StereoShift Reddit 社区";
-"Share your 3D creations on r/StereoShift" = "在 r/StereoShift 分享你的 3D 作品";
+"View 3D creations on r/StereoShift" = "在 r/StereoShift 浏览 3D 作品";
 "Filter" = "筛选";
 "All Items" = "所有项目";
 "Photos" = "照片";
@@ -171,3 +171,23 @@
 "Instagram did not return the media for this post. Please try again." = "Instagram 未返回此帖子的媒体，请重试。";
 "Instagram requires a signed-in session to access this post." = "Instagram 要求登录后才能访问此帖子。";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram 暂时限制了当前网络的下载，请稍后重试。";
+
+"Post to r/StereoShift" = "发布到 r/StereoShift";
+
+"Play" = "播放";
+
+"Pause" = "暂停";
+
+"Playback position" = "播放位置";
+
+"Choose a photo" = "选择一张照片";
+
+"Choose an image or video" = "选择一张图片或一个视频";
+
+"Select one item to convert to 3D." = "选择一个项目转换为 3D。";
+
+"Choose another item" = "选择其他项目";
+
+"Photo %lld" = "照片 %lld";
+
+"Video %lld" = "视频 %lld";

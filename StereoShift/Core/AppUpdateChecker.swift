@@ -16,6 +16,7 @@ final class AppUpdateChecker: ObservableObject {
     private let userDefaults: UserDefaults
     private let bundle: Bundle
     private let session: URLSession
+    private var isChecking = false
 
     nonisolated private static let lastCheckDateKey = "app_update_last_check_date"
     nonisolated private static let lastOfferedVersionKey = "app_update_last_offered_version"
@@ -31,7 +32,7 @@ final class AppUpdateChecker: ObservableObject {
     /// Best-effort App Store version check. Every failure path is silent: a missing
     /// update must never surface an error or delay the UI.
     func check(force: Bool = false) async {
-        guard let installedVersion else { return }
+        guard !isChecking, let installedVersion else { return }
         let now = Date()
         guard force || shouldCheck(at: now) else { return }
         guard let url = Self.lookupURL(now: now) else { return }
@@ -42,6 +43,8 @@ final class AppUpdateChecker: ObservableObject {
             timeoutInterval: Self.requestTimeout
         )
         request.httpMethod = "GET"
+        isChecking = true
+        defer { isChecking = false }
 
         do {
             let (data, response) = try await session.data(for: request)

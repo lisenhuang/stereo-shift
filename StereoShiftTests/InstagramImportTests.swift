@@ -104,6 +104,48 @@ struct InstagramImportTests {
         #expect(try InstagramMediaImporter.candidate(in: html, postURL: post).kind == .video)
     }
 
+    @Test func carouselReturnsChildrenInOrderWithoutParentCoverOrRelatedPosts() throws {
+        let json: [String: Any] = ["items": [["code": "ABC", "media_type": 8,
+            "image_versions2": ["candidates": [["url": "https://scontent.cdninstagram.com/cover.jpg"]]],
+            "carousel_media": [
+                ["code": "CHILD1", "media_type": 1, "image_versions2": ["candidates": [
+                    ["url": "https://scontent.cdninstagram.com/one.jpg", "width": 1080],
+                    ["url": "https://scontent.cdninstagram.com/one-thumb.jpg", "width": 320]]]],
+                ["code": "CHILD2", "media_type": 1, "image_versions2": ["candidates": [
+                    ["url": "https://scontent.cdninstagram.com/two.jpg"]]]]
+            ]
+        ], ["code": "OTHER", "media_type": 1, "display_url": "https://scontent.cdninstagram.com/wrong.jpg"]]]
+        let candidates = try #require(try InstagramMediaImporter.candidates(inJSON: json, postURL: URL(string: "https://www.instagram.com/p/ABC/")!))
+        #expect(candidates.map { $0.url.lastPathComponent } == ["one.jpg", "two.jpg"])
+        #expect(candidates.allSatisfy { $0.kind == .photo })
+        #expect(candidates[0].thumbnailURL?.lastPathComponent == "one-thumb.jpg")
+    }
+
+    @Test func graphSidecarSupportsPhotosAndVideosButNeverImportsVideoPosters() throws {
+        let json: [String: Any] = ["shortcode": "ABC", "__typename": "GraphSidecar",
+            "edge_sidecar_to_children": ["edges": [
+                ["node": ["is_video": false, "display_url": "https://scontent.cdninstagram.com/photo.jpg"]],
+                ["node": ["is_video": true, "display_url": "https://scontent.cdninstagram.com/poster.jpg"]],
+                ["node": ["is_video": true, "video_url": "https://video.xx.fbcdn.net/clip.mp4",
+                          "display_url": "https://scontent.cdninstagram.com/thumb.jpg"]],
+                ["node": ["is_video": false, "display_url": "https://evil.test/photo.jpg"]]
+            ]]]
+        let postURL = URL(string: "https://www.instagram.com/p/ABC/")!
+        let candidates = try #require(try InstagramMediaImporter.candidates(inJSON: json, postURL: postURL))
+        #expect(candidates.map(\.kind) == [.photo, .video])
+        #expect(candidates.map { $0.url.lastPathComponent } == ["photo.jpg", "clip.mp4"])
+        let html = "<script type='application/json'>" + String(decoding: try JSONSerialization.data(withJSONObject: json), as: UTF8.self) + "</script>"
+        #expect(try InstagramMediaImporter.candidates(in: html, postURL: postURL).count == 2)
+    }
+
+    @Test func unavailableCarouselCannotSilentlyImportItsCover() {
+        let post: [String: Any] = ["code": "ABC", "media_type": 8,
+                                  "display_url": "https://scontent.cdninstagram.com/cover.jpg"]
+        #expect(throws: InstagramImportError.self) {
+            try InstagramMediaImporter.candidates(inJSON: post, postURL: URL(string: "https://www.instagram.com/p/ABC/")!)
+        }
+    }
+
     @Test func mediaQueryIncludesCSRFHeaderAndRequiredRelayVariable() throws {
         let request = InstagramMediaImporter.mediaRequest(postURL: URL(string: "https://www.instagram.com/reel/ABC/")!, csrfToken: "anonymous-token")
         #expect(request.httpMethod == "POST")
@@ -115,6 +157,35 @@ struct InstagramImportTests {
         let variables = try #require(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])
         #expect(variables["shortcode"] as? String == "ABC")
         #expect(variables["__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider"] as? Bool == false)
+    }
+
+    @Test func presentedShareDoesNotReopenAfterClosingFailureOrRelaunch() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = URL(string: "https://www.instagram.com/reel/ABC/")!
+        let older = try InstagramShareInbox.enqueue(url, in: folder)
+        let latest = try InstagramShareInbox.enqueue(url, in: folder)
+        #expect(try InstagramShareInbox.takePending(in: folder)?.id == latest.id)
+        // No success callback is needed: even a cancelled or failed import is consumed.
+        #expect(try InstagramShareInbox.takePending(in: folder) == nil)
+        #expect(try InstagramShareInbox.takePending(requestID: latest.id, in: folder) == nil)
+        #expect(try InstagramShareInbox.takePending(requestID: older.id, in: folder) == nil)
+        let reshared = try InstagramShareInbox.enqueue(url, in: folder)
+        #expect(try InstagramShareInbox.takePending(in: folder)?.id == reshared.id)
+    }
+
+    @Test func explicitHandoffPreservesNewerSharesAndUnknownIDsDoNotConsumeThem() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = URL(string: "https://www.instagram.com/reel/ABC/")!
+        let first = try InstagramShareInbox.enqueue(url, in: folder)
+        let second = try InstagramShareInbox.enqueue(url, in: folder)
+        #expect(try InstagramShareInbox.takePending(requestID: UUID(), in: folder) == nil)
+        #expect(try InstagramShareInbox.pending(in: folder).count == 2)
+        #expect(try InstagramShareInbox.takePending(requestID: first.id, in: folder)?.id == first.id)
+        #expect(try InstagramShareInbox.pending(in: folder).map(\.id) == [second.id])
     }
 
     @Test func inboxPersistsMultipleSharesAndOnlyRemovesSelectedRequest() throws {
@@ -136,13 +207,21 @@ struct InstagramNetworkTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["STEREOSHIFT_INSTAGRAM_TEST_URL"] != nil))
     func downloadsPlayableMediaOnThisDevice() async throws {
         let link = try #require(ProcessInfo.processInfo.environment["STEREOSHIFT_INSTAGRAM_TEST_URL"])
-        let media = try await InstagramMediaImporter.download(postURL: #require(URL(string: link))) {
+        let progress = InstagramProgressCapture()
+        let media = try await InstagramMediaImporter.download(postURL: #require(URL(string: link)), onProgress: {
+            progress.append($0)
+        }, onEvent: {
             print("INSTAGRAM_DEVICE_TEST: \($0)")
-        }
+        })
         defer { try? FileManager.default.removeItem(at: media.url) }
         let size = try media.url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         #expect(size > 0)
         #expect(media.kind == .video)
+        let updates = progress.values
+        #expect(updates.contains { $0 > 0 && $0 < 1 })
+        #expect(updates.last == 1)
+        #expect(updates.allSatisfy { (0...1).contains($0) })
+        print("INSTAGRAM_DEVICE_TEST: received \(updates.count) progress updates including intermediate percentages")
         let asset = AVURLAsset(url: media.url)
         #expect(try await asset.load(.isPlayable))
         let duration = try await asset.load(.duration)
@@ -152,4 +231,11 @@ struct InstagramNetworkTests {
         print("INSTAGRAM_DEVICE_TEST: duration \(duration.seconds), dimensions \(dimensions), audio tracks \(audioTracks.count)")
         print("INSTAGRAM_DEVICE_TEST: downloaded and validated \(size) bytes on \(ProcessInfo.processInfo.operatingSystemVersionString)")
     }
+}
+
+private final class InstagramProgressCapture: @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [Double] = []
+    var values: [Double] { lock.withLock { recorded } }
+    func append(_ value: Double) { lock.withLock { recorded.append(value) } }
 }

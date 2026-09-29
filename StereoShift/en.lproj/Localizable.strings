@@ -106,16 +106,16 @@
 "Theme" = "Theme";
 "Video" = "Video";
 "One-Time Purchase" = "One-Time Purchase";
-"Unlock Video" = "Unlock Video";
-"Unlock Video Conversion" = "Unlock Video Conversion";
+"Unlock Exports" = "Unlock Exports";
+"Unlock StereoShift" = "Unlock StereoShift";
 "Video features require an active subscription." = "Video features require an active subscription.";
-"Video Subscription" = "Video Subscription";
-"Video conversion and spatial video split to SBS are available to subscribers." = "Video conversion and spatial video split to SBS are available to subscribers.";
+"Upgrade" = "Upgrade";
+"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos.";
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops.";
 "简体中文" = "简体中文";
 "한국어" = "한국어";
 "StereoShift on Reddit" = "StereoShift on Reddit";
-"Share your 3D creations on r/StereoShift" = "Share your 3D creations on r/StereoShift";
+"View 3D creations on r/StereoShift" = "View 3D creations on r/StereoShift";
 "Filter" = "Filter";
 "All Items" = "All Items";
 "Photos" = "Photos";
@@ -171,3 +171,23 @@
 "Instagram did not return the media for this post. Please try again." = "Instagram did not return the media for this post. Please try again.";
 "Instagram requires a signed-in session to access this post." = "Instagram requires a signed-in session to access this post.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram is temporarily limiting downloads on this connection. Please try again later.";
+
+"Post to r/StereoShift" = "Post to r/StereoShift";
+
+"Play" = "Play";
+
+"Pause" = "Pause";
+
+"Playback position" = "Playback position";
+
+"Choose a photo" = "Choose a photo";
+
+"Choose an image or video" = "Choose an image or video";
+
+"Select one item to convert to 3D." = "Select one item to convert to 3D.";
+
+"Choose another item" = "Choose another item";
+
+"Photo %lld" = "Photo %lld";
+
+"Video %lld" = "Video %lld";

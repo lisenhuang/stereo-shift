@@ -181,7 +181,7 @@ struct GalleryView: View {
             preferredItemEncoding: .current
         )
         .sheet(item: $selectedItem) { item in
-            GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary)
+            GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary, subscriptionManager: subscriptionManager)
         }
         .sheet(isPresented: $isShowingQRCodeSheet) {
             if let qrURLString {
@@ -1293,6 +1293,7 @@ private struct GalleryThumbnailView: View {
 private struct GalleryItemDetailView: View {
     let item: GalleryItem
     @ObservedObject var galleryLibrary: AppGalleryLibrary
+    @ObservedObject var subscriptionManager: SubscriptionManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.requestReview) private var requestReview
 
@@ -1392,7 +1393,7 @@ private struct GalleryItemDetailView: View {
             .sheet(isPresented: $showShareSheet) {
                 ShareSheet(items: [item.url]) { completed in
                     guard completed else { return }
-                    scheduleReviewPromptAfterVideoExport()
+                    scheduleReviewPromptAfterExport()
                 }
             }
             .sheet(isPresented: $showDiskExportPicker) {
@@ -1402,7 +1403,7 @@ private struct GalleryItemDetailView: View {
                         showDiskExportPicker = false
                         if didSave {
                             saveMessageKey = "Saved to Disk."
-                            scheduleReviewPromptAfterVideoExport()
+                            scheduleReviewPromptAfterExport()
                         }
                     }
                 }
@@ -1478,7 +1479,7 @@ private struct GalleryItemDetailView: View {
                 await MainActor.run {
                     isSaving = false
                     saveMessageKey = "Saved to Photos."
-                    scheduleReviewPromptAfterVideoExport()
+                    scheduleReviewPromptAfterExport()
                 }
             } catch {
                 await MainActor.run {
@@ -1489,18 +1490,14 @@ private struct GalleryItemDetailView: View {
         }
     }
 
-    /// Exporting a photo is a couple of seconds of work, so only video counts towards the
-    /// review prompt — the same rule the video flow follows.
-    private func scheduleReviewPromptAfterVideoExport() {
-        guard item.type == .video else { return }
-
-        ReviewPrompter.shared.recordSuccessfulVideoExport()
-        guard ReviewPrompter.shared.shouldPromptNow else { return }
+    private func scheduleReviewPromptAfterExport() {
+        ReviewPrompter.shared.recordSuccessfulExport(isPaidUser: subscriptionManager.canAccessVideo)
+        guard subscriptionManager.canAccessVideo, ReviewPrompter.shared.shouldPromptNow else { return }
 
         reviewPromptTask?.cancel()
         reviewPromptTask = Task {
             try? await Task.sleep(for: ReviewPrompter.promptDelay)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, subscriptionManager.canAccessVideo, ReviewPrompter.shared.shouldPromptNow else { return }
             ReviewPrompter.shared.recordPromptShown()
             requestReview()
         }

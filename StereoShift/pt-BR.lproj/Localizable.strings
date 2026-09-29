@@ -106,16 +106,16 @@
 "Theme" = "Tema";
 "Video" = "Video";
 "One-Time Purchase" = "Compra unica";
-"Unlock Video" = "Desbloquear video";
-"Unlock Video Conversion" = "Desbloquear conversao de video";
+"Unlock Exports" = "Desbloquear exportações";
+"Unlock StereoShift" = "Desbloquear StereoShift";
 "Video features require an active subscription." = "Os recursos de video exigem uma assinatura ativa.";
-"Video Subscription" = "Assinatura de video";
-"Video conversion and spatial video split to SBS are available to subscribers." = "A conversao de video e a separacao de video espacial para SBS estao disponiveis para assinantes.";
+"Upgrade" = "Atualizar";
+"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "Desbloqueie a conversão de vídeos completos, prévias em tela cheia e as opções de salvar e compartilhar fotos e vídeos.";
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Mantenha o StereoShift em primeiro plano enquanto o compartilhamento Web estiver ativo. Se o app for para segundo plano, o compartilhamento para.";
 "简体中文" = "Chines simplificado";
 "한국어" = "Coreano";
 "StereoShift on Reddit" = "StereoShift no Reddit";
-"Share your 3D creations on r/StereoShift" = "Compartilhe suas criações 3D no r/StereoShift";
+"View 3D creations on r/StereoShift" = "Veja criações 3D no r/StereoShift";
 "Filter" = "Filtrar";
 "All Items" = "Todos os itens";
 "Photos" = "Fotos";
@@ -171,3 +171,23 @@
 "Instagram did not return the media for this post. Please try again." = "O Instagram não retornou a mídia desta publicação. Tente novamente.";
 "Instagram requires a signed-in session to access this post." = "É necessário entrar no Instagram para acessar esta publicação.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "O Instagram está limitando temporariamente os downloads nesta conexão. Tente novamente mais tarde.";
+
+"Post to r/StereoShift" = "Publicar no r/StereoShift";
+
+"Play" = "Reproduzir";
+
+"Pause" = "Pausar";
+
+"Playback position" = "Posição da reprodução";
+
+"Choose a photo" = "Escolha uma foto";
+
+"Choose an image or video" = "Escolha uma imagem ou vídeo";
+
+"Select one item to convert to 3D." = "Selecione um item para converter em 3D.";
+
+"Choose another item" = "Escolher outro item";
+
+"Photo %lld" = "Foto %lld";
+
+"Video %lld" = "Vídeo %lld";

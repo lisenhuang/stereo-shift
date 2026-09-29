@@ -12,7 +12,11 @@ enum PreviewMedia {
 struct ResultPreviewView: View {
     let title: LocalizedStringKey
     let media: PreviewMedia
+    var subtitle: String? = nil
     var allowsFullscreenPreview: Bool = false
+    var canOpenFullscreen: Bool = true
+    var onRequireFullscreenAccess: (() -> Void)? = nil
+    var allowsInlinePlayback: Bool = false
     /// Full-bleed layout for the gallery sheet: no card or title, media at its own aspect ratio,
     /// and videos play inline with the system controls instead of needing fullscreen.
     var isEdgeToEdge: Bool = false
@@ -26,6 +30,12 @@ struct ResultPreviewView: View {
             if !isEdgeToEdge {
                 Text(title)
                     .font(.headline)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Group {
@@ -45,9 +55,15 @@ struct ResultPreviewView: View {
                     }
 
                 case let .video(url):
-                    VideoPlayer(player: player)
+                    Group {
+                        if allowsInlinePlayback {
+                            InlineVideoPreview(player: player)
+                        } else {
+                            VideoPlayer(player: player)
+                                .allowsHitTesting(isEdgeToEdge)
+                        }
+                    }
                         .aspectRatio(isEdgeToEdge ? (videoAspectRatio ?? 16 / 9) : nil, contentMode: .fit)
-                        .allowsHitTesting(isEdgeToEdge)
                         .task(id: url) {
                             guard isEdgeToEdge else { return }
                             videoAspectRatio = await Self.displayAspectRatio(of: url)
@@ -98,6 +114,7 @@ struct ResultPreviewView: View {
                 if !isEdgeToEdge {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .strokeBorder(Color.secondary.opacity(0.2))
+                        .allowsHitTesting(false)
                 }
             }
             .overlay(alignment: .topTrailing) {
@@ -130,13 +147,18 @@ struct ResultPreviewView: View {
     }
 
     private func openFullscreen() {
+        player?.pause()
+        guard canOpenFullscreen else {
+            onRequireFullscreenAccess?()
+            return
+        }
         isShowingFullscreen = true
     }
 
     /// Inline video keeps its own controls, so only the corner button opens fullscreen there.
     private var tapOpensFullscreen: Bool {
         guard allowsFullscreenPreview else { return false }
-        if isEdgeToEdge, case .video = media {
+        if isEdgeToEdge || allowsInlinePlayback, case .video = media {
             return false
         }
         return true

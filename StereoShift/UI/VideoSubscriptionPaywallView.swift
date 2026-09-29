@@ -9,9 +9,9 @@ struct VideoSubscriptionPaywallView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    Text("Unlock Video Conversion")
+                    Text("Unlock StereoShift")
                         .font(.title2.bold())
-                    Text("Video conversion and spatial video split to SBS are available to subscribers.")
+                    Text("Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 
@@ -30,7 +30,7 @@ struct VideoSubscriptionPaywallView: View {
                 }
                 .padding(16)
             }
-            .navigationTitle("Video Subscription")
+            .navigationTitle("Upgrade")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") {

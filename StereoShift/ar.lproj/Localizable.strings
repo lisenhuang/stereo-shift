@@ -106,16 +106,16 @@
 "Theme" = "السمة";
 "Video" = "فيديو";
 "One-Time Purchase" = "شراء لمرة واحدة";
-"Unlock Video" = "إلغاء قفل الفيديو";
-"Unlock Video Conversion" = "إلغاء قفل تحويل الفيديو";
+"Unlock Exports" = "فتح التصدير";
+"Unlock StereoShift" = "فتح StereoShift";
 "Video features require an active subscription." = "ميزات الفيديو تتطلب اشتراكًا نشطًا.";
-"Video Subscription" = "اشتراك الفيديو";
-"Video conversion and spatial video split to SBS are available to subscribers." = "تحويل الفيديو وتقسيم الفيديو المكاني إلى SBS متاحان للمشتركين فقط.";
+"Upgrade" = "ترقية";
+"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "افتح تحويل الفيديوهات كاملة والمعاينة بملء الشاشة وحفظ الصور والفيديوهات ومشاركتها.";
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "أبقِ StereoShift في الواجهة أثناء تشغيل مشاركة الويب. إذا انتقل التطبيق إلى الخلفية، سيتوقف التحميل.";
 "简体中文" = "الصينية المبسطة";
 "한국어" = "الكورية";
 "StereoShift on Reddit" = "StereoShift على Reddit";
-"Share your 3D creations on r/StereoShift" = "شارك إبداعاتك ثلاثية الأبعاد على r/StereoShift";
+"View 3D creations on r/StereoShift" = "شاهد إبداعات ثلاثية الأبعاد على r/StereoShift";
 "Filter" = "تصفية";
 "All Items" = "كل العناصر";
 "Photos" = "الصور";
@@ -171,3 +171,23 @@
 "Instagram did not return the media for this post. Please try again." = "لم يُرجع Instagram الوسائط لهذا المنشور. يُرجى المحاولة مرة أخرى.";
 "Instagram requires a signed-in session to access this post." = "يتطلب Instagram تسجيل الدخول للوصول إلى هذا المنشور.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "يحدّ Instagram مؤقتًا من التنزيلات عبر هذا الاتصال. يُرجى المحاولة لاحقًا.";
+
+"Post to r/StereoShift" = "انشر في r/StereoShift";
+
+"Play" = "تشغيل";
+
+"Pause" = "إيقاف مؤقت";
+
+"Playback position" = "موضع التشغيل";
+
+"Choose a photo" = "اختر صورة";
+
+"Choose an image or video" = "اختر صورة أو فيديو";
+
+"Select one item to convert to 3D." = "اختر عنصراً واحداً لتحويله إلى ثلاثي الأبعاد.";
+
+"Choose another item" = "اختر عنصراً آخر";
+
+"Photo %lld" = "صورة %lld";
+
+"Video %lld" = "فيديو %lld";

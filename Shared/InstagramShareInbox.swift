@@ -87,6 +87,21 @@ enum InstagramShareInbox {
             .sorted { $0.createdAt < $1.createdAt }
     }
 
+    /// Consume before presentation so closing, failing, or restarting cannot reopen a share.
+    /// Older queued shares are superseded; requests added after this snapshot stay queued.
+    static func takePending(requestID: UUID? = nil, in folder: URL? = nil) throws -> PendingInstagramImport? {
+        let folder = try folder ?? directory()
+        let items = try pending(in: folder)
+        let index = requestID.flatMap { id in items.firstIndex { $0.id == id } }
+            ?? (requestID == nil ? items.indices.last : nil)
+        guard let index else { return nil }
+        let selected = items[index]
+        for item in items[...index] {
+            try remove(item, in: folder)
+        }
+        return selected
+    }
+
     static func remove(_ item: PendingInstagramImport, in folder: URL? = nil) throws {
         let folder = try folder ?? directory()
         try FileManager.default.removeItem(at: folder.appendingPathComponent("\(item.id).json"))
