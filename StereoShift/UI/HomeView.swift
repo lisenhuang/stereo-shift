@@ -93,8 +93,6 @@ struct HomeView: View {
                             .id(importGeneration)
                         }
 
-                        redditFooterLink
-
                         Color.clear
                             .frame(height: 1)
                             .id(bottomAnchorID)
@@ -113,16 +111,6 @@ struct HomeView: View {
                                 Label("Upgrade", systemImage: "crown.fill")
                             }
                             .disabled(isProcessing)
-                        }
-
-                        Button {
-                            CommunityLinks.openSubreddit()
-                        } label: {
-                            Label {
-                                Text("StereoShift on Reddit")
-                            } icon: {
-                                Image("RedditIcon")
-                            }
                         }
 
                         preferencesMenu
@@ -226,25 +214,6 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(18)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-    }
-
-    private var redditFooterLink: some View {
-        Button {
-            CommunityLinks.openSubreddit()
-        } label: {
-            HStack(spacing: 6) {
-                Image("RedditIcon")
-                    .resizable()
-                    .frame(width: 18, height: 18)
-                Text("View 3D creations on r/StereoShift")
-                    .underline()
-            }
-            .font(.footnote.weight(.medium))
-            .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(.tint)
-        .padding(.top, 8)
     }
 
     private var modePicker: some View {

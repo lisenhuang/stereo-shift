@@ -121,9 +121,6 @@ struct VideoFlowView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isProcessing || isSaving)
-
-                    RedditPostButton()
-                        .disabled(isProcessing || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputVideoURL]) { completed in

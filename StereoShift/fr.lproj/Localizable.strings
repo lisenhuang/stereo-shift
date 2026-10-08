@@ -114,8 +114,6 @@
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Gardez StereoShift au premier plan pendant le partage Web. Si l'app passe en arriere-plan, le partage s'arrete.";
 "简体中文" = "Chinois simplifie";
 "한국어" = "Coreen";
-"StereoShift on Reddit" = "StereoShift sur Reddit";
-"View 3D creations on r/StereoShift" = "Découvrez des créations 3D sur r/StereoShift";
 "Filter" = "Filtrer";
 "All Items" = "Tous les éléments";
 "Photos" = "Photos";
@@ -172,7 +170,6 @@
 "Instagram requires a signed-in session to access this post." = "Instagram exige une connexion à votre compte pour accéder à cette publication.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram limite temporairement les téléchargements sur cette connexion. Veuillez réessayer plus tard.";
 
-"Post to r/StereoShift" = "Publier sur r/StereoShift";
 
 "Play" = "Lire";
 

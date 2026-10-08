@@ -114,8 +114,6 @@
 "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Web共有の実行中はStereoShiftを前面に保ってください。アプリがバックグラウンドに移ると共有は停止します。";
 "简体中文" = "簡体字中国語";
 "한국어" = "韓国語";
-"StereoShift on Reddit" = "RedditのStereoShift";
-"View 3D creations on r/StereoShift" = "r/StereoShift で3D作品を見る";
 "Filter" = "フィルタ";
 "All Items" = "すべての項目";
 "Photos" = "写真";
@@ -172,7 +170,6 @@
 "Instagram requires a signed-in session to access this post." = "この投稿にアクセスするには Instagram へのログインが必要です。";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram がこの接続からのダウンロードを一時的に制限しています。しばらくしてからお試しください。";
 
-"Post to r/StereoShift" = "r/StereoShift に投稿";
 
 "Play" = "再生";
 
