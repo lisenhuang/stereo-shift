@@ -136,6 +136,9 @@ struct PhotoFlowView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isGenerating || isSaving)
+
+                    RedditPostButton()
+                        .disabled(isGenerating || isSaving)
                 }
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputFileURL]) { completed in
