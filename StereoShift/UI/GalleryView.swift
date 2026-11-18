@@ -374,25 +374,26 @@ struct GalleryView: View {
 
                 if let hostAddress = webServer.hostAddress, webServer.isRunning {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack(spacing: 4) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text("Web share URL:")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text(verbatim: hostAddress)
-                                .font(.subheadline.monospaced())
-                                .foregroundStyle(.secondary)
-                            Button {
-                                isShowingQRCodeSheet = true
-                            } label: {
-                                Image(systemName: "qrcode")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.leading, 4)
+                                .font(.caption)
+                            HStack(spacing: 8) {
+                                Text(verbatim: hostAddress)
+                                    .font(.subheadline.monospaced())
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                                    .textSelection(.enabled)
+                                Button {
+                                    isShowingQRCodeSheet = true
+                                } label: {
+                                    Image(systemName: "qrcode")
+                                        .frame(minWidth: 44, minHeight: 44)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Show QR Code")
                             }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel("Show QR Code")
                         }
-                        .textSelection(.enabled)
+                        .foregroundStyle(.secondary)
 
                         HStack(spacing: 8) {
                             HStack(spacing: 4) {
@@ -1129,26 +1130,34 @@ private struct WebShareQRCodeSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                if let image = qrUIImage(from: urlString) {
-                    Image(uiImage: image)
-                        .resizable()
-                        .interpolation(.none)
-                        .scaledToFit()
-                        .frame(maxWidth: 280, maxHeight: 280)
-                        .padding(.top, 8)
+            ScrollView {
+                VStack(spacing: 16) {
+                    if let image = qrUIImage(from: urlString) {
+                        Image(uiImage: image)
+                            .resizable()
+                            .interpolation(.none)
+                            .scaledToFit()
+                            .frame(maxWidth: 280, maxHeight: 280)
+                            .padding(12)
+                            .background(.white)
+                            .accessibilityHidden(true)
+                    }
+
+                    Text(verbatim: urlString)
+                        .font(.footnote.monospaced())
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+
+                    if let url = URL(string: urlString) {
+                        ShareLink(item: url)
+                            .buttonStyle(.bordered)
+                    }
                 }
-
-                Text(urlString)
-                    .font(.footnote.monospaced())
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 16)
-
-                Spacer(minLength: 0)
+                .frame(maxWidth: .infinity)
+                .padding(20)
             }
-            .padding(.vertical, 20)
             .navigationTitle("Web Share QR")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1159,7 +1168,7 @@ private struct WebShareQRCodeSheet: View {
                 }
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
     }
 
     private func qrUIImage(from text: String) -> UIImage? {
