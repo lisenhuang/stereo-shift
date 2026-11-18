@@ -178,12 +178,14 @@ final class GalleryWebServer: ObservableObject {
     }
 
     private func configure(listener: NWListener, isTLS: Bool, hostAddress: String) {
-        listener.stateUpdateHandler = { [weak self] state in
+        listener.stateUpdateHandler = { [weak self, weak listener] state in
             guard let self else { return }
 
             switch state {
             case .failed(let error):
-                Task { @MainActor in
+                Task { @MainActor [weak listener] in
+                    guard let listener,
+                          listener === (isTLS ? self.httpsListener : self.httpListener) else { return }
                     self.stop()
                     self.errorMessage = Self.describe(error: error)
                 }
@@ -3105,7 +3107,11 @@ final class GalleryWebServer: ObservableObject {
       startXRPlayback();
     });
 
+    let activeListRequest = null;
+
     async function resetAndLoad() {
+      activeListRequest?.abort();
+      activeListRequest = null;
       state.offset = 0;
       state.items = [];
       state.hasMore = false;
@@ -3114,14 +3120,24 @@ final class GalleryWebServer: ObservableObject {
     }
 
     async function loadItems() {
+      if (activeListRequest) return;
+      const request = new AbortController();
+      activeListRequest = request;
+      loadMoreButton.disabled = true;
       try {
         setError('');
-        const response = await fetch(`/api/items?offset=${state.offset}&limit=${state.limit}`, { cache: 'no-store' });
+        const response = await fetch(`/api/items?offset=${state.offset}&limit=${state.limit}`, { cache: 'no-store', signal: request.signal });
+        if (request.signal.aborted) return;
+        if (response.redirected && new URL(response.url).pathname === '/') {
+          window.location.replace('/');
+          return;
+        }
         if (!response.ok) {
           throw new Error('Failed to load gallery list.');
         }
 
         const payload = await response.json();
+        if (request.signal.aborted) return;
         const incoming = Array.isArray(payload.items) ? payload.items : [];
 
         state.items = state.items.concat(incoming);
@@ -3130,7 +3146,12 @@ final class GalleryWebServer: ObservableObject {
 
         render();
       } catch (error) {
-        setError(error?.message || 'Unable to load gallery.');
+        if (!request.signal.aborted) setError(error?.message || 'Unable to load gallery.');
+      } finally {
+        if (activeListRequest === request) {
+          activeListRequest = null;
+          loadMoreButton.disabled = false;
+        }
       }
     }
 
