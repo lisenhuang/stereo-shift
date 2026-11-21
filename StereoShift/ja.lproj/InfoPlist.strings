@@ -1,0 +1,2 @@
+// Camera permission
+"NSCameraUsageDescription" = "StereoShiftはカメラで左右の写真を撮影します。写真はデバイス内に保存されます。";

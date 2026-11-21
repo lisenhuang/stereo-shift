@@ -19,7 +19,7 @@ enum InstagramImportError: LocalizedError {
         case .invalidLink:
             return NSLocalizedString("Paste an Instagram post or Reel link.", comment: "")
         case .unavailable:
-            return NSLocalizedString("Instagram did not return the media for this post. Please try again.", comment: "")
+            return NSLocalizedString("Instagram did not make the media available for this post.", comment: "")
         case .loginRequired:
             return NSLocalizedString("Instagram requires a signed-in session to access this post.", comment: "")
         case .rateLimited:
@@ -76,14 +76,7 @@ enum InstagramMediaImporter {
         let tags = matches("<meta\\b[^>]*>", in: html)
         var metadata: [String: String] = [:]
         for tag in tags {
-            let pattern = #"([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')"#
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
-            var attributes: [String: String] = [:]
-            for match in regex.matches(in: tag, range: NSRange(tag.startIndex..., in: tag)) {
-                guard let keyRange = Range(match.range(at: 1), in: tag),
-                      let valueRange = Range(match.range(at: match.range(at: 2).location == NSNotFound ? 3 : 2), in: tag) else { continue }
-                attributes[String(tag[keyRange]).lowercased()] = decodeEntities(String(tag[valueRange]))
-            }
+            let attributes = htmlAttributes(in: tag)
             if let key = attributes["property"] ?? attributes["name"], let value = attributes["content"] {
                 metadata[key.lowercased()] = value
             }
@@ -205,13 +198,6 @@ enum InstagramMediaImporter {
         configuration.httpMaximumConnectionsPerHost = 4
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 180
-        // Keep anonymous session cookies only for this import. Instagram's public
-        // API expects the session established by the page request.
-        configuration.httpAdditionalHeaders = [
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.6 Safari/605.1.15",
-            "Accept-Language": "en-US,en;q=0.9",
-            "Referer": "https://www.instagram.com/"
-        ]
         let session = URLSession(configuration: configuration)
         let trace = InstagramImportTrace(onEvent: onEvent)
         do {
@@ -290,72 +276,81 @@ enum InstagramMediaImporter {
     }
 
     private static func resolve(postURL: URL, session: URLSession, trace: InstagramImportTrace) async throws -> [Candidate] {
-        var lastError: Error = InstagramImportError.unavailable
+        let embedURL = postURL.appendingPathComponent("embed", isDirectory: true)
+        let embed: String?
         do {
-            // Establish an anonymous CSRF session, then request the actual media
-            // record. Public post pages can show a login/error shell without it.
-            let (bootstrap, _) = try await fetch(URLRequest(url: URL(string: "https://www.instagram.com/")!),
-                                                  session: session, limit: 4 * 1_024 * 1_024, media: false, trace: trace)
-            try? FileManager.default.removeItem(at: bootstrap)
-            let cookies = session.configuration.httpCookieStorage?.cookies(for: postURL) ?? []
-            let csrf = cookies.first { $0.name == "csrftoken" }?.value
-            let request = mediaRequest(postURL: postURL, csrfToken: csrf)
-            let (file, _) = try await fetch(request, session: session, limit: 4 * 1_024 * 1_024, media: false, trace: trace)
-            defer { try? FileManager.default.removeItem(at: file) }
-            let data = try Data(contentsOf: file)
-            if let json = try? JSONSerialization.jsonObject(with: data),
-               let candidate = try candidates(inJSON: json, postURL: postURL) {
-                trace.record("Media API returned matching post")
-                return candidate
-            }
-            trace.record("Media API returned no matching media")
-        } catch {
-            try Task.checkCancellation()
-            lastError = error
-            trace.record("Media API failed: \(error.localizedDescription)")
+            embed = try await page(embedURL, session: session, trace: trace)
+        } catch InstagramImportError.unavailable {
+            embed = nil
         }
-        // Keep HTML extraction as an independent fallback when Instagram changes
-        // the web query identifier. Never substitute a Reel's cover image.
-        do {
-            let html = try await page(postURL, session: session, trace: trace)
-            return try candidates(in: html, postURL: postURL)
-        } catch {
-            try Task.checkCancellation()
-            trace.record("Page fallback failed: \(error.localizedDescription)")
-            if case InstagramImportError.unavailable = lastError { throw error }
-            throw lastError
+        if let embed, let media = try publicEmbedCandidates(in: embed, postURL: postURL) {
+            trace.record("Public embed returned matching media")
+            return media
         }
+        let html = try await page(postURL, session: session, trace: trace)
+        return try candidates(in: html, postURL: postURL)
     }
 
-    static func mediaRequest(postURL: URL, csrfToken: String?) -> URLRequest {
-        // PolarisPostRootQuery protocol, also used by Instaloader. Query IDs are
-        // an upstream web-client detail, not a stable public Instagram API.
-        var request = URLRequest(url: URL(string: "https://www.instagram.com/graphql/query")!)
-        request.httpMethod = "POST"
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("*/*", forHTTPHeaderField: "Accept")
-        request.setValue("936619743392459", forHTTPHeaderField: "X-IG-App-ID")
-        request.setValue("https://www.instagram.com/", forHTTPHeaderField: "Referer")
-        request.setValue(csrfToken ?? "", forHTTPHeaderField: "X-CSRFToken")
-        let variables: [String: Any] = [
-            "shortcode": postURL.lastPathComponent,
-            "__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider": false
-        ]
-        let json = (try? JSONSerialization.data(withJSONObject: variables)).flatMap { String(data: $0, encoding: .utf8) }
-        var form = URLComponents()
-        form.queryItems = [
-            URLQueryItem(name: "doc_id", value: "27128499623469141"),
-            URLQueryItem(name: "variables", value: json),
-            URLQueryItem(name: "server_timestamps", value: "true")
-        ]
-        request.httpBody = form.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B").data(using: .utf8)
-        return request
+    /// Instagram publishes single photos as markup and rich embeds as a JSON
+    /// string inside a script. Decode only the data for the shared post.
+    static func publicEmbedCandidates(in html: String, postURL: URL) throws -> [Candidate]? {
+        guard let shortcode = InstagramLink.canonicalURL(postURL)?.lastPathComponent else {
+            throw InstagramImportError.invalidLink
+        }
+        let container = matches(#"<div\b[^>]*\bdata-permalink\s*=[^>]*>"#, in: html)
+            .lazy.map { htmlAttributes(in: $0) }.first { $0["class"]?.split(separator: " ").contains("Embed") == true }
+        guard let container else { return nil }
+        guard let permalink = container["data-permalink"].flatMap(URL.init(string:)).flatMap(InstagramLink.canonicalURL),
+              permalink.lastPathComponent == shortcode else { throw InstagramImportError.unavailable }
+
+        if container["data-media-type"] == "GraphImage" {
+            guard !["reel", "tv"].contains(postURL.pathComponents.dropFirst().first ?? "") else {
+                throw InstagramImportError.unavailable
+            }
+            for anchor in matches(#"<a\b[^>]*>\s*<img\b[^>]*>"#, in: html) {
+                guard let split = anchor.firstIndex(of: ">") else { continue }
+                let link = htmlAttributes(in: String(anchor[...split]))
+                let image = htmlAttributes(in: String(anchor[anchor.index(after: split)...]))
+                guard link["class"]?.split(separator: " ").contains("EmbeddedMedia") == true,
+                      let url = link["href"].flatMap(URL.init(string:)).flatMap(InstagramLink.canonicalURL),
+                      url.lastPathComponent == shortcode,
+                      image["class"]?.split(separator: " ").contains("EmbeddedMediaImage") == true,
+                      let source = image["src"].flatMap(URL.init(string:)), allowsMediaURL(source) else { continue }
+                return [Candidate(url: source, kind: .photo)]
+            }
+            return nil
+        }
+
+        guard let kind = container["data-media-type"], ["GraphVideo", "GraphSidecar"].contains(kind),
+              let key = html.range(of: #""contextJSON"\s*:\s*""#, options: .regularExpression) else {
+            throw InstagramImportError.unavailable
+        }
+        // Find the closing quote of the JSON string, skipping escaped bytes.
+        let bytes = html.utf8
+        var end = key.upperBound
+        while end < bytes.endIndex {
+            let byte = bytes[end]
+            bytes.formIndex(after: &end)
+            if byte == 0x22 { break }
+            if byte == 0x5c, end < bytes.endIndex { bytes.formIndex(after: &end) }
+        }
+        let start = bytes.index(before: key.upperBound)
+        guard let json = try? JSONDecoder().decode(String.self, from: Data(bytes[start..<end])),
+              let payload = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              let context = payload["context"] as? [String: Any], context["shortcode"] as? String == shortcode,
+              context["type"] as? String == kind, context["copyright_blocked"] as? Bool != true,
+              let graph = payload["gql_data"] as? [String: Any],
+              let media = graph["shortcode_media"] as? [String: Any], media["shortcode"] as? String == shortcode,
+              media["__typename"] as? String == kind,
+              let candidates = try candidates(inJSON: media, postURL: postURL) else {
+            throw InstagramImportError.unavailable
+        }
+        return candidates
     }
 
     private static func page(_ url: URL, session: URLSession, trace: InstagramImportTrace) async throws -> String {
         let (file, response) = try await fetch(URLRequest(url: url), session: session, limit: 4 * 1_024 * 1_024, media: false, trace: trace)
         defer { try? FileManager.default.removeItem(at: file) }
-        if response.url?.path.hasPrefix("/accounts/login") == true { throw InstagramImportError.loginRequired }
         guard response.mimeType == "text/html", let html = String(data: try Data(contentsOf: file), encoding: .utf8) else {
             throw InstagramImportError.unavailable
         }
@@ -375,15 +370,9 @@ enum InstagramMediaImporter {
             let status = (response as? HTTPURLResponse)?.statusCode ?? 0
             let size = (try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             trace.record("\(media ? "Media" : (input.httpMethod ?? "GET") + " " + (input.url?.path ?? "")) HTTP \(status), \(response.mimeType ?? "unknown"), \(size) bytes")
-            if status == 429 {
+            if let error = responseError(response, media: media) {
                 try? FileManager.default.removeItem(at: file)
-                throw InstagramImportError.rateLimited
-            }
-            guard (200...299).contains(status),
-                  let finalURL = response.url,
-                  (media ? allowsMediaURL(finalURL) : allowsPageURL(finalURL)) else {
-                try? FileManager.default.removeItem(at: file)
-                throw InstagramImportError.unavailable
+                throw error
             }
             guard size <= limit else {
                 try? FileManager.default.removeItem(at: file)
@@ -394,6 +383,28 @@ enum InstagramMediaImporter {
             if delegate.exceededLimit { throw InstagramImportError.tooLarge }
             throw error
         }
+    }
+
+    static func responseError(_ response: URLResponse, media: Bool) -> InstagramImportError? {
+        guard let http = response as? HTTPURLResponse, let url = http.url,
+              (media ? allowsMediaURL(url) : allowsPageURL(url)) else { return .unavailable }
+        if http.statusCode == 429 { return .rateLimited }
+        if !media, http.statusCode == 401 || url.pathComponents.prefix(3).elementsEqual(["/", "accounts", "login"]) {
+            return .loginRequired
+        }
+        return (200...299).contains(http.statusCode) ? nil : .unavailable
+    }
+
+    private static func htmlAttributes(in tag: String) -> [String: String] {
+        let pattern = #"([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [:] }
+        var attributes: [String: String] = [:]
+        for match in regex.matches(in: tag, range: NSRange(tag.startIndex..., in: tag)) {
+            guard let keyRange = Range(match.range(at: 1), in: tag),
+                  let valueRange = Range(match.range(at: match.range(at: 2).location == NSNotFound ? 3 : 2), in: tag) else { continue }
+            attributes[String(tag[keyRange]).lowercased()] = decodeEntities(String(tag[valueRange]))
+        }
+        return attributes
     }
 
     private static func matches(_ pattern: String, in text: String) -> [String] {

@@ -1,0 +1,2 @@
+// Camera permission
+"NSCameraUsageDescription" = "StereoShift कैमरे से बाईं और दाईं फ़ोटो लेता है। आपकी फ़ोटो आपके डिवाइस पर ही रहती हैं।";

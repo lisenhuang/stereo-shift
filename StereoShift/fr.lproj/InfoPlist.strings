@@ -1,0 +1,2 @@
+// Camera permission
+"NSCameraUsageDescription" = "StereoShift utilise la caméra pour prendre une photo gauche et une droite. Vos photos restent sur votre appareil.";

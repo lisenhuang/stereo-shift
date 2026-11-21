@@ -9,6 +9,9 @@ struct VideoSubscriptionPaywallView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+#if DEBUG
+                    debugAccessSection
+#endif
                     Text("Unlock StereoShift")
                         .font(.title2.bold())
                     Text("Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos.")
@@ -61,6 +64,34 @@ struct VideoSubscriptionPaywallView: View {
             }
         }
     }
+
+#if DEBUG
+    private var debugAccessSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if subscriptionManager.isDebugPaidAccessEnabled {
+                Label("Debug paid access is active", systemImage: "checkmark.seal.fill")
+                    .font(.headline)
+                    .foregroundStyle(.green)
+                    .accessibilityIdentifier("debugPaidAccessActive")
+            } else {
+                Button {
+                    subscriptionManager.enableDebugPaidAccessForSession()
+                } label: {
+                    Label("Debug: unlock paid access", systemImage: "hammer.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .accessibilityIdentifier("debugUnlockPaidAccess")
+            }
+            Text("Free for this session. Resets when the app restarts.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
+    }
+#endif
 
     private func purchaseSection(title: LocalizedStringKey, productID: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
