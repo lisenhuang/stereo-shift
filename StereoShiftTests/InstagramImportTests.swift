@@ -146,17 +146,79 @@ struct InstagramImportTests {
         }
     }
 
-    @Test func mediaQueryIncludesCSRFHeaderAndRequiredRelayVariable() throws {
-        let request = InstagramMediaImporter.mediaRequest(postURL: URL(string: "https://www.instagram.com/reel/ABC/")!, csrfToken: "anonymous-token")
-        #expect(request.httpMethod == "POST")
-        #expect(request.url?.absoluteString == "https://www.instagram.com/graphql/query")
-        #expect(request.value(forHTTPHeaderField: "X-CSRFToken") == "anonymous-token")
-        let body = try #require(request.httpBody)
-        let form = try #require(URLComponents(string: "?" + String(decoding: body, as: UTF8.self)))
-        let encoded = try #require(form.queryItems?.first(where: { $0.name == "variables" })?.value)
-        let variables = try #require(JSONSerialization.jsonObject(with: Data(encoded.utf8)) as? [String: Any])
-        #expect(variables["shortcode"] as? String == "ABC")
-        #expect(variables["__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider"] as? Bool == false)
+    @Test func publicPhotoEmbedSelectsOnlyTheSharedPhoto() throws {
+        let post = try #require(URL(string: "https://www.instagram.com/p/ABC/"))
+        let html = """
+        <div class="Embed" data-permalink="https://www.instagram.com/p/ABC/?source=embed" data-media-type="GraphImage">
+        <a class="Avatar" href="https://www.instagram.com/profile/"><img src="https://scontent.cdninstagram.com/avatar.jpg"></a>
+        <a class="EmbeddedMedia" href="https://www.instagram.com/p/OTHER/"><img class="EmbeddedMediaImage" src="https://scontent.cdninstagram.com/other.jpg"></a>
+        <a class="EmbeddedMedia" href="https://www.instagram.com/p/ABC/"><img class="EmbeddedMediaImage" src="https://scontent.cdninstagram.com/photo.jpg?a=1&amp;b=2"></a></div>
+        """
+        let media = try #require(try InstagramMediaImporter.publicEmbedCandidates(in: html, postURL: post)?.first)
+        #expect(media.kind == .photo)
+        #expect(media.url.absoluteString == "https://scontent.cdninstagram.com/photo.jpg?a=1&b=2")
+        #expect(try InstagramMediaImporter.publicEmbedCandidates(in: html.replacingOccurrences(of: "scontent.cdninstagram.com", with: "example.org"), postURL: post) == nil)
+        for kind in ["GraphVideo", "GraphSidecar"] {
+            #expect(throws: InstagramImportError.self) {
+                try InstagramMediaImporter.publicEmbedCandidates(in: html.replacingOccurrences(of: "GraphImage", with: kind), postURL: post)
+            }
+        }
+    }
+
+    @Test func richEmbedChecksPostIdentityAndRestrictionsBeforeUsingMedia() throws {
+        let post = try #require(URL(string: "https://www.instagram.com/reel/ABC/"))
+        func embed(blocked: Bool = false, code: String = "ABC", kind: String = "GraphVideo") throws -> String {
+            let context: [String: Any] = ["type": kind, "shortcode": "ABC", "copyright_blocked": blocked]
+            var media: [String: Any] = ["__typename": kind, "shortcode": code]
+            if kind == "GraphSidecar" {
+                media["edge_sidecar_to_children"] = ["edges": [
+                    ["node": ["display_url": "https://scontent.cdninstagram.com/one.jpg"]],
+                    ["node": ["is_video": true, "video_url": "https://video.xx.fbcdn.net/two.mp4"]]
+                ]]
+            } else {
+                media["is_video"] = true
+                media["video_url"] = "https://video.xx.fbcdn.net/video.mp4"
+            }
+            let payload = try JSONSerialization.data(withJSONObject: ["context": context, "gql_data": ["shortcode_media": media]])
+            let literal = String(decoding: try JSONEncoder().encode(String(decoding: payload, as: UTF8.self)), as: UTF8.self)
+            return """
+            <div class="Embed" data-permalink="https://www.instagram.com/reel/ABC/" data-media-type="\(kind)"></div>
+            <script>callback({"contextJSON":\(literal)});</script>
+            """
+        }
+        let video = try #require(try InstagramMediaImporter.publicEmbedCandidates(in: embed(), postURL: post)?.first)
+        #expect(video.kind == .video)
+        #expect(video.url.lastPathComponent == "video.mp4")
+        let carousel = try #require(try InstagramMediaImporter.publicEmbedCandidates(in: embed(kind: "GraphSidecar"), postURL: post))
+        #expect(carousel.map(\.kind) == [.photo, .video])
+        for invalid in [try embed(blocked: true), try embed(code: "OTHER"), try embed().replacingOccurrences(of: "video.xx.fbcdn.net", with: "example.org")] {
+            #expect(throws: InstagramImportError.self) {
+                try InstagramMediaImporter.publicEmbedCandidates(in: invalid, postURL: post)
+            }
+        }
+    }
+
+    @Test func distinguishesSignInFromRateLimitingAndMediaErrors() throws {
+        let embed = try #require(URL(string: "https://www.instagram.com/reel/ABC/embed/"))
+        let login = try #require(URL(string: "https://www.instagram.com/accounts/login/?next=/reel/ABC/"))
+        let cdn = try #require(URL(string: "https://video.xx.fbcdn.net/source.mp4"))
+        let unrelated = try #require(URL(string: "https://example.com/accounts/login/"))
+        let loginLookalike = try #require(URL(string: "https://www.instagram.com/accounts/login-help/"))
+
+        let cases: [(URL, Int, Bool, InstagramImportError?)] = [
+            (embed, 401, false, .loginRequired),
+            (embed, 429, false, .rateLimited),
+            (embed, 404, false, .unavailable),
+            (login, 200, false, .loginRequired),
+            (loginLookalike, 200, false, nil),
+            (cdn, 401, true, .unavailable),
+            (cdn, 200, true, nil),
+            (unrelated, 401, false, .unavailable)
+        ]
+        for (url, status, media, expected) in cases {
+            let response = try #require(HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: nil))
+            #expect(InstagramMediaImporter.responseError(response, media: media) == expected)
+        }
     }
 
     @Test func presentedShareDoesNotReopenAfterClosingFailureOrRelaunch() throws {

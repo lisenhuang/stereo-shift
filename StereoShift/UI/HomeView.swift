@@ -4,6 +4,7 @@ struct HomeView: View {
     private enum Mode: String, CaseIterable, Identifiable {
         case photo
         case video
+        case camera
 
         var id: String { rawValue }
 
@@ -13,6 +14,8 @@ struct HomeView: View {
                 return "Photo"
             case .video:
                 return "Video"
+            case .camera:
+                return "Camera"
             }
         }
     }
@@ -45,9 +48,19 @@ struct HomeView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     VStack(spacing: 20) {
-                        headerCard
+                        if mode != .camera { headerCard }
                         modePicker
-                        inputModePicker
+                        if mode != .camera { inputModePicker }
+
+                        if mode == .camera {
+                            StereoCameraFlowView(
+                                galleryLibrary: galleryLibrary,
+                                subscriptionManager: subscriptionManager,
+                                focusDotsEnabled: stereo3DOptions.focusDotsEnabled,
+                                onRequireSubscription: { showVideoSubscriptionSheet = true },
+                                onProcessingStateChanged: { isProcessing = $0 }
+                            )
+                        }
 
                         if mode == .photo {
                             PhotoFlowView(

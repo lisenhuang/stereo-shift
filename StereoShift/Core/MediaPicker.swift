@@ -66,6 +66,21 @@ enum MediaPicker {
         return PickedPhoto(image: cgImage, embeddedDepth: embeddedDepth)
     }
 
+    static func loadPhotoURL(from item: PhotosPickerItem) async throws -> URL {
+        guard let data = try await item.loadTransferable(type: Data.self) else {
+            throw StereoPipelineError.photoPickerDataUnavailable
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let sourceType = CGImageSourceGetType(source) else {
+            throw StereoPipelineError.photoDecodingFailed
+        }
+        try Task.checkCancellation()
+        let fileExtension = UTType(sourceType as String)?.preferredFilenameExtension ?? "img"
+        let url = try TempFiles.makeTemporaryFileURL(prefix: "picked-photo", fileExtension: fileExtension)
+        try data.write(to: url, options: .atomic)
+        return url
+    }
+
     static func loadVideoURL(from item: PhotosPickerItem) async throws -> URL {
         if let file = try await item.loadTransferable(type: PickedVideoFile.self) {
             return file.url

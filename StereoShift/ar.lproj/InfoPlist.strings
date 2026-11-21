@@ -1,0 +1,2 @@
+// Camera permission
+"NSCameraUsageDescription" = "يستخدم StereoShift الكاميرا لالتقاط صورة يسرى وأخرى يمنى. تبقى صورك على جهازك.";

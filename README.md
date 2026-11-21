@@ -35,6 +35,7 @@ No cloud. No account. No upload. Everything happens on your device, in seconds.
 | | Feature | Notes |
 |:--:|:--|:--|
 | 📷 | **Photo → 3D** | Any photo, any resolution, up to 12MP+ |
+| 📸 | **Stereo Camera** | Guided left/right capture with an estimated 6.4 cm sideways move |
 | 🎬 | **Video → 3D** | H.264 MP4, original audio kept |
 | 🥽 | **Spatial media** | Splits Apple MV-HEVC spatial video into SBS |
 | 🎚 | **3D Strength slider** | Subtle → Balanced → Strong, capped for viewing comfort |
@@ -42,6 +43,35 @@ No cloud. No account. No upload. Everything happens on your device, in seconds.
 | 📤 | **Share extension** | Send media straight from Photos into the app |
 | 🌐 | **Web Share** | Serve results to a headset on the same Wi-Fi |
 | 🌍 | **9 languages** | EN · ZH · JA · KO · ES · FR · PT-BR · HI · AR |
+
+---
+
+## Stereo Camera
+
+Choose **Camera → Open stereo camera** to take a stereo pair inside the app.
+Take the left photo, move the phone about 6.4 cm to the right without turning it,
+and use the first-photo overlay (on by default) to line up the right photo.
+Tap the shutter whenever ready: distance and alignment are optional guidance,
+including when tracking is limited. Review or retake the shots,
+then create an SBS photo with the left view on the left and the right view on the
+right. The result uses the existing gallery, Photos, sharing and subscription rules.
+
+Use a still, well-lit scene with the nearest subject at least 2 metres away.
+ARKit estimates movement and checks height, forward/backward drift and rotation;
+it is a positioning aid, not a calibrated ruler. Tracking interruptions discard a
+partial pair, while a completed pair remains available to review. Focus, exposure
+and white balance are held between captures when the camera supports locking them.
+
+Capture needs an ARKit world-tracking-capable iPhone or iPad and camera permission.
+Images are taken with ARKit's high-resolution capture API, oriented upright, and
+limited to 2560 pixels on the longest edge per eye before SBS composition. The
+simulator uses fixtures only when explicitly enabled by UI tests; physical-device
+movement and image quality still need hands-on validation.
+
+The UI takes inspiration from the directional guide in
+[Apple's panorama camera](https://support.apple.com/guide/iphone/take-panoramic-photos-iph7e06402b4/ios)
+and the level, parallel movement described in
+[single-lens stereo photography](https://stereoscopy.blog/2022/03/04/stereoscopic-3d-photography-with-a-single-lens/).
 
 ---
 
@@ -448,54 +478,3 @@ xcodebuild -project StereoShift.xcodeproj -scheme StereoShift \
 **Built with Swift, Metal and a lot of staring at edge artefacts.** 🥽
 
 </div>
-
-### Experimental Instagram import
-
-Share a public Instagram post or Reel using **Share → More → StereoShift**.
-The extension saves the link and attempts to open StereoShift, which automatically
-downloads it and opens the existing photo/video conversion controls. There is no
-paste field or import button in the app. Failed/cancelled links remain queued for
-a later app launch. If iOS refuses the switch, open StereoShift manually and the
-saved link loads automatically. Only one import is presented at a time; incoming
-shares wait while a conversion is running.
-
-The direct-opening prototype uses `ContainingAppLauncher` to find a UIApplication
-in the extension's responder chain and open a request-ID deep link. This is not an
-Apple-supported Share Extension handoff. It needs real-device validation and a
-shipping decision before App Store submission. No private selectors or disabled
-extension-safety build settings are used. The fallback persists data before trying
-to open the app, and the deep link accepts only IDs of locally queued requests.
-
-Import downloads the source and opens the existing photo/video conversion controls;
-conversion starts only when you tap the generate button. Video subscription rules
-are unchanged.
-
-The importer establishes an anonymous Instagram web session and calls the current
-`PolarisPostRootQuery` media endpoint with its CSRF token. It falls back to public
-Open Graph metadata and embedded post data. The query protocol is documented by
-[Instaloader's media retrieval fix](https://github.com/instaloader/instaloader/pull/2706).
-No account credentials or third-party download service are used. Instagram may deny
-anonymous access, and its web query identifiers can change. Failed imports retain
-the queued link and offer Retry. Stories, private content, shortened share links,
-and complete carousels are not supported. A Reel's preview image is never substituted
-for its video. Downloads are limited to 250 MB, HTTPS Instagram media hosts, and
-validated photo/video content.
-
-The latest import's HTTP status, response type/size, and validation results are kept
-in `Library/Application Support/InstagramImportDiagnostic.log` for device diagnosis.
-It does not store cookies, access tokens, CDN URLs, or page contents. The opt-in
-`InstagramNetworkTests` reads `STEREOSHIFT_INSTAGRAM_TEST_URL` from its test environment
-and checks that the downloaded video is playable; normal test runs skip this live test.
-
-Device check: try a photo post and a Reel from the Instagram app; verify StereoShift
-appears in More, the link survives closing the extension, and successful imports show
-the expected source before conversion. Also test unavailable posts and cancelling a
-download. Simulator tests do not establish what payload the Instagram app shares or
-whether its live media is retrievable.
-
-Validation (2026-09-29, 1.5.9 / 34): the opt-in test on the physical iPhone 17 Pro
-retrieved Reel `DdT_lKWAftG` through the media query and validated a playable
-3,590,331-byte video, 720 × 1280, 49.295 seconds, with one audio track. All 11
-selected device tests and the simulator unit suite passed. The signed Release build
-was installed and launched. This verifies retrieval on the phone; the complete
-Instagram share-sheet-to-conversion UI flow still needs a manual check.

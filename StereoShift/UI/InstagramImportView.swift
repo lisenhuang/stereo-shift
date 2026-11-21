@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 struct InstagramImportView: View {
@@ -7,6 +8,8 @@ struct InstagramImportView: View {
     @State private var importTask: Task<Void, Never>?
     @State private var isImporting = false
     @State private var errorMessage: String?
+    @State private var canRetryLink = true
+    @State private var pickedItem: PhotosPickerItem?
     @State private var loadingProgress: Double?
     @State private var importAttemptID = UUID()
     @State private var resolvedPost: InstagramMediaImporter.ResolvedPost?
@@ -19,8 +22,15 @@ struct InstagramImportView: View {
                 if let errorMessage {
                     Text(errorMessage)
                         .foregroundStyle(.red)
-                    Button("Retry", action: startImport)
-                        .buttonStyle(.borderedProminent)
+                    if canRetryLink {
+                        Button("Retry") { startImport() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    PhotosPicker(selection: $pickedItem, matching: .any(of: [.images, .videos]),
+                                 preferredItemEncoding: .current) {
+                        Text("Choose from Photos")
+                    }
+                    .buttonStyle(.bordered)
                     if let resolvedPost, resolvedPost.candidates.count > 1 {
                         Button("Choose another item") {
                             selectedCandidate = nil
@@ -74,6 +84,11 @@ struct InstagramImportView: View {
                 }
             }
             .onAppear { if resolvedPost == nil { startImport() } }
+            .onChange(of: pickedItem) { _, item in
+                guard let item else { return }
+                pickedItem = nil
+                startImport(pickedItem: item)
+            }
             .onDisappear {
                 importTask?.cancel()
                 resolvedPost?.cancel()
@@ -82,7 +97,7 @@ struct InstagramImportView: View {
         }
     }
 
-    private func startImport() {
+    private func startImport(pickedItem: PhotosPickerItem? = nil) {
         guard !isImporting else { return }
         errorMessage = nil
         loadingProgress = nil
@@ -92,27 +107,38 @@ struct InstagramImportView: View {
         importTask = Task {
             defer { isImporting = false }
             do {
-                let post: InstagramMediaImporter.ResolvedPost
-                if let resolvedPost {
-                    post = resolvedPost
-                } else {
-                    post = try await InstagramMediaImporter.prepare(postURL: request.url)
-                    try Task.checkCancellation()
-                    resolvedPost = post
-                }
-                if selectedCandidate == nil, post.candidates.count > 1 {
-                    isChoosing = true
-                    return
-                }
-                guard let candidate = selectedCandidate ?? post.candidates.first else {
-                    throw InstagramImportError.unavailable
-                }
-                let media = try await InstagramMediaImporter.download(candidate, from: post, onProgress: { progress in
-                    Task { @MainActor in
-                        guard isImporting, importAttemptID == attemptID else { return }
-                        loadingProgress = max(loadingProgress ?? 0, progress)
+                let media: ImportedInstagramMedia
+                if let pickedItem {
+                    let isVideo = pickedItem.supportedContentTypes.contains { $0.conforms(to: .movie) }
+                    let url = if isVideo {
+                        try await MediaPicker.loadVideoURL(from: pickedItem)
+                    } else {
+                        try await MediaPicker.loadPhotoURL(from: pickedItem)
                     }
-                })
+                    media = ImportedInstagramMedia(url: url, kind: isVideo ? .video : .photo)
+                } else {
+                    let post: InstagramMediaImporter.ResolvedPost
+                    if let resolvedPost {
+                        post = resolvedPost
+                    } else {
+                        post = try await InstagramMediaImporter.prepare(postURL: request.url)
+                        try Task.checkCancellation()
+                        resolvedPost = post
+                    }
+                    if selectedCandidate == nil, post.candidates.count > 1 {
+                        isChoosing = true
+                        return
+                    }
+                    guard let candidate = selectedCandidate ?? post.candidates.first else {
+                        throw InstagramImportError.unavailable
+                    }
+                    media = try await InstagramMediaImporter.download(candidate, from: post, onProgress: { progress in
+                        Task { @MainActor in
+                            guard isImporting, importAttemptID == attemptID else { return }
+                            loadingProgress = max(loadingProgress ?? 0, progress)
+                        }
+                    })
+                }
                 guard !Task.isCancelled else {
                     TempFiles.removeItemIfExists(at: media.url)
                     return
@@ -121,6 +147,13 @@ struct InstagramImportView: View {
                 dismiss()
             } catch {
                 guard !Task.isCancelled else { return }
+                if pickedItem == nil {
+                    if case InstagramImportError.loginRequired = error {
+                        canRetryLink = false
+                    } else {
+                        canRetryLink = true
+                    }
+                }
                 errorMessage = error.localizedDescription
             }
         }

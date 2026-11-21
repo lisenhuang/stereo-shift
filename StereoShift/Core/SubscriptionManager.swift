@@ -18,6 +18,15 @@ final class SubscriptionManager: ObservableObject {
     @Published private(set) var isPurchasing = false
     @Published var errorMessage: String?
 
+#if DEBUG
+    @Published private(set) var isDebugPaidAccessEnabled = false
+
+    func enableDebugPaidAccessForSession() {
+        isDebugPaidAccessEnabled = true
+        recomputeVideoAccess()
+    }
+#endif
+
     private let orderedProductIDs: [String]
     private let productIDSet: Set<String>
     private var updatesTask: Task<Void, Never>?
@@ -168,6 +177,13 @@ final class SubscriptionManager: ObservableObject {
     }
 
     private func recomputeVideoAccess() {
+#if DEBUG
+        // Memory only: never write the override into StoreKit's cached entitlement state.
+        if isDebugPaidAccessEnabled {
+            canAccessVideo = true
+            return
+        }
+#endif
         // Offline fallback: if user has ever paid before, allow video while offline.
         canAccessVideo = isSubscribed || (hasEverSubscribed && !isNetworkReachable)
     }
