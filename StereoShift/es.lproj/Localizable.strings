@@ -87,7 +87,7 @@
 "Spatial-only picker requires iOS 18 or later." = "El selector solo espacial requiere iOS 18 o posterior.";
 "Stop" = "Detener";
 "Stop current conversion?" = "Detener la conversion actual?";
-"Start Web Share" = "Iniciar uso compartido en red local";
+"Start Network Share" = "Iniciar uso compartido en red";
 "Stop Web Share" = "Detener Web Share";
 "Strong" = "Fuerte";
 "Subtle" = "Sutil";
@@ -111,7 +111,7 @@
 "Video features require an active subscription." = "Las funciones de video requieren una suscripcion activa.";
 "Upgrade" = "Mejorar";
 "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "Desbloquea la conversión de vídeos completos, las vistas previas a pantalla completa y la opción de guardar y compartir fotos y vídeos.";
-"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Manten StereoShift en primer plano mientras Web Share esta en ejecucion. Si la app pasa a segundo plano, el uso compartido se detiene.";
+"iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "iOS puede pausar el uso compartido cuando cambias de app o bloqueas el iPhone. Si alguien pierde el acceso, vuelve a abrir StereoShift.";
 "简体中文" = "Chino simplificado";
 "한국어" = "Coreano";
 "StereoShift on Reddit" = "StereoShift en Reddit";
@@ -170,6 +170,8 @@
 "The downloaded file could not be opened as a photo or video." = "El archivo descargado no se pudo abrir como foto o vídeo.";
 "Instagram did not make the media available for this post." = "Instagram no ha puesto a disposición el contenido de esta publicación.";
 "Choose from Photos" = "Elegir de Fotos";
+"Instagram only made a cropped preview available. Choose the original from Photos." = "Instagram solo ofrece una vista previa recortada. Selecciona el original en Fotos.";
+"Open on Instagram" = "Abrir en Instagram";
 "Instagram requires a signed-in session to access this post." = "Instagram requiere iniciar sesión para acceder a esta publicación.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram está limitando temporalmente las descargas en esta conexión. Inténtalo más tarde.";
 
@@ -288,3 +290,11 @@
 "Debug: unlock paid access" = "Debug: activar acceso de pago";
 "Debug paid access is active" = "Acceso de pago de Debug activo";
 "Free for this session. Resets when the app restarts." = "Gratis durante esta sesión. Se restablece al reiniciar la app.";
+"Starting public link…" = "Creando enlace público…";
+"Public link" = "Enlace público";
+"Share link" = "Compartir enlace";
+"The public link is unavailable." = "El enlace público no está disponible.";
+"Retry public link" = "Reintentar enlace público";
+"Local Web Share" = "Uso compartido en la red local";
+"Show QR Code" = "Mostrar código QR";
+"Show public link QR code" = "Mostrar código QR del enlace público";

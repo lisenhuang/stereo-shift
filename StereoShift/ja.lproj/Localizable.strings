@@ -87,7 +87,7 @@
 "Spatial-only picker requires iOS 18 or later." = "空間専用ピッカーはiOS 18以降が必要です。";
 "Stop" = "停止";
 "Stop current conversion?" = "現在の変換を停止しますか？";
-"Start Web Share" = "ローカルネットワーク共有を開始";
+"Start Network Share" = "ネットワーク共有を開始";
 "Stop Web Share" = "Web共有を停止";
 "Strong" = "強め";
 "Subtle" = "弱め";
@@ -111,7 +111,7 @@
 "Video features require an active subscription." = "動画機能には有効なサブスクリプションが必要です。";
 "Upgrade" = "アップグレード";
 "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "動画全体の変換、全画面プレビュー、写真と動画の保存・共有を利用できます。";
-"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Web共有の実行中はStereoShiftを前面に保ってください。アプリがバックグラウンドに移ると共有は停止します。";
+"iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "ほかのアプリに切り替えたり、iPhoneをロックしたりすると、iOSが共有を一時停止することがあります。閲覧できなくなった場合は、StereoShiftを開き直してください。";
 "简体中文" = "簡体字中国語";
 "한국어" = "韓国語";
 "StereoShift on Reddit" = "RedditのStereoShift";
@@ -170,6 +170,8 @@
 "The downloaded file could not be opened as a photo or video." = "ダウンロードしたファイルを写真または動画として開けませんでした。";
 "Instagram did not make the media available for this post." = "この投稿のメディアは Instagram から取得できませんでした。";
 "Choose from Photos" = "写真から選択";
+"Instagram only made a cropped preview available. Choose the original from Photos." = "Instagram では切り抜かれたプレビューのみ取得できました。「写真」から元の画像を選択してください。";
+"Open on Instagram" = "Instagram で開く";
 "Instagram requires a signed-in session to access this post." = "この投稿にアクセスするには Instagram へのログインが必要です。";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram がこの接続からのダウンロードを一時的に制限しています。しばらくしてからお試しください。";
 
@@ -288,3 +290,11 @@
 "Debug: unlock paid access" = "デバッグ：有料機能を解除";
 "Debug paid access is active" = "デバッグ用の有料機能が有効です";
 "Free for this session. Resets when the app restarts." = "この起動中のみ無料です。アプリを再起動するとリセットされます。";
+"Starting public link…" = "公開リンクを作成中…";
+"Public link" = "公開リンク";
+"Share link" = "リンクを共有";
+"The public link is unavailable." = "公開リンクを利用できません。";
+"Retry public link" = "公開リンクを再試行";
+"Local Web Share" = "ローカルネットワーク共有";
+"Show QR Code" = "QRコードを表示";
+"Show public link QR code" = "公開リンクのQRコードを表示";

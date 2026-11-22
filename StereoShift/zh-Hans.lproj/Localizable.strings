@@ -88,7 +88,7 @@
 "Spatial-only picker requires iOS 18 or later." = "仅空间媒体选择器需要 iOS 18 或更高版本。";
 "Stop" = "停止";
 "Stop current conversion?" = "停止当前转换？";
-"Start Web Share" = "启动局域网共享";
+"Start Network Share" = "启动网络共享";
 "Stop Web Share" = "停止网页共享";
 "Strong" = "强烈";
 "Subtle" = "轻微";
@@ -111,7 +111,7 @@
 "Video features require an active subscription." = "视频功能需要有效订阅。";
 "Upgrade" = "升级";
 "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "解锁完整视频转换、全屏预览以及照片和视频的保存与分享。";
-"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "网页共享运行时，请保持 StereoShift 在前台；若应用切到后台，共享会停止。";
+"iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "切换应用或锁定 iPhone 时，iOS 可能会暂停共享。如果访客无法访问，请重新打开 StereoShift。";
 "简体中文" = "简体中文";
 "한국어" = "韩语";
 "StereoShift on Reddit" = "StereoShift Reddit 社区";
@@ -170,6 +170,8 @@
 "The downloaded file could not be opened as a photo or video." = "下载的文件无法作为照片或视频打开。";
 "Instagram did not make the media available for this post." = "Instagram 未提供此帖子的媒体。";
 "Choose from Photos" = "从照片中选取";
+"Instagram only made a cropped preview available. Choose the original from Photos." = "Instagram 仅提供裁剪后的预览。请从“照片”中选择原图。";
+"Open on Instagram" = "在 Instagram 中打开";
 "Instagram requires a signed-in session to access this post." = "Instagram 要求登录后才能访问此帖子。";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram 暂时限制了当前网络的下载，请稍后重试。";
 
@@ -288,3 +290,11 @@
 "Debug: unlock paid access" = "调试：解锁付费功能";
 "Debug paid access is active" = "调试付费权限已启用";
 "Free for this session. Resets when the app restarts." = "本次运行期间免费使用，重启应用后失效。";
+"Starting public link…" = "正在创建公网链接…";
+"Public link" = "公网链接";
+"Share link" = "分享链接";
+"The public link is unavailable." = "公网链接暂不可用。";
+"Retry public link" = "重试公网链接";
+"Local Web Share" = "本地网络共享";
+"Show QR Code" = "显示二维码";
+"Show public link QR code" = "显示公网链接二维码";

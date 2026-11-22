@@ -87,7 +87,7 @@
 "Spatial-only picker requires iOS 18 or later." = "مُحدد الوسائط المكانية فقط يتطلب iOS 18 أو أحدث.";
 "Stop" = "إيقاف";
 "Stop current conversion?" = "إيقاف التحويل الحالي؟";
-"Start Web Share" = "بدء مشاركة الشبكة المحلية";
+"Start Network Share" = "بدء مشاركة الشبكة";
 "Stop Web Share" = "إيقاف مشاركة الويب";
 "Strong" = "قوي";
 "Subtle" = "خفيف";
@@ -111,7 +111,7 @@
 "Video features require an active subscription." = "ميزات الفيديو تتطلب اشتراكًا نشطًا.";
 "Upgrade" = "ترقية";
 "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "افتح تحويل الفيديوهات كاملة والمعاينة بملء الشاشة وحفظ الصور والفيديوهات ومشاركتها.";
-"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "أبقِ StereoShift في الواجهة أثناء تشغيل مشاركة الويب. إذا انتقل التطبيق إلى الخلفية، سيتوقف التحميل.";
+"iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "قد يوقف iOS المشاركة مؤقتًا عند التبديل بين التطبيقات أو قفل iPhone. إذا تعذّر على المشاهدين الوصول، فافتح StereoShift مجددًا.";
 "简体中文" = "الصينية المبسطة";
 "한국어" = "الكورية";
 "StereoShift on Reddit" = "StereoShift على Reddit";
@@ -170,6 +170,8 @@
 "The downloaded file could not be opened as a photo or video." = "تعذر فتح الملف الذي تم تنزيله كصورة أو فيديو.";
 "Instagram did not make the media available for this post." = "لم يُتح Instagram الوسائط الخاصة بهذا المنشور.";
 "Choose from Photos" = "اختيار من الصور";
+"Instagram only made a cropped preview available. Choose the original from Photos." = "لم يوفّر Instagram سوى معاينة مقتصّة. اختر الصورة الأصلية من تطبيق الصور.";
+"Open on Instagram" = "فتح في Instagram";
 "Instagram requires a signed-in session to access this post." = "يتطلب Instagram تسجيل الدخول للوصول إلى هذا المنشور.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "يحدّ Instagram مؤقتًا من التنزيلات عبر هذا الاتصال. يُرجى المحاولة لاحقًا.";
 
@@ -288,3 +290,11 @@
 "Debug: unlock paid access" = "تصحيح: تفعيل الوصول المدفوع";
 "Debug paid access is active" = "الوصول المدفوع التجريبي مفعّل";
 "Free for this session. Resets when the app restarts." = "مجاني لهذه الجلسة. يُلغى عند إعادة تشغيل التطبيق.";
+"Starting public link…" = "جارٍ إنشاء الرابط العام…";
+"Public link" = "الرابط العام";
+"Share link" = "مشاركة الرابط";
+"The public link is unavailable." = "الرابط العام غير متاح.";
+"Retry public link" = "إعادة محاولة إنشاء الرابط العام";
+"Local Web Share" = "المشاركة على الشبكة المحلية";
+"Show QR Code" = "إظهار رمز QR";
+"Show public link QR code" = "إظهار رمز QR للرابط العام";

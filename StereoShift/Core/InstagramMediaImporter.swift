@@ -12,7 +12,7 @@ struct ImportedInstagramMedia: Identifiable {
 }
 
 enum InstagramImportError: LocalizedError {
-    case invalidLink, unavailable, tooLarge, invalidMedia, loginRequired, rateLimited
+    case invalidLink, unavailable, previewOnly, tooLarge, invalidMedia, loginRequired, rateLimited
 
     var errorDescription: String? {
         switch self {
@@ -20,6 +20,8 @@ enum InstagramImportError: LocalizedError {
             return NSLocalizedString("Paste an Instagram post or Reel link.", comment: "")
         case .unavailable:
             return NSLocalizedString("Instagram did not make the media available for this post.", comment: "")
+        case .previewOnly:
+            return NSLocalizedString("Instagram only made a cropped preview available. Choose the original from Photos.", comment: "")
         case .loginRequired:
             return NSLocalizedString("Instagram requires a signed-in session to access this post.", comment: "")
         case .rateLimited:
@@ -99,6 +101,7 @@ enum InstagramMediaImporter {
         guard !isVideo, let url = metadata["og:image"].flatMap(URL.init(string:)), allowsMediaURL(url) else {
             throw InstagramImportError.unavailable
         }
+        guard !isCroppedImageURL(url) else { throw InstagramImportError.previewOnly }
         return [Candidate(url: url, kind: .photo)]
     }
 
@@ -138,6 +141,9 @@ enum InstagramMediaImporter {
                 // Related posts can share the same page payload. Never select
                 // a media URL unless its enclosing post matches the shared code.
                 if (object["code"] as? String ?? object["shortcode"] as? String) == shortcode {
+                    if object["if_not_gated_logged_out"] is NSNull, object["gating_ruling"] is [String: Any] {
+                        throw InstagramImportError.loginRequired
+                    }
                     // Children belong to the verified parent post; their shortcodes differ.
                     let children = object["carousel_media"] as? [[String: Any]]
                         ?? ((object["edge_sidecar_to_children"] as? [String: Any])?["edges"] as? [[String: Any]])?
@@ -171,7 +177,7 @@ enum InstagramMediaImporter {
         let images = (object["image_versions2"] as? [String: Any])?["candidates"] as? [[String: Any]] ?? []
         let imageURLs = images.compactMap { ($0["url"] as? String).flatMap(URL.init(string:)) }.filter(allowsMediaURL)
         let displayURL = (object["display_url"] as? String).flatMap(URL.init(string:)).flatMap { allowsMediaURL($0) ? $0 : nil }
-        let photoURL = imageURLs.first ?? displayURL
+        let photoURL = bestPhotoMatchingOriginalRatio(in: images, media: object) ?? imageURLs.first ?? displayURL
         let thumbnail = images.filter { ($0["width"] as? Int ?? 0) >= 240 }
             .sorted { ($0["width"] as? Int ?? 0) < ($1["width"] as? Int ?? 0) }
             .compactMap { ($0["url"] as? String).flatMap(URL.init(string:)) }.first(where: allowsMediaURL) ?? photoURL
@@ -182,6 +188,37 @@ enum InstagramMediaImporter {
         guard object["media_type"] as? Int != 2, object["is_video"] as? Bool != true,
               object["__typename"] as? String != "GraphVideo", let photoURL else { return nil }
         return Candidate(url: photoURL, kind: .photo, thumbnailURL: thumbnail)
+    }
+
+    private static func bestPhotoMatchingOriginalRatio(in images: [[String: Any]], media: [String: Any]) -> URL? {
+        let dimensions = media["dimensions"] as? [String: Any]
+        guard let width = media["original_width"] as? Int ?? dimensions?["width"] as? Int, width > 0,
+              let height = media["original_height"] as? Int ?? dimensions?["height"] as? Int, height > 0 else { return nil }
+
+        let originalRatio = Double(width) / Double(height)
+        return images.compactMap { image -> (url: URL, width: Int)? in
+            guard let width = image["width"] as? Int, width > 0,
+                  let height = image["height"] as? Int, height > 0,
+                  abs((Double(width) / Double(height)) / originalRatio - 1) <= 0.015,
+                  let url = (image["url"] as? String).flatMap(URL.init(string:)),
+                  allowsMediaURL(url), !isCroppedImageURL(url) else { return nil }
+            return (url, width)
+        }.max { $0.width < $1.width }?.url
+    }
+
+    private static func isCroppedImageURL(_ url: URL) -> Bool {
+        let transform = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "stp" }?.value
+        return transform?.range(of: #"(?:^|_)c[0-9]+(?:\.[0-9]+){3}a?(?:_|$)"#, options: .regularExpression) != nil
+    }
+
+    private static func uncroppedEmbedSource(from srcset: String?) -> URL? {
+        srcset?.split(separator: ",").compactMap { variant -> (url: URL, width: Int)? in
+            let fields = variant.split(whereSeparator: \.isWhitespace)
+            guard fields.count == 2, fields[1].hasSuffix("w"),
+                  let width = Int(fields[1].dropLast()), width > 0,
+                  let url = URL(string: String(fields[0])), allowsMediaURL(url), !isCroppedImageURL(url) else { return nil }
+            return (url, width)
+        }.max { $0.width < $1.width }?.url
     }
 
     static func download(postURL: URL, onProgress: @escaping @Sendable (Double) -> Void = { _ in },
@@ -316,7 +353,10 @@ enum InstagramMediaImporter {
                       url.lastPathComponent == shortcode,
                       image["class"]?.split(separator: " ").contains("EmbeddedMediaImage") == true,
                       let source = image["src"].flatMap(URL.init(string:)), allowsMediaURL(source) else { continue }
-                return [Candidate(url: source, kind: .photo)]
+                if !isCroppedImageURL(source) { return [Candidate(url: source, kind: .photo)] }
+                if let fullPhoto = uncroppedEmbedSource(from: image["srcset"]) {
+                    return [Candidate(url: fullPhoto, kind: .photo)]
+                }
             }
             return nil
         }
@@ -338,14 +378,16 @@ enum InstagramMediaImporter {
         guard let json = try? JSONDecoder().decode(String.self, from: Data(bytes[start..<end])),
               let payload = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
               let context = payload["context"] as? [String: Any], context["shortcode"] as? String == shortcode,
-              context["type"] as? String == kind, context["copyright_blocked"] as? Bool != true,
-              let graph = payload["gql_data"] as? [String: Any],
-              let media = graph["shortcode_media"] as? [String: Any], media["shortcode"] as? String == shortcode,
-              media["__typename"] as? String == kind,
-              let candidates = try candidates(inJSON: media, postURL: postURL) else {
+              context["type"] as? String == kind else { throw InstagramImportError.unavailable }
+
+        guard let graph = payload["gql_data"] as? [String: Any],
+              let media = graph["shortcode_media"] as? [String: Any] else { return nil }
+        guard media["shortcode"] as? String == shortcode, media["__typename"] as? String == kind else {
             throw InstagramImportError.unavailable
         }
-        return candidates
+        // A Reel embed can have only a poster while the public post supplies the video.
+        if kind == "GraphVideo" { return singleCandidate(media).map { [$0] } }
+        return try candidates(inJSON: media, postURL: postURL)
     }
 
     private static func page(_ url: URL, session: URLSession, trace: InstagramImportTrace) async throws -> String {

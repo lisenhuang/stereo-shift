@@ -1,0 +1,6 @@
+{
+  "name": "stereoshift-qr-test",
+  "private": true,
+  "type": "module",
+  "devDependencies": { "jsqr": "1.4.0", "pngjs": "7.0.0" }
+}

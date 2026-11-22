@@ -6,7 +6,7 @@
 
 `2D in` → `AI depth` → `GPU stereo warp` → `Side-by-Side 3D out`
 
-**iOS 17+ · SwiftUI · Core ML · Metal · 100% on-device · No servers, no uploads**
+**iOS 17+ · SwiftUI · Core ML · Metal · On-device conversion**
 
 ### 📲 [Download on the App Store](https://apps.apple.com/app/id6759077023)
 
@@ -30,7 +30,7 @@ You give it an ordinary photo or video. It gives you back a **side-by-side 3D**
 version you can watch in a VR headset, on a 3D display, or with cheap cardboard
 glasses.
 
-No cloud. No account. No upload. Everything happens on your device, in seconds.
+Conversion works offline and requires no account.
 
 | | Feature | Notes |
 |:--:|:--|:--|
@@ -39,10 +39,26 @@ No cloud. No account. No upload. Everything happens on your device, in seconds.
 | 🎬 | **Video → 3D** | H.264 MP4, original audio kept |
 | 🥽 | **Spatial media** | Splits Apple MV-HEVC spatial video into SBS |
 | 🎚 | **3D Strength slider** | Subtle → Balanced → Strong, capped for viewing comfort |
-| 🔒 | **Fully offline** | Nothing ever leaves the device |
+| 🔒 | **Offline conversion** | Photos and videos are processed on the device |
 | 📤 | **Share extension** | Send media straight from Photos into the app |
-| 🌐 | **Web Share** | Serve results to a headset on the same Wi-Fi |
+| 🌐 | **Web Share** | View the gallery in a browser on Wi-Fi or through a temporary public link |
 | 🌍 | **9 languages** | EN · ZH · JA · KO · ES · FR · PT-BR · HI · AR |
+
+---
+
+## Web Share
+
+Tap **Start Network Share** in the gallery. Use the local address or its QR code
+on the same Wi-Fi. Send the public HTTPS link or its QR code to viewers on other
+networks and give them the gallery PIN separately. The phone serves photos and
+video as viewers request them. The public route streams through Cloudflare.
+
+Switching apps leaves the share open. iOS may suspend StereoShift in the background
+or while the phone is locked. Reopen the app if viewers lose access. **Stop Web Share** closes
+both routes. If the public connection drops, choose **Retry public link** for
+a fresh Cloudflare-provided address. The Quick Tunnel connector runs inside StereoShift.
+Cloudflare designates Quick Tunnels for development and testing. See the
+[connector build and testing instructions](QuickTunnel/README.md).
 
 ---
 

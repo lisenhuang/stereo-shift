@@ -87,7 +87,7 @@
 "Spatial-only picker requires iOS 18 or later." = "केवल स्पैशियल पिकर के लिए iOS 18 या बाद का संस्करण चाहिए।";
 "Stop" = "रोकें";
 "Stop current conversion?" = "मौजूदा कन्वर्ज़न रोकें?";
-"Start Web Share" = "लोकल नेटवर्क शेयर शुरू करें";
+"Start Network Share" = "नेटवर्क शेयर शुरू करें";
 "Stop Web Share" = "वेब शेयर बंद करें";
 "Strong" = "तेज";
 "Subtle" = "हल्का";
@@ -111,7 +111,7 @@
 "Video features require an active subscription." = "वीडियो फीचर्स के लिए सक्रिय सदस्यता जरूरी है।";
 "Upgrade" = "अपग्रेड";
 "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "पूरे वीडियो का रूपांतरण, फ़ुलस्क्रीन प्रीव्यू और फ़ोटो व वीडियो सहेजना और शेयर करना अनलॉक करें।";
-"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "वेब शेयर चलने के दौरान StereoShift को फोरग्राउंड में रखें। ऐप बैकग्राउंड में जाने पर शेयरिंग रुक जाएगी।";
+"iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "ऐप बदलने या iPhone लॉक करने पर iOS शेयरिंग को कुछ समय के लिए रोक सकता है। अगर दर्शक गैलरी नहीं खोल पा रहे हैं, तो StereoShift फिर से खोलें।";
 "简体中文" = "सरलीकृत चीनी";
 "한국어" = "कोरियाई";
 "StereoShift on Reddit" = "Reddit पर StereoShift";
@@ -170,6 +170,8 @@
 "The downloaded file could not be opened as a photo or video." = "डाउनलोड की गई फ़ाइल को फ़ोटो या वीडियो के रूप में नहीं खोला जा सका।";
 "Instagram did not make the media available for this post." = "Instagram ने इस पोस्ट का मीडिया उपलब्ध नहीं कराया।";
 "Choose from Photos" = "फ़ोटो से चुनें";
+"Instagram only made a cropped preview available. Choose the original from Photos." = "Instagram ने केवल क्रॉप किया हुआ प्रीव्यू उपलब्ध कराया। फ़ोटो ऐप से मूल फ़ोटो चुनें।";
+"Open on Instagram" = "Instagram में खोलें";
 "Instagram requires a signed-in session to access this post." = "इस पोस्ट को देखने के लिए Instagram में साइन इन करना ज़रूरी है।";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram इस कनेक्शन पर डाउनलोड अस्थायी रूप से सीमित कर रहा है। कृपया बाद में फिर से कोशिश करें।";
 
@@ -288,3 +290,11 @@
 "Debug: unlock paid access" = "Debug: सशुल्क पहुँच चालू करें";
 "Debug paid access is active" = "Debug सशुल्क पहुँच चालू है";
 "Free for this session. Resets when the app restarts." = "इस सत्र के लिए मुफ़्त। ऐप दोबारा शुरू होने पर रीसेट होगा।";
+"Starting public link…" = "सार्वजनिक लिंक बनाया जा रहा है…";
+"Public link" = "सार्वजनिक लिंक";
+"Share link" = "लिंक शेयर करें";
+"The public link is unavailable." = "सार्वजनिक लिंक उपलब्ध नहीं है।";
+"Retry public link" = "सार्वजनिक लिंक के लिए फिर कोशिश करें";
+"Local Web Share" = "स्थानीय नेटवर्क शेयरिंग";
+"Show QR Code" = "QR कोड दिखाएँ";
+"Show public link QR code" = "सार्वजनिक लिंक का QR कोड दिखाएँ";

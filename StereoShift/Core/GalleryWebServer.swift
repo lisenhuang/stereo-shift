@@ -14,15 +14,28 @@ import UIKit
 
 final class GalleryWebServer: ObservableObject {
     @Published private(set) var isRunning = false
-    /// True when the device has an address Web Share can bind to — a Wi-Fi LAN or Personal Hotspot.
-    @Published private(set) var isShareNetworkAvailable = false
     @Published private(set) var hostAddress: String?
-    @Published private(set) var browseURL: String?
+    @Published private(set) var publicLink: WebShareLinkState = .connecting
     @Published private(set) var accessPIN: String = GalleryWebServer.loadOrCreateAccessPIN()
     @Published var errorMessage: String?
 
     private var httpListener: NWListener?
     private var httpsListener: NWListener?
+    private var shareSessionID: UUID?
+    private let runTunnel: GalleryQuickTunnel.Runner
+    private var tunnelOrigin: NWListener?
+    private let localAddress: () -> String?
+    private var tunnelTask: Task<Void, Never>?
+    private var tunnelAttempt: UUID?
+    private var listenerAddress: String?
+    private var localRecoveryTask: Task<Void, Never>?
+    // These fields and the PIN attempt/token collections are confined to queue.
+    private var servingID: UUID?
+    private var localGeneration: UUID?
+    private var tunnelGeneration: UUID?
+    private var connections: [ObjectIdentifier: NWConnection] = [:]
+    private var tunnelConnections: Set<ObjectIdentifier> = []
+    private var servingPIN = ""
     private let queue = DispatchQueue(label: "com.stereoshift.gallery-web-server", qos: .utility)
     private let pathMonitor = NWPathMonitor()
     private var holdsScreenAwakeLock = false
@@ -39,9 +52,10 @@ final class GalleryWebServer: ObservableObject {
     private static let authPath = "/session-auth"
     private static let legacyAuthPath = "/auth"
     private static let maxFailedAuthAttempts = 10
-    private static let fileStreamChunkSize = 256 * 1024
 
-    init() {
+    init(runTunnel: @escaping GalleryQuickTunnel.Runner = GalleryQuickTunnel.run, localAddress: @escaping () -> String? = GalleryWebServer.localShareIPv4Address) {
+        self.runTunnel = runTunnel
+        self.localAddress = localAddress
 #if canImport(UIKit)
         memoryWarningObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didReceiveMemoryWarningNotification,
@@ -59,8 +73,14 @@ final class GalleryWebServer: ObservableObject {
         if let memoryWarningObserver {
             NotificationCenter.default.removeObserver(memoryWarningObserver)
         }
+        localRecoveryTask?.cancel()
         pathMonitor.cancel()
-        stop()
+        tunnelOrigin?.cancel()
+        tunnelTask?.cancel()
+        httpListener?.cancel()
+        httpsListener?.cancel()
+        for connection in connections.values { connection.cancel() }
+        releaseScreenAwakeLockIfNeeded()
     }
 
     func toggle() {
@@ -71,77 +91,156 @@ final class GalleryWebServer: ObservableObject {
         }
     }
 
-    /// Re-evaluates whether a bindable local address exists. Call when returning to the
-    /// foreground: turning Personal Hotspot on leaves this device's own path unchanged, so
-    /// `NWPathMonitor` is not guaranteed to report it.
     func refreshNetworkStatus() {
         refreshShareNetworkStatus()
+    }
+
+    func restoreLocalSharingAfterBackground() {
+        guard isRunning else { return }
+        localRecoveryTask?.cancel()
+        // Wi-Fi and the hotspot bridge can take a moment to return after unlock.
+        // A hotspot-only change need not trigger the phone's default path monitor.
+        localRecoveryTask = Task { @MainActor [weak self] in
+            let delays = [1, 2, 4, 8, 16]
+            for delay in delays {
+                do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+                guard let self, self.isRunning, !Task.isCancelled else { return }
+                if self.hostAddress != nil { break }
+                if delay == delays.last { self.localRecoveryTask = nil }
+                self.refreshShareNetworkStatus(rebind: true)
+            }
+            self?.localRecoveryTask = nil
+        }
+        // Suspension can invalidate a listener even when its advertised IP stays the same.
+        refreshShareNetworkStatus(rebind: true)
     }
 
     func resetAccessPIN() {
         let newPIN = Self.generateAccessPIN()
         Self.saveAccessPIN(newPIN)
         accessPIN = newPIN
-        failedAuthAttempts = 0
-        authorizedSessionTokens.removeAll()
+        queue.async {
+            self.servingPIN = newPIN
+            self.failedAuthAttempts = 0
+            self.authorizedSessionTokens.removeAll()
+        }
     }
 
     func start() {
         guard !isRunning else { return }
-
+        let id = UUID()
+        let pin = Self.loadOrCreateAccessPIN()
+        accessPIN = pin
         errorMessage = nil
-        failedAuthAttempts = 0
-        authorizedSessionTokens.removeAll()
-        // Re-sync persisted PIN at startup in case UserDefaults changed while server was stopped.
-        accessPIN = Self.loadOrCreateAccessPIN()
-
-        guard let hostAddress = Self.localShareIPv4Address() else {
-            isShareNetworkAvailable = false
-            // Localized copy also names Personal Hotspot; the key stays the original English literal.
-            errorMessage = NSLocalizedString("Connect to Wi-Fi to start Web Share.", comment: "")
-            return
+        shareSessionID = id
+        queue.async {
+            self.servingID = id
+            self.servingPIN = pin
+            self.failedAuthAttempts = 0
+            self.authorizedSessionTokens.removeAll()
         }
-        isShareNetworkAvailable = true
+        isRunning = true
+        acquireScreenAwakeLockIfNeeded()
+        refreshShareNetworkStatus()
+        retryPublicLink()
+    }
 
+    func retryPublicLink() {
+        guard let id = shareSessionID else { return }
+        stopTunnel()
+        let attempt = UUID()
+        tunnelAttempt = attempt
+        publicLink = .connecting
+        let key = UUID().uuidString
         do {
-            let httpsParameters = try Self.makeHTTPSParameters()
-            let httpsListener = try NWListener(using: httpsParameters, on: 443)
-            // Endpoint reuse matters on the rebind path in refreshShareNetworkStatus(), where the
-            // previous listener may not have fully torn down yet.
-            let httpParameters = NWParameters.tcp
-            httpParameters.allowLocalEndpointReuse = true
-            let httpListener = try NWListener(using: httpParameters, on: 80)
-
-            configure(listener: httpsListener, isTLS: true, hostAddress: hostAddress)
-            configure(listener: httpListener, isTLS: false, hostAddress: hostAddress)
-
-            self.httpsListener = httpsListener
-            self.httpListener = httpListener
-
-            httpsListener.start(queue: queue)
-            httpListener.start(queue: queue)
-
-            isRunning = true
-            self.hostAddress = hostAddress
-            browseURL = "http://\(hostAddress)"
-            acquireScreenAwakeLockIfNeeded()
+            let parameters = NWParameters.tcp
+            parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+            let listener = try NWListener(using: parameters)
+            queue.sync { tunnelGeneration = attempt }
+            tunnelOrigin = listener
+            listener.newConnectionHandler = { [weak self] connection in
+                guard let self, self.servingID == id, self.tunnelGeneration == attempt else { connection.cancel(); return }
+                self.handle(connection: connection, publicShare: true) { request in
+                    guard self.servingID == id, self.tunnelGeneration == attempt, request.headers["x-stereoshift-origin"] == key else {
+                        return GalleryHTTPResponse(403)
+                    }
+                    return self.route(request, publicShare: true)
+                }
+            }
+            listener.stateUpdateHandler = { [weak self, weak listener] state in
+                DispatchQueue.main.async {
+                    guard let self, self.tunnelAttempt == attempt else { return }
+                    switch state {
+                    case .ready:
+                        guard let port = listener?.port else { self.publicLinkFailed(); return }
+                        let run = self.runTunnel
+                        self.tunnelTask = Task { @MainActor [weak self] in
+                            do {
+                                try await run(port.rawValue, key) { [weak self] url in
+                                    guard self?.tunnelAttempt == attempt else { return }
+                                    self?.publicLink = .ready(url)
+                                }
+                            } catch {}
+                            if self?.tunnelAttempt == attempt { self?.publicLinkFailed() }
+                        }
+                    case .failed: self.publicLinkFailed()
+                    default: break
+                    }
+                }
+            }
+            listener.start(queue: queue)
         } catch {
-            stop()
-            errorMessage = Self.describe(error: error)
+            publicLinkFailed()
+        }
+    }
+
+    private func publicLinkFailed() {
+        stopTunnel()
+        publicLink = .unavailable
+    }
+
+    private func stopTunnel() {
+        tunnelAttempt = nil
+        tunnelTask?.cancel()
+        tunnelTask = nil
+        tunnelOrigin?.cancel()
+        tunnelOrigin = nil
+        queue.sync {
+            tunnelGeneration = nil
+            for key in tunnelConnections { connections.removeValue(forKey: key)?.cancel() }
+            tunnelConnections.removeAll()
         }
     }
 
     func stop() {
+        localRecoveryTask?.cancel()
+        localRecoveryTask = nil
+        stopTunnel()
+        shareSessionID = nil
+        stopLocalListeners()
+        // Take this barrier before returning so late requests cannot use the old session.
+        queue.sync {
+            servingID = nil
+            authorizedSessionTokens.removeAll()
+        }
+        isRunning = false
+        publicLink = .connecting
+        releaseScreenAwakeLockIfNeeded()
+    }
+
+    private func stopLocalListeners() {
         httpListener?.cancel()
         httpsListener?.cancel()
         httpListener = nil
         httpsListener = nil
-        failedAuthAttempts = 0
-        authorizedSessionTokens.removeAll()
-        isRunning = false
+        listenerAddress = nil
         hostAddress = nil
-        browseURL = nil
-        releaseScreenAwakeLockIfNeeded()
+        queue.sync {
+            localGeneration = nil
+            for key in Array(connections.keys) where !tunnelConnections.contains(key) {
+                connections.removeValue(forKey: key)?.cancel()
+            }
+        }
     }
 
     private func configureNetworkMonitor() {
@@ -154,54 +253,79 @@ final class GalleryWebServer: ObservableObject {
         pathMonitor.start(queue: queue)
     }
 
-    private func refreshShareNetworkStatus() {
-        let shareAddress = Self.localShareIPv4Address()
-        isShareNetworkAvailable = (shareAddress != nil)
-
+    private func refreshShareNetworkStatus(rebind: Bool = false) {
         guard isRunning else { return }
-
-        guard let shareAddress else {
-            stop()
-            // Localized copy also names Personal Hotspot; the key stays the original English literal.
-            errorMessage = NSLocalizedString("Web Share requires Wi-Fi connection.", comment: "")
-            return
-        }
-
-        // The bindable address can also *change* under a running server — Wi-Fi handing over to
-        // Personal Hotspot, roaming to another SSID, a new DHCP lease. hostAddress, the QR link,
-        // and the HTTPS upgrade link handed to clients are all captured at start(), so rebind
-        // rather than keep advertising an address nobody can reach.
-        if shareAddress != hostAddress {
-            stop()
-            start()
+        let address = localAddress()
+        guard rebind || address != listenerAddress else { return }
+        stopLocalListeners()
+        guard let address else { return }
+        do {
+            let generation = UUID()
+            let https = try Self.makeHTTPSParameters()
+            let http = NWParameters.tcp
+            http.allowLocalEndpointReuse = true
+            // iOS permits these well-known ports on wildcard listeners. Only advertise
+            // while a LAN address exists, and exclude cellular from inbound connections.
+            http.prohibitedInterfaceTypes = [.cellular]
+            https.prohibitedInterfaceTypes = [.cellular]
+            httpsListener = try NWListener(using: https, on: 443)
+            httpListener = try NWListener(using: http, on: 80)
+            listenerAddress = address
+            queue.sync { localGeneration = generation }
+            for (listener, isTLS) in [(httpsListener, true), (httpListener, false)] {
+                guard let listener else { continue }
+                listener.stateUpdateHandler = { [weak self, weak listener] state in
+                    DispatchQueue.main.async { [weak self, weak listener] in
+                        guard let self, let listener,
+                              listener === (isTLS ? self.httpsListener : self.httpListener) else { return }
+                        switch state {
+                        case .ready:
+                            if self.httpsListener?.state == .ready && self.httpListener?.state == .ready {
+                                self.hostAddress = address
+                            }
+                        case .waiting:
+                            self.hostAddress = nil
+                        case .failed(let error):
+                            self.localListenersFailed(error)
+                        default: break
+                        }
+                    }
+                }
+                listener.newConnectionHandler = { [weak self] connection in
+                    guard let self, self.localGeneration == generation else { connection.cancel(); return }
+                    self.handle(connection: connection, publicShare: false) { request in
+                        guard self.localGeneration == generation else { return GalleryHTTPResponse(410) }
+                        if isTLS { return self.route(request) }
+                        let url = "https://\(address)\(request.pathAndQuery)"
+                        return GalleryHTTPResponse(200, Self.httpUpgradeHTML(httpsURL: url),
+                                                   headers: ["Content-Type": "text/html; charset=utf-8"])
+                    }
+                }
+                listener.start(queue: queue)
+            }
+        } catch {
+            localListenersFailed(error)
         }
     }
 
-    private func configure(listener: NWListener, isTLS: Bool, hostAddress: String) {
-        listener.stateUpdateHandler = { [weak self, weak listener] state in
-            guard let self else { return }
+    private func localListenersFailed(_ error: Error) {
+        stopLocalListeners()
+        if localRecoveryTask == nil {
+            errorMessage = Self.describe(error: error)
+        }
+    }
 
-            switch state {
-            case .failed(let error):
-                Task { @MainActor [weak listener] in
-                    guard let listener,
-                          listener === (isTLS ? self.httpsListener : self.httpListener) else { return }
-                    self.stop()
-                    self.errorMessage = Self.describe(error: error)
-                }
-            default:
-                break
+    private func handle(connection: NWConnection, publicShare: Bool, respond: @escaping (GalleryHTTPRequest) -> GalleryHTTPResponse) {
+        let key = ObjectIdentifier(connection)
+        connections[key] = connection
+        if publicShare { tunnelConnections.insert(key) }
+        connection.stateUpdateHandler = { [weak self] state in
+            if case .cancelled = state {
+                self?.connections.removeValue(forKey: key)
+                self?.tunnelConnections.remove(key)
             }
         }
-
-        listener.newConnectionHandler = { [weak self] connection in
-            self?.handle(connection: connection, isTLS: isTLS, hostAddress: hostAddress)
-        }
-    }
-
-    private func handle(connection: NWConnection, isTLS: Bool, hostAddress: String) {
         connection.start(queue: queue)
-
         var received = Data()
         let delimiter = Data("\r\n\r\n".utf8)
 
@@ -222,18 +346,24 @@ final class GalleryWebServer: ObservableObject {
                 }
 
                 if received.range(of: delimiter) != nil {
-                    self.handleRequestData(received, on: connection, isTLS: isTLS, hostAddress: hostAddress)
+                    guard self.connections[key] != nil else { connection.cancel(); return }
+                    let request = GalleryHTTPRequest.parse(data: received)
+                    let response: GalleryHTTPResponse
+                    if let request {
+                        if request.method != "GET" && request.method != "HEAD" {
+                            response = GalleryHTTPResponse(405)
+                        } else {
+                            response = respond(request)
+                        }
+                    } else {
+                        response = GalleryHTTPResponse(400)
+                    }
+                    self.send(response, headOnly: request?.method == "HEAD", on: connection)
                     return
                 }
 
                 if isComplete || received.count > 128 * 1024 {
-                    self.sendTextResponse(
-                        statusCode: 400,
-                        reasonPhrase: "Bad Request",
-                        text: "Invalid request.",
-                        method: "GET",
-                        on: connection
-                    )
+                    self.send(GalleryHTTPResponse(400), headOnly: false, on: connection)
                     return
                 }
 
@@ -244,169 +374,64 @@ final class GalleryWebServer: ObservableObject {
         receiveNextChunk()
     }
 
-    private func handleRequestData(_ data: Data, on connection: NWConnection, isTLS: Bool, hostAddress: String) {
-        guard let request = HTTPRequest.parse(data: data) else {
-            sendTextResponse(statusCode: 400, reasonPhrase: "Bad Request", text: "Invalid request.", method: "GET", on: connection)
-            return
-        }
-
-        if request.path.hasPrefix("/media/") {
-            let rangeValue = request.headers["range"] ?? "none"
-            Self.logger.info("Media request path=\(request.path, privacy: .public) method=\(request.method, privacy: .public) tls=\(String(isTLS), privacy: .public) range=\(rangeValue, privacy: .public)")
-        }
-
-        guard request.method == "GET" || request.method == "HEAD" else {
-            sendTextResponse(statusCode: 405, reasonPhrase: "Method Not Allowed", text: "Method not allowed.", method: request.method, on: connection)
-            return
-        }
-
-        if !isTLS {
-            // Do not auto-redirect HTTP to HTTPS. Browsers will show a certificate warning on first HTTPS
-            // visit (self-signed local cert), so explain the trade-off and let users continue explicitly.
-            let httpsURL = "https://\(hostAddress)\(request.pathAndQuery)"
-            let html = Data(Self.httpUpgradeHTML(httpsURL: httpsURL).utf8)
-            sendDataResponse(
-                statusCode: 200,
-                reasonPhrase: "OK",
-                headers: [
-                    "Content-Type": "text/html; charset=utf-8",
-                    "Cache-Control": "no-store, no-cache, max-age=0",
-                    "Pragma": "no-cache",
-                    "Expires": "0"
-                ],
-                body: html,
-                method: request.method,
-                on: connection
-            )
-            return
-        }
-
-        route(request: request, isTLS: isTLS, on: connection)
-    }
-
-    private func route(request: HTTPRequest, isTLS: Bool, on connection: NWConnection) {
+    private func route(_ request: GalleryHTTPRequest, publicShare: Bool = false) -> GalleryHTTPResponse {
+        guard servingID != nil else { return GalleryHTTPResponse(410) }
         if request.path == Self.authPath || request.path == Self.legacyAuthPath {
-            handleAuthenticationRequest(request: request, isTLS: isTLS, on: connection)
-            return
+            return handlePINAttempt(request.queryItems["pin"] ?? "", publicShare: publicShare)
         }
-
-        // Allow PIN auth via `?code=1234` so a QR code can deep-link into an authorized session.
-        // This is evaluated before the cookie check so first-time visitors can skip manual PIN entry.
         if let code = request.queryItems["code"], !code.isEmpty, !isAuthorized(request: request) {
-            handlePINAttempt(candidatePIN: code, method: request.method, isTLS: isTLS, on: connection)
-            return
+            return handlePINAttempt(code, publicShare: publicShare)
         }
-
         guard isAuthorized(request: request) else {
-            if request.path == "/" {
-                sendAccessPINPage(message: nil, method: request.method, isTLS: isTLS, on: connection)
-            } else {
-                sendRedirectResponse(
-                    to: "/",
-                    method: request.method,
-                    headers: ["Set-Cookie": Self.clearAuthenticationCookieHeader(secure: isTLS)],
-                    on: connection
-                )
-            }
-            return
+            if request.path == "/" { return pinPage(publicShare: publicShare) }
+            return GalleryHTTPResponse(302, headers: ["Location": "/", "Set-Cookie": Self.clearAuthenticationCookieHeader(secure: true)])
         }
-
         switch request.path {
         case "/":
-            sendDataResponse(
-                statusCode: 200,
-                reasonPhrase: "OK",
-                headers: [
-                    "Content-Type": "text/html; charset=utf-8",
-                    "Cache-Control": "no-store"
-                ],
-                body: Data(Self.galleryHTML.utf8),
-                method: request.method,
-                on: connection
-            )
+            return GalleryHTTPResponse(200, Self.galleryHTML, headers: ["Content-Type": "text/html; charset=utf-8"])
         case "/api/items":
-            sendItemsJSON(request: request, on: connection)
+            return itemsJSON(request)
         default:
-            if request.path.hasPrefix("/thumb/") {
-                sendThumbnail(request: request, on: connection)
-                return
-            }
-
-            if request.path.hasPrefix("/media/") {
-                sendMedia(request: request, on: connection)
-                return
-            }
-
-            sendTextResponse(statusCode: 404, reasonPhrase: "Not Found", text: "Not found.", method: request.method, on: connection)
+            let isThumb = request.path.hasPrefix("/thumb/")
+            guard isThumb || request.path.hasPrefix("/media/"),
+                  let item = item(forPath: request.path, prefix: isThumb ? "/thumb/" : "/media/") else { return GalleryHTTPResponse(404) }
+            let url = isThumb ? (item.thumbnailURL ?? AppGalleryLibrary.ensureThumbnailExists(for: item)) : item.url
+            guard let url else { return GalleryHTTPResponse(404) }
+            return fileResponse(url, request: request)
         }
     }
 
-    private func handleAuthenticationRequest(request: HTTPRequest, isTLS: Bool, on connection: NWConnection) {
-        let rawPIN = request.queryItems["pin"] ?? ""
-        handlePINAttempt(candidatePIN: rawPIN, method: request.method, isTLS: isTLS, on: connection)
+    private func pinPage(_ message: String? = nil, publicShare: Bool) -> GalleryHTTPResponse {
+        let html = Self.accessPINHTML(message: message, remainingAttempts: Self.maxFailedAuthAttempts - failedAuthAttempts, publicShare: publicShare)
+        return GalleryHTTPResponse(200, html, headers: ["Content-Type": "text/html; charset=utf-8",
+                                                        "Set-Cookie": Self.clearAuthenticationCookieHeader(secure: true)])
     }
 
-    private func handlePINAttempt(candidatePIN rawPIN: String, method: String, isTLS: Bool, on connection: NWConnection) {
-        let candidatePIN = rawPIN.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        guard candidatePIN.count == 4, candidatePIN.allSatisfy(\.isNumber) else {
-            sendAccessPINPage(
-                message: "Enter a valid 4-digit PIN.",
-                method: method,
-                isTLS: isTLS,
-                on: connection
-            )
-            return
-        }
-
-        let isPinMatch = (candidatePIN == accessPIN)
-        Self.logger.info("PIN auth attempt match=\(String(isPinMatch), privacy: .public) tls=\(String(isTLS), privacy: .public)")
-
-        guard isPinMatch else {
+    private func handlePINAttempt(_ raw: String, publicShare: Bool) -> GalleryHTTPResponse {
+        let pin = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard pin.count == 4, pin.allSatisfy(\.isNumber) else { return pinPage("Enter a valid 4-digit PIN.", publicShare: publicShare) }
+        guard pin == servingPIN else {
             failedAuthAttempts += 1
-            let remainingAttempts = max(0, Self.maxFailedAuthAttempts - failedAuthAttempts)
-
-            if remainingAttempts == 0 {
-                sendTextResponse(
-                    statusCode: 403,
-                    reasonPhrase: "Forbidden",
-                    text: "Too many incorrect PIN attempts. Web Share has stopped.",
-                    method: method,
-                    on: connection
-                )
-
+            let remaining = Self.maxFailedAuthAttempts - failedAuthAttempts
+            guard remaining > 0 else {
+                let id = servingID
+                servingID = nil
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.shareSessionID == id else { return }
                     self.stop()
                     self.errorMessage = NSLocalizedString("Web Share stopped after 10 incorrect PIN attempts.", comment: "")
                 }
-                return
+                return GalleryHTTPResponse(403, "Too many incorrect PIN attempts. Web Share has stopped.")
             }
-
-            sendAccessPINPage(
-                message: "Incorrect PIN. \(remainingAttempts) attempts remaining.",
-                method: method,
-                isTLS: isTLS,
-                on: connection
-            )
-            return
+            return pinPage("Incorrect PIN. \(remaining) attempts remaining.", publicShare: publicShare)
         }
-
         failedAuthAttempts = 0
-        let sessionToken = UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        authorizedSessionTokens.insert(sessionToken)
-
-        sendRedirectResponse(
-            to: "/",
-            method: method,
-            headers: ["Set-Cookie": Self.authenticationCookieHeader(for: sessionToken, secure: isTLS)],
-            statusCode: 303,
-            reasonPhrase: "See Other",
-            on: connection
-        )
+        let token = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        authorizedSessionTokens.insert(token)
+        return GalleryHTTPResponse(303, headers: ["Location": "/", "Set-Cookie": Self.authenticationCookieHeader(for: token, secure: true)])
     }
 
-    private func isAuthorized(request: HTTPRequest) -> Bool {
+    private func isAuthorized(request: GalleryHTTPRequest) -> Bool {
         guard let cookieHeader = request.headers["cookie"] else {
             return false
         }
@@ -432,25 +457,7 @@ final class GalleryWebServer: ObservableObject {
         return false
     }
 
-    private func sendAccessPINPage(message: String?, method: String, isTLS: Bool, on connection: NWConnection) {
-        let body = Data(Self.accessPINHTML(message: message, remainingAttempts: Self.maxFailedAuthAttempts - failedAuthAttempts).utf8)
-        sendDataResponse(
-            statusCode: 200,
-            reasonPhrase: "OK",
-            headers: [
-                "Content-Type": "text/html; charset=utf-8",
-                "Cache-Control": "no-store, no-cache, max-age=0",
-                "Pragma": "no-cache",
-                "Expires": "0",
-                "Set-Cookie": Self.clearAuthenticationCookieHeader(secure: isTLS)
-            ],
-            body: body,
-            method: method,
-            on: connection
-        )
-    }
-
-    private func sendItemsJSON(request: HTTPRequest, on connection: NWConnection) {
+    private func itemsJSON(_ request: GalleryHTTPRequest) -> GalleryHTTPResponse {
         let offset = max(Int(request.queryItems["offset"] ?? "") ?? 0, 0)
         let limit = min(max(Int(request.queryItems["limit"] ?? "") ?? 200, 1), 500)
 
@@ -482,55 +489,10 @@ final class GalleryWebServer: ObservableObject {
             encoder.outputFormatting = [.withoutEscapingSlashes]
             let body = try encoder.encode(payload)
 
-            sendDataResponse(
-                statusCode: 200,
-                reasonPhrase: "OK",
-                headers: [
-                    "Content-Type": "application/json; charset=utf-8",
-                    "Cache-Control": "no-store"
-                ],
-                body: body,
-                method: request.method,
-                on: connection
-            )
+            return GalleryHTTPResponse(200, ["Content-Type": "application/json; charset=utf-8"], body: GalleryResponseBody(body))
         } catch {
-            sendTextResponse(statusCode: 500, reasonPhrase: "Internal Server Error", text: "Failed to load gallery.", method: request.method, on: connection)
+            return GalleryHTTPResponse(500, "Failed to load gallery.")
         }
-    }
-
-    private func sendThumbnail(request: HTTPRequest, on connection: NWConnection) {
-        guard let item = item(forPath: request.path, prefix: "/thumb/") else {
-            sendTextResponse(statusCode: 404, reasonPhrase: "Not Found", text: "Thumbnail not found.", method: request.method, on: connection)
-            return
-        }
-
-        guard let thumbnailURL = item.thumbnailURL ?? AppGalleryLibrary.ensureThumbnailExists(for: item) else {
-            sendTextResponse(statusCode: 404, reasonPhrase: "Not Found", text: "Thumbnail not found.", method: request.method, on: connection)
-            return
-        }
-
-        sendFileResponse(
-            fileURL: thumbnailURL,
-            fallbackContentType: "image/jpeg",
-            method: request.method,
-            rangeHeader: request.headers["range"],
-            on: connection
-        )
-    }
-
-    private func sendMedia(request: HTTPRequest, on connection: NWConnection) {
-        guard let item = item(forPath: request.path, prefix: "/media/") else {
-            sendTextResponse(statusCode: 404, reasonPhrase: "Not Found", text: "Media not found.", method: request.method, on: connection)
-            return
-        }
-
-        sendFileResponse(
-            fileURL: item.url,
-            fallbackContentType: Self.contentType(for: item.url) ?? "application/octet-stream",
-            method: request.method,
-            rangeHeader: request.headers["range"],
-            on: connection
-        )
     }
 
     private func item(forPath path: String, prefix: String) -> GalleryItem? {
@@ -548,304 +510,42 @@ final class GalleryWebServer: ObservableObject {
         return items.first { $0.id == decodedID }
     }
 
-    private func sendFileResponse(
-        fileURL: URL,
-        fallbackContentType: String,
-        method: String,
-        rangeHeader: String?,
-        on connection: NWConnection
-    ) {
+    private func fileResponse(_ url: URL, request: GalleryHTTPRequest) -> GalleryHTTPResponse {
         do {
-            let values = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-            guard let fileSizeValue = values.fileSize else {
-                throw StereoPipelineError.mediaDecodingFailed
+            guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { throw CocoaError(.fileReadUnknown) }
+            var headers = ["Content-Type": Self.contentType(for: url) ?? "application/octet-stream", "Accept-Ranges": "bytes"]
+            var offset: Int64 = 0
+            var length = Int64(size)
+            var status = 200
+            if let header = request.headers["range"] {
+                guard let range = Self.byteRange(from: header, fileSize: Int64(size)) else {
+                    return GalleryHTTPResponse(416, headers: ["Content-Range": "bytes */\(size)", "Accept-Ranges": "bytes"])
+                }
+                offset = range.lowerBound
+                length = range.upperBound - offset + 1
+                status = 206
+                headers["Content-Range"] = "bytes \(offset)-\(range.upperBound)/\(size)"
             }
-
-            let fileSize = Int64(fileSizeValue)
-            let contentType = Self.contentType(for: fileURL) ?? fallbackContentType
-            let fileSizeMB = Double(fileSize) / 1_048_576
-            let fileSizeMBString = String(format: "%.1f", fileSizeMB)
-            let rangeValue = rangeHeader ?? "none"
-
-            Self.logger.debug(
-                "Serving file file=\(fileURL.lastPathComponent, privacy: .public) sizeMB=\(fileSizeMBString, privacy: .public) method=\(method, privacy: .public) range=\(rangeValue, privacy: .public) contentType=\(contentType, privacy: .public)"
-            )
-
-            if let rangeHeader, let range = Self.byteRange(from: rangeHeader, fileSize: fileSize) {
-                let rangeLength = range.upperBound - range.lowerBound + 1
-                let responseHeaders = [
-                    "Content-Type": contentType,
-                    "Accept-Ranges": "bytes",
-                    "Content-Range": "bytes \(range.lowerBound)-\(range.upperBound)/\(fileSize)",
-                    "Cache-Control": "no-store"
-                ]
-
-                sendStreamedFileResponse(
-                    fileURL: fileURL,
-                    statusCode: 206,
-                    reasonPhrase: "Partial Content",
-                    headers: responseHeaders,
-                    method: method,
-                    offset: range.lowerBound,
-                    contentLength: rangeLength,
-                    on: connection
-                )
-                return
-            }
-
-            if method == "HEAD" {
-                sendDataResponse(
-                    statusCode: 200,
-                    reasonPhrase: "OK",
-                    headers: [
-                        "Content-Type": contentType,
-                        "Accept-Ranges": "bytes",
-                        "Cache-Control": "no-store"
-                    ],
-                    body: Data(),
-                    method: method,
-                    explicitContentLength: fileSize,
-                    on: connection
-                )
-                return
-            }
-
-            Self.logger.warning(
-                "Serving full-body response without Range header (streaming) file=\(fileURL.lastPathComponent, privacy: .public) sizeMB=\(fileSizeMBString, privacy: .public)"
-            )
-
-            sendStreamedFileResponse(
-                fileURL: fileURL,
-                statusCode: 200,
-                reasonPhrase: "OK",
-                headers: [
-                    "Content-Type": contentType,
-                    "Accept-Ranges": "bytes",
-                    "Cache-Control": "no-store"
-                ],
-                method: method,
-                offset: 0,
-                contentLength: fileSize,
-                on: connection
-            )
+            let body = request.method == "HEAD" ? GalleryResponseBody(Data()) : try GalleryResponseBody(fileURL: url, offset: offset, length: length)
+            return GalleryHTTPResponse(status, headers, body: body, length: length)
         } catch {
-            Self.logger.error("File response failed file=\(fileURL.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            logMemoryFootprint("File read failure snapshot")
-            sendTextResponse(statusCode: 500, reasonPhrase: "Internal Server Error", text: "Failed to read file.", method: method, on: connection)
+            return GalleryHTTPResponse(500, "Failed to read file.")
         }
     }
 
-    private func sendStreamedFileResponse(
-        fileURL: URL,
-        statusCode: Int,
-        reasonPhrase: String,
-        headers: [String: String],
-        method: String,
-        offset: Int64,
-        contentLength: Int64,
-        on connection: NWConnection
-    ) {
-        if method == "HEAD" {
-            sendDataResponse(
-                statusCode: statusCode,
-                reasonPhrase: reasonPhrase,
-                headers: headers,
-                body: Data(),
-                method: method,
-                explicitContentLength: contentLength,
-                on: connection
-            )
-            return
+    private func send(_ response: GalleryHTTPResponse, headOnly: Bool, on connection: NWConnection) {
+        var headers = response.headers
+        headers["Content-Length"] = String(response.length)
+        headers["Connection"] = "close"
+        let lines = headers.map { "\($0.key): \($0.value)" }.joined(separator: "\r\n")
+        let head = "HTTP/1.1 \(response.status) \(HTTPURLResponse.localizedString(forStatusCode: response.status))\r\n\(lines)\r\n\r\n"
+        func sendNext(_ error: NWError?) {
+            guard error == nil, !headOnly, response.body.remaining > 0,
+                  connections[ObjectIdentifier(connection)] != nil,
+                  let data = try? response.body.read() else { connection.cancel(); return }
+            connection.send(content: data, completion: .contentProcessed(sendNext))
         }
-
-        do {
-            let handle = try FileHandle(forReadingFrom: fileURL)
-            try handle.seek(toOffset: UInt64(offset))
-
-            sendResponseHeaders(
-                statusCode: statusCode,
-                reasonPhrase: reasonPhrase,
-                headers: headers,
-                contentLength: contentLength,
-                on: connection
-            ) { [weak self] sendError in
-                guard let self else {
-                    try? handle.close()
-                    connection.cancel()
-                    return
-                }
-
-                if let sendError {
-                    Self.logger.error("Header send failed file=\(fileURL.lastPathComponent, privacy: .public) error=\(sendError.localizedDescription, privacy: .public)")
-                    try? handle.close()
-                    connection.cancel()
-                    return
-                }
-
-                self.sendFileChunks(
-                    handle: handle,
-                    remainingBytes: contentLength,
-                    fileName: fileURL.lastPathComponent,
-                    on: connection
-                )
-            }
-        } catch {
-            Self.logger.error("Failed to start streaming file=\(fileURL.lastPathComponent, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            sendTextResponse(statusCode: 500, reasonPhrase: "Internal Server Error", text: "Failed to read file.", method: method, on: connection)
-        }
-    }
-
-    private func sendFileChunks(
-        handle: FileHandle,
-        remainingBytes: Int64,
-        fileName: String,
-        on connection: NWConnection
-    ) {
-        guard remainingBytes > 0 else {
-            try? handle.close()
-            connection.cancel()
-            return
-        }
-
-        let chunkSize = Int(min(Int64(Self.fileStreamChunkSize), remainingBytes))
-
-        do {
-            let chunk = try handle.read(upToCount: chunkSize) ?? Data()
-            if chunk.isEmpty {
-                Self.logger.error("Unexpected EOF while streaming file=\(fileName, privacy: .public) remainingBytes=\(String(remainingBytes), privacy: .public)")
-                try? handle.close()
-                connection.cancel()
-                return
-            }
-
-            connection.send(content: chunk, completion: .contentProcessed { [weak self] sendError in
-                guard self != nil else {
-                    try? handle.close()
-                    connection.cancel()
-                    return
-                }
-
-                if let sendError {
-                    Self.logger.error("Chunk send failed file=\(fileName, privacy: .public) error=\(sendError.localizedDescription, privacy: .public)")
-                    try? handle.close()
-                    connection.cancel()
-                    return
-                }
-
-                self?.sendFileChunks(
-                    handle: handle,
-                    remainingBytes: remainingBytes - Int64(chunk.count),
-                    fileName: fileName,
-                    on: connection
-                )
-            })
-        } catch {
-            Self.logger.error("Chunk read failed file=\(fileName, privacy: .public) error=\(error.localizedDescription, privacy: .public)")
-            try? handle.close()
-            connection.cancel()
-        }
-    }
-
-    private func sendResponseHeaders(
-        statusCode: Int,
-        reasonPhrase: String,
-        headers: [String: String],
-        contentLength: Int64,
-        on connection: NWConnection,
-        completion: @escaping (NWError?) -> Void
-    ) {
-        var responseHeaders = headers
-        responseHeaders["Connection"] = "close"
-        responseHeaders["Content-Length"] = String(contentLength)
-
-        var headerText = "HTTP/1.1 \(statusCode) \(reasonPhrase)\r\n"
-        for key in responseHeaders.keys.sorted() {
-            if let value = responseHeaders[key] {
-                headerText += "\(key): \(value)\r\n"
-            }
-        }
-        headerText += "\r\n"
-
-        let headerData = Data(headerText.utf8)
-        connection.send(content: headerData, completion: .contentProcessed { error in
-            completion(error)
-        })
-    }
-
-    private func sendRedirectResponse(
-        to location: String,
-        method: String,
-        headers: [String: String] = [:],
-        statusCode: Int = 302,
-        reasonPhrase: String = "Found",
-        on connection: NWConnection
-    ) {
-        var redirectHeaders = headers
-        redirectHeaders["Location"] = location
-        redirectHeaders["Cache-Control"] = "no-store, no-cache, max-age=0"
-        redirectHeaders["Pragma"] = "no-cache"
-        redirectHeaders["Expires"] = "0"
-
-        sendDataResponse(
-            statusCode: statusCode,
-            reasonPhrase: reasonPhrase,
-            headers: redirectHeaders,
-            body: Data(),
-            method: method,
-            on: connection
-        )
-    }
-
-    private func sendTextResponse(
-        statusCode: Int,
-        reasonPhrase: String,
-        text: String,
-        method: String,
-        on connection: NWConnection
-    ) {
-        sendDataResponse(
-            statusCode: statusCode,
-            reasonPhrase: reasonPhrase,
-            headers: ["Content-Type": "text/plain; charset=utf-8"],
-            body: Data(text.utf8),
-            method: method,
-            on: connection
-        )
-    }
-
-    private func sendDataResponse(
-        statusCode: Int,
-        reasonPhrase: String,
-        headers: [String: String],
-        body: Data,
-        method: String,
-        explicitContentLength: Int64? = nil,
-        on connection: NWConnection
-    ) {
-        var responseHeaders = headers
-        responseHeaders["Connection"] = "close"
-        responseHeaders["Content-Length"] = String(explicitContentLength ?? Int64(body.count))
-
-        var headerText = "HTTP/1.1 \(statusCode) \(reasonPhrase)\r\n"
-        for key in responseHeaders.keys.sorted() {
-            if let value = responseHeaders[key] {
-                headerText += "\(key): \(value)\r\n"
-            }
-        }
-        headerText += "\r\n"
-
-        let headerData = Data(headerText.utf8)
-
-        connection.send(content: headerData, completion: .contentProcessed { [body] _ in
-            if method == "HEAD" || body.isEmpty {
-                connection.cancel()
-                return
-            }
-
-            connection.send(content: body, completion: .contentProcessed { _ in
-                connection.cancel()
-            })
-        })
+        connection.send(content: Data(head.utf8), completion: .contentProcessed(sendNext))
     }
 
     private func logMemoryFootprint(_ label: String) {
@@ -1061,7 +761,7 @@ final class GalleryWebServer: ObservableObject {
         name == "en0" || name == "en1" || name == "en2" || name.hasPrefix("bridge")
     }
 
-    private static func localShareIPv4Address() -> String? {
+    static func localShareIPv4Address() -> String? {
 #if canImport(Darwin)
         var ifaddrPointer: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddrPointer) == 0, let firstAddress = ifaddrPointer else {
@@ -1179,7 +879,7 @@ final class GalleryWebServer: ObservableObject {
         return false
     }
 
-    private static func accessPINHTML(message: String?, remainingAttempts: Int) -> String {
+    private static func accessPINHTML(message: String?, remainingAttempts: Int, publicShare: Bool) -> String {
         let sanitizedMessage = escapeHTML(message ?? "")
         let messageHTML: String
         if sanitizedMessage.isEmpty {
@@ -1425,7 +1125,7 @@ final class GalleryWebServer: ObservableObject {
       </div>
     </div>
     <p class="subtitle">Enter the 4-digit PIN shown in the app to continue.</p>
-    <form method="get" action="\(authPath)" autocomplete="off">
+    <form method="\(publicShare ? "post" : "get")" action="\(authPath)" autocomplete="off">
       <label for="pin">Access PIN</label>
       <input id="pin" name="pin" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" minlength="4" placeholder="0000" autofocus required />
       <button type="submit">Unlock</button>
@@ -3296,14 +2996,14 @@ final class GalleryWebServer: ObservableObject {
 """
 }
 
-private struct HTTPRequest {
+struct GalleryHTTPRequest {
     let method: String
     let path: String
     let pathAndQuery: String
     let queryItems: [String: String]
     let headers: [String: String]
 
-    static func parse(data: Data) -> HTTPRequest? {
+    static func parse(data: Data) -> GalleryHTTPRequest? {
         guard let requestText = String(data: data, encoding: .utf8) else {
             return nil
         }
@@ -3326,7 +3026,8 @@ private struct HTTPRequest {
         let method = String(parts[0]).uppercased()
         let rawTarget = String(parts[1])
 
-        guard let components = URLComponents(string: "http://localhost\(rawTarget)") else {
+        guard rawTarget.hasPrefix("/"), !rawTarget.hasPrefix("//"),
+              let components = URLComponents(string: "http://localhost\(rawTarget)") else {
             return nil
         }
 
@@ -3353,7 +3054,7 @@ private struct HTTPRequest {
             queryItems[item.name] = item.value ?? ""
         }
 
-        return HTTPRequest(method: method, path: path, pathAndQuery: pathAndQuery, queryItems: queryItems, headers: headers)
+        return GalleryHTTPRequest(method: method, path: path, pathAndQuery: pathAndQuery, queryItems: queryItems, headers: headers)
     }
 }
 

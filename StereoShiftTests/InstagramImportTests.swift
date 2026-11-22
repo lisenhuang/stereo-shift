@@ -165,9 +165,65 @@ struct InstagramImportTests {
         }
     }
 
-    @Test func richEmbedChecksPostIdentityAndRestrictionsBeforeUsingMedia() throws {
+    @Test func prefersFullFrameVariantWhenTheEmbedSourceIsCropped() throws {
+        let post = try #require(URL(string: "https://www.instagram.com/p/ABC/"))
+        let html = """
+        <div class="Embed" data-permalink="https://www.instagram.com/p/ABC/" data-media-type="GraphImage">
+        <a class="EmbeddedMedia" href="https://www.instagram.com/p/ABC/"><img class="EmbeddedMediaImage"
+        src="https://scontent.cdninstagram.com/cover.jpg?stp=c0.180.720.720a_dst-jpg"
+        srcset="https://scontent.cdninstagram.com/small.jpg 480w, https://example.org/large.jpg 1440w,
+        https://scontent.cdninstagram.com/portrait.jpg?stp=dst-jpg_e35&amp;sig=valid 720w"></a></div>
+        """
+        let candidate = try #require(try InstagramMediaImporter.publicEmbedCandidates(in: html, postURL: post)?.first)
+        #expect(candidate.kind == .photo)
+        #expect(candidate.url.absoluteString == "https://scontent.cdninstagram.com/portrait.jpg?stp=dst-jpg_e35&sig=valid")
+    }
+
+    @Test func photoVariantsPreferTheLargestMatchForTheOriginalAspectRatio() throws {
+        let post = try #require(URL(string: "https://www.instagram.com/p/ABC/"))
+        let media: [String: Any] = [
+            "code": "ABC", "media_type": 1, "original_width": 1080, "original_height": 1920,
+            "image_versions2": ["candidates": [
+                ["url": "https://scontent.cdninstagram.com/square.jpg", "width": 1080, "height": 1080],
+                ["url": "https://scontent.cdninstagram.com/thumb.jpg", "width": 320, "height": 569],
+                ["url": "https://scontent.cdninstagram.com/portrait.jpg", "width": 720, "height": 1280]
+            ]]
+        ]
+        let candidate = try #require(try InstagramMediaImporter.candidate(inJSON: media, postURL: post))
+        #expect(candidate.kind == .photo)
+        #expect(candidate.url.lastPathComponent == "portrait.jpg")
+    }
+
+    @Test func aSignInGateTakesPrecedenceOverTheCroppedLinkPreview() throws {
+        let post = try #require(URL(string: "https://www.instagram.com/p/ABC/"))
+        let html = """
+        <meta property="og:url" content="https://www.instagram.com/p/ABC/">
+        <meta property="og:image" content="https://scontent.cdninstagram.com/share.jpg?stp=c288.0.864.864a_dst-jpg">
+        <script type="application/json">{"data":{"xig_polaris_media":{"__typename":"XIGPolarisImageMedia","code":"ABC","if_not_gated_logged_out":null,"gating_ruling":{"gating_type":3}}}}</script>
+        """
+        #expect(throws: InstagramImportError.loginRequired) {
+            try InstagramMediaImporter.candidate(in: html, postURL: post)
+        }
+        #expect(throws: InstagramImportError.previewOnly) {
+            try InstagramMediaImporter.candidate(in: html.replacingOccurrences(of: #""code":"ABC""#, with: #""code":"OTHER""#),
+                                                postURL: post)
+        }
+    }
+
+    @Test func aCroppedEmbedWithoutAFullFrameFallsBackToThePostPage() throws {
+        let post = try #require(URL(string: "https://www.instagram.com/p/ABC/"))
+        let html = """
+        <div class="Embed" data-permalink="https://www.instagram.com/p/ABC/" data-media-type="GraphImage">
+        <a class="EmbeddedMedia" href="https://www.instagram.com/p/ABC/"><img class="EmbeddedMediaImage"
+        src="https://scontent.cdninstagram.com/square.jpg?stp=c288.0.864.864a_dst-jpg"
+        srcset="https://scontent.cdninstagram.com/small.jpg?stp=c288.0.864.864a_dst-jpg 320w"></a></div>
+        """
+        #expect(try InstagramMediaImporter.publicEmbedCandidates(in: html, postURL: post) == nil)
+    }
+
+    @Test func richEmbedUsesMatchingMediaAndFallsBackWhenOnlyAPosterIsAvailable() throws {
         let post = try #require(URL(string: "https://www.instagram.com/reel/ABC/"))
-        func embed(blocked: Bool = false, code: String = "ABC", kind: String = "GraphVideo") throws -> String {
+        func embed(blocked: Bool = false, code: String = "ABC", kind: String = "GraphVideo", videoURL: String? = "https://video.xx.fbcdn.net/video.mp4") throws -> String {
             let context: [String: Any] = ["type": kind, "shortcode": "ABC", "copyright_blocked": blocked]
             var media: [String: Any] = ["__typename": kind, "shortcode": code]
             if kind == "GraphSidecar" {
@@ -177,7 +233,8 @@ struct InstagramImportTests {
                 ]]
             } else {
                 media["is_video"] = true
-                media["video_url"] = "https://video.xx.fbcdn.net/video.mp4"
+                media["display_url"] = "https://scontent.cdninstagram.com/poster.jpg"
+                media["video_url"] = videoURL
             }
             let payload = try JSONSerialization.data(withJSONObject: ["context": context, "gql_data": ["shortcode_media": media]])
             let literal = String(decoding: try JSONEncoder().encode(String(decoding: payload, as: UTF8.self)), as: UTF8.self)
@@ -191,10 +248,11 @@ struct InstagramImportTests {
         #expect(video.url.lastPathComponent == "video.mp4")
         let carousel = try #require(try InstagramMediaImporter.publicEmbedCandidates(in: embed(kind: "GraphSidecar"), postURL: post))
         #expect(carousel.map(\.kind) == [.photo, .video])
-        for invalid in [try embed(blocked: true), try embed(code: "OTHER"), try embed().replacingOccurrences(of: "video.xx.fbcdn.net", with: "example.org")] {
-            #expect(throws: InstagramImportError.self) {
-                try InstagramMediaImporter.publicEmbedCandidates(in: invalid, postURL: post)
-            }
+        #expect(try InstagramMediaImporter.publicEmbedCandidates(in: embed(blocked: true), postURL: post) == [video])
+        #expect(try InstagramMediaImporter.publicEmbedCandidates(in: embed(blocked: true, videoURL: nil), postURL: post) == nil)
+        #expect(try InstagramMediaImporter.publicEmbedCandidates(in: embed(videoURL: "https://example.org/video.mp4"), postURL: post) == nil)
+        #expect(throws: InstagramImportError.unavailable) {
+            try InstagramMediaImporter.publicEmbedCandidates(in: embed(code: "OTHER"), postURL: post)
         }
     }
 

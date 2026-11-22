@@ -88,7 +88,7 @@
 "Spatial-only picker requires iOS 18 or later." = "Spatial-only picker requires iOS 18 or later.";
 "Stop" = "Stop";
 "Stop current conversion?" = "Stop current conversion?";
-"Start Web Share" = "Start Local Network Share";
+"Start Network Share" = "Start Network Share";
 "Stop Web Share" = "Stop Web Share";
 "Strong" = "Strong";
 "Subtle" = "Subtle";
@@ -111,7 +111,7 @@
 "Video features require an active subscription." = "Video features require an active subscription.";
 "Upgrade" = "Upgrade";
 "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos.";
-"Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops." = "Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops.";
+"iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access.";
 "简体中文" = "简体中文";
 "한국어" = "한국어";
 "StereoShift on Reddit" = "StereoShift on Reddit";
@@ -170,6 +170,8 @@
 "The downloaded file could not be opened as a photo or video." = "The downloaded file could not be opened as a photo or video.";
 "Instagram did not make the media available for this post." = "Instagram did not make the media available for this post.";
 "Choose from Photos" = "Choose from Photos";
+"Instagram only made a cropped preview available. Choose the original from Photos." = "Instagram only made a cropped preview available. Choose the original from Photos.";
+"Open on Instagram" = "Open on Instagram";
 "Instagram requires a signed-in session to access this post." = "Instagram requires a signed-in session to access this post.";
 "Instagram is temporarily limiting downloads on this connection. Please try again later." = "Instagram is temporarily limiting downloads on this connection. Please try again later.";
 
@@ -288,3 +290,11 @@
 "Debug: unlock paid access" = "Debug: unlock paid access";
 "Debug paid access is active" = "Debug paid access is active";
 "Free for this session. Resets when the app restarts." = "Free for this session. Resets when the app restarts.";
+"Starting public link…" = "Starting public link…";
+"Public link" = "Public link";
+"Share link" = "Share link";
+"The public link is unavailable." = "The public link is unavailable.";
+"Retry public link" = "Retry public link";
+"Local Web Share" = "Local Web Share";
+"Show QR Code" = "Show QR Code";
+"Show public link QR code" = "Show public link QR code";

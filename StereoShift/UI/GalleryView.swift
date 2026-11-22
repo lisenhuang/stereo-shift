@@ -8,7 +8,6 @@ import UniformTypeIdentifiers
 import UIKit
 
 struct GalleryView: View {
-    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     @ObservedObject var webServer: GalleryWebServer
     @ObservedObject var subscriptionManager: SubscriptionManager
@@ -26,7 +25,12 @@ struct GalleryView: View {
     @State private var showVideoSubscriptionSheet = false
     @State private var errorMessage: String?
     @State private var visibleItemCount = 0
-    @State private var isShowingQRCodeSheet = false
+    @State private var webShareQR: WebShareQR?
+    private enum WebShareQR: String, Identifiable {
+        case local, publicLink
+
+        var id: String { rawValue }
+    }
     @State private var filter: GalleryFilter = .all
     @State private var gridWidth: CGFloat = 0
     @State private var dragSelection: DragSelection?
@@ -145,12 +149,6 @@ struct GalleryView: View {
             syncVisibleItemCount()
             webServer.refreshNetworkStatus()
         }
-        .onChange(of: scenePhase) { _, newValue in
-            // Enabling Personal Hotspot in Settings does not change this device's own network
-            // path, so NWPathMonitor may not fire. Re-check when the user comes back.
-            guard newValue == .active else { return }
-            webServer.refreshNetworkStatus()
-        }
         .onChange(of: galleryLibrary.items.count) { _, _ in
             syncVisibleItemCount()
             pruneSelectionIfNeeded()
@@ -183,10 +181,17 @@ struct GalleryView: View {
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary, subscriptionManager: subscriptionManager)
         }
-        .sheet(isPresented: $isShowingQRCodeSheet) {
-            if let qrURLString {
-                WebShareQRCodeSheet(urlString: qrURLString)
+        .sheet(item: $webShareQR) { source in
+            let link = source == .local ? qrURLString : webServer.publicLink.url?.absoluteString
+            if let link {
+                WebShareQRCodeSheet(urlString: link)
             }
+        }
+        .onChange(of: webServer.isRunning) { _, running in
+            if !running { webShareQR = nil }
+        }
+        .onChange(of: webServer.publicLink) { _, state in
+            if webShareQR == .publicLink && state.url == nil { webShareQR = nil }
         }
         .sheet(isPresented: $isShowingSelectionShareSheet) {
             ShareSheet(items: selectedItemsInDisplayOrder.map(\.url))
@@ -361,39 +366,33 @@ struct GalleryView: View {
                 Button {
                     webServer.toggle()
                 } label: {
-                    Label(webServer.isRunning ? "Stop Web Share" : "Start Web Share", systemImage: webServer.isRunning ? "wifi.slash" : "wifi")
+                    Label(webServer.isRunning ? "Stop Web Share" : "Start Network Share", systemImage: webServer.isRunning ? "wifi.slash" : "wifi")
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
                 .buttonStyle(.bordered)
-                .disabled(
-                    isImporting ||
-                    isSelecting ||
-                    isDeletingSelection ||
-                    (!webServer.isShareNetworkAvailable && !webServer.isRunning)
-                )
+                .disabled(isImporting || isSelecting || isDeletingSelection)
 
-                if let hostAddress = webServer.hostAddress, webServer.isRunning {
+                if webServer.isRunning {
                     VStack(alignment: .leading, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Web share URL:")
-                                .font(.caption)
-                            HStack(spacing: 8) {
-                                Text(verbatim: hostAddress)
-                                    .font(.subheadline.monospaced())
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .textSelection(.enabled)
-                                Button {
-                                    isShowingQRCodeSheet = true
-                                } label: {
-                                    Image(systemName: "qrcode")
-                                        .frame(minWidth: 44, minHeight: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Show QR Code")
-                            }
+                        if let hostAddress = webServer.hostAddress {
+                            webShareAddress("Local Web Share", address: hostAddress, qr: .local)
                         }
-                        .foregroundStyle(.secondary)
+
+                        switch webServer.publicLink {
+                        case .connecting:
+                            ProgressView("Starting public link…")
+                        case .ready(let url):
+                            webShareAddress("Public link", address: url.absoluteString, qr: .publicLink)
+                            ShareLink(item: url) { Label("Share link", systemImage: "square.and.arrow.up") }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        case .unavailable:
+                            Text("The public link is unavailable.")
+                                .font(.caption)
+                            Button("Retry public link") { webServer.retryPublicLink() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
 
                         HStack(spacing: 8) {
                             HStack(spacing: 4) {
@@ -415,23 +414,38 @@ struct GalleryView: View {
                             .disabled(isImporting)
                         }
 
-                        Text("Keep StereoShift in the foreground while Web Share is running. If the app goes to background, sharing stops.")
+                        Text("iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                } else if !webServer.isShareNetworkAvailable {
-                    Text("Connect to Wi-Fi to start Web Share.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("Web share uses local ports 80/443 and redirects HTTP to HTTPS.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
             }
         }
         .padding(16)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+
+    private func webShareAddress(_ title: LocalizedStringKey, address: String, qr: WebShareQR) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+            HStack(spacing: 8) {
+                Text(verbatim: address)
+                    .font(.subheadline.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+                Button {
+                    webShareQR = qr
+                } label: {
+                    Image(systemName: "qrcode")
+                        .frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(qr == .local ? "Show QR Code" : "Show public link QR code")
+            }
+        }
+        .foregroundStyle(.secondary)
     }
 
     private var qrURLString: String? {
@@ -1186,7 +1200,7 @@ private struct WebShareQRCodeSheet: View {
     }
 }
 
-/// Loads the item's thumbnail and shows only its left eye, square-cropped like a Photos cell.
+/// Shows one eye of the SBS thumbnail. Photos fit inside the grid cell and videos fill it.
 private struct GalleryThumbnailView: View {
     let item: GalleryItem
     @State private var thumbnail: UIImage?
@@ -1202,7 +1216,7 @@ private struct GalleryThumbnailView: View {
             if let thumbnail {
                 Image(uiImage: thumbnail)
                     .resizable()
-                    .scaledToFill()
+                    .aspectRatio(contentMode: item.type == .image ? .fit : .fill)
             } else {
                 Rectangle()
                     .fill(Color.secondary.opacity(0.15))
@@ -1251,7 +1265,7 @@ private struct GalleryThumbnailView: View {
         }
 
         guard let source else { return nil }
-        return squareLeftEye(of: source).map(UIImage.init(cgImage:))
+        return leftEye(of: source, cropToSquare: item.type == .video).map(UIImage.init(cgImage:))
     }
 
     nonisolated private static func decodeImage(at url: URL) -> CGImage? {
@@ -1263,23 +1277,24 @@ private struct GalleryThumbnailView: View {
         return CGImageSourceCreateImageAtIndex(imageSource, 0, decodeOptions)
     }
 
-    /// Takes the left half of the SBS frame, center-crops it to a square and redraws it into its
-    /// own bitmap so the cache holds only the visible pixels, not the whole SBS thumbnail.
-    nonisolated private static func squareLeftEye(of image: CGImage) -> CGImage? {
+    /// Copies the visible eye into its own bitmap so the cache does not retain the whole SBS thumbnail.
+    nonisolated private static func leftEye(of image: CGImage, cropToSquare: Bool) -> CGImage? {
         let eyeWidth = max(image.width / 2, 1)
         let side = min(eyeWidth, image.height)
+        let width = cropToSquare ? side : eyeWidth
+        let height = cropToSquare ? side : image.height
         let cropRect = CGRect(
-            x: (eyeWidth - side) / 2,
-            y: (image.height - side) / 2,
-            width: side,
-            height: side
+            x: (eyeWidth - width) / 2,
+            y: (image.height - height) / 2,
+            width: width,
+            height: height
         )
         guard let cropped = image.cropping(to: cropRect) else { return nil }
 
         guard let context = CGContext(
             data: nil,
-            width: side,
-            height: side,
+            width: width,
+            height: height,
             bitsPerComponent: 8,
             bytesPerRow: 0,
             space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
@@ -1287,7 +1302,7 @@ private struct GalleryThumbnailView: View {
         ) else {
             return cropped
         }
-        context.draw(cropped, in: CGRect(x: 0, y: 0, width: side, height: side))
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: height))
         return context.makeImage() ?? cropped
     }
 

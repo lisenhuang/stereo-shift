@@ -31,6 +31,9 @@ struct InstagramImportView: View {
                         Text("Choose from Photos")
                     }
                     .buttonStyle(.bordered)
+                    if !canRetryLink {
+                        Link("Open on Instagram", destination: request.url)
+                    }
                     if let resolvedPost, resolvedPost.candidates.count > 1 {
                         Button("Choose another item") {
                             selectedCandidate = nil
@@ -148,9 +151,10 @@ struct InstagramImportView: View {
             } catch {
                 guard !Task.isCancelled else { return }
                 if pickedItem == nil {
-                    if case InstagramImportError.loginRequired = error {
+                    switch error as? InstagramImportError {
+                    case .loginRequired, .previewOnly:
                         canRetryLink = false
-                    } else {
+                    default:
                         canRetryLink = true
                     }
                 }

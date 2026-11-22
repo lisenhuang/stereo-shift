@@ -39,6 +39,7 @@ struct HomeView: View {
     @State private var pendingInstagramImport: PendingInstagramImport?
     @State private var deferredInstagramRequestID: UUID?
     @State private var navigationPath = NavigationPath()
+    @State private var restoreLocalShareOnActivation = false
     @State private var importedInstagramMedia: ImportedInstagramMedia?
     @State private var importGeneration = UUID()
     private let bottomAnchorID = "content-bottom-anchor"
@@ -214,6 +215,18 @@ struct HomeView: View {
                 .task {
                     refreshInstagramInbox()
                     await updateChecker.check()
+                }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                restoreLocalShareOnActivation = galleryWebServer.isRunning
+            } else if phase == .active {
+                if restoreLocalShareOnActivation {
+                    restoreLocalShareOnActivation = false
+                    galleryWebServer.restoreLocalSharingAfterBackground()
+                } else {
+                    galleryWebServer.refreshNetworkStatus()
                 }
             }
         }
