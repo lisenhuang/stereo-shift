@@ -42,7 +42,7 @@
 "Mode" = "Modo";
 "No media in In-App Gallery yet." = "Ainda nao ha midia na Galeria Interna.";
 "No subscription plans available right now." = "Nenhum plano de assinatura disponivel agora.";
-"Only convert first 10 seconds for testing" = "Converter apenas os primeiros 10 segundos para teste";
+"Limit generated video to the first 10 seconds" = "Gerar apenas os primeiros 10 segundos";
 "OK" = "OK";
 "Please choose left-right side-by-side 3D images or videos." = "Escolha imagens ou videos 3D lado a lado esquerda-direita.";
 "Photo" = "Foto";
@@ -110,7 +110,7 @@
 "Unlock StereoShift" = "Desbloquear StereoShift";
 "Video features require an active subscription." = "Os recursos de video exigem uma assinatura ativa.";
 "Upgrade" = "Atualizar";
-"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "Desbloqueie a conversão de vídeos completos, prévias em tela cheia e as opções de salvar e compartilhar fotos e vídeos.";
+"Unlock full-length video exports and save and share your photos and videos." = "Exporte vídeos completos, salve e compartilhe suas fotos e vídeos.";
 "iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "O iOS pode pausar o compartilhamento quando você troca de app ou bloqueia o iPhone. Se alguém perder o acesso, abra o StereoShift novamente.";
 "简体中文" = "Chines simplificado";
 "한국어" = "Coreano";
@@ -298,3 +298,9 @@
 "Local Web Share" = "Compartilhamento na rede local";
 "Show QR Code" = "Mostrar código QR";
 "Show public link QR code" = "Mostrar código QR do link público";
+
+"SBS Preview" = "Prévia SBS";
+"Preparing preview…" = "Preparando a prévia…";
+"Mute" = "Silenciar";
+"Unmute" = "Ativar som";
+"This device cannot play spatial video in 3D." = "Este dispositivo não pode reproduzir vídeos espaciais em 3D.";

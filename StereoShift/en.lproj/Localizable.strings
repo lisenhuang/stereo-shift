@@ -42,7 +42,7 @@
 "Mode" = "Mode";
 "No media in In-App Gallery yet." = "No media in In-App Gallery yet.";
 "No subscription plans available right now." = "No subscription plans available right now.";
-"Only convert first 10 seconds for testing" = "Only convert first 10 seconds for testing";
+"Limit generated video to the first 10 seconds" = "Limit generated video to the first 10 seconds";
 "OK" = "OK";
 "Please choose left-right side-by-side 3D images or videos." = "Please choose left-right side-by-side 3D images or videos.";
 "Photo" = "Photo";
@@ -110,7 +110,7 @@
 "Unlock StereoShift" = "Unlock StereoShift";
 "Video features require an active subscription." = "Video features require an active subscription.";
 "Upgrade" = "Upgrade";
-"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos.";
+"Unlock full-length video exports and save and share your photos and videos." = "Unlock full-length video exports and save and share your photos and videos.";
 "iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access.";
 "简体中文" = "简体中文";
 "한국어" = "한국어";
@@ -298,3 +298,9 @@
 "Local Web Share" = "Local Web Share";
 "Show QR Code" = "Show QR Code";
 "Show public link QR code" = "Show public link QR code";
+
+"SBS Preview" = "SBS Preview";
+"Preparing preview…" = "Preparing preview…";
+"Mute" = "Mute";
+"Unmute" = "Unmute";
+"This device cannot play spatial video in 3D." = "This device cannot play spatial video in 3D.";

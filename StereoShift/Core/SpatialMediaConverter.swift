@@ -475,6 +475,10 @@ enum SpatialMediaConverter {
             throw StereoPipelineError.spatialViewsUnavailable
         }
 
+        return try stereoPair(from: taggedBuffers)
+    }
+
+    private static func stereoPair(from taggedBuffers: [CMTaggedBuffer]) throws -> (left: CVPixelBuffer, right: CVPixelBuffer) {
         var taggedEntries: [(pixelBuffer: CVPixelBuffer, eye: StereoEye?, isOrderReversed: Bool)] = []
         taggedEntries.reserveCapacity(2)
 
@@ -514,6 +518,17 @@ enum SpatialMediaConverter {
         }
 
         return (left: taggedEntries[0].pixelBuffer, right: taggedEntries[1].pixelBuffer)
+    }
+
+    static func previewFrame(from buffers: [CMTaggedBuffer], transform: CGAffineTransform,
+                             focusDotsEnabled: Bool) throws -> CVPixelBuffer {
+        let pair = try stereoPair(from: buffers)
+        let size = CGSize(width: CVPixelBufferGetWidth(pair.left), height: CVPixelBufferGetHeight(pair.left))
+        let oriented = orientedSize(naturalSize: size, preferredTransform: transform)
+        let target = VideoProcessor.processingSize(for: oriented, maxDimension: spatialMaxDimension)
+        let left = try makeUprightAndScaledBuffer(from: pair.left, transform: transform, targetSize: target)
+        let right = try makeUprightAndScaledBuffer(from: pair.right, transform: transform, targetSize: target)
+        return try StereoFocusDots.addingIfEnabled(to: makeSBSPixelBuffer(left: left, right: right), enabled: focusDotsEnabled)
     }
 
     private static func stereoEye(from tags: [CMTag]) -> StereoEye? {

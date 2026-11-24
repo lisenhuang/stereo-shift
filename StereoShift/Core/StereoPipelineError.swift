@@ -24,6 +24,7 @@ enum StereoPipelineError: LocalizedError {
     case spatialImagePairUnavailable
     case spatialViewsUnavailable
     case spatialPickerUnavailable
+    case spatialPlaybackUnavailable
     case embeddedDepthUnavailable
     case temporaryFileCreationFailed
     case photoLibraryAccessDenied
@@ -75,6 +76,8 @@ enum StereoPipelineError: LocalizedError {
             return "Unable to extract left/right views from the selected spatial video. Please choose an original spatial video."
         case .spatialPickerUnavailable:
             return "Spatial-only picking requires iOS 18 or later."
+        case .spatialPlaybackUnavailable:
+            return String(localized: "This device cannot play spatial video in 3D.")
         case .embeddedDepthUnavailable:
             return "This photo does not include usable embedded depth/disparity data."
         case .temporaryFileCreationFailed:

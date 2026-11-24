@@ -42,7 +42,7 @@
 "Mode" = "模式";
 "No media in In-App Gallery yet." = "应用内画廊中还没有媒体。";
 "No subscription plans available right now." = "当前没有可用的订阅方案。";
-"Only convert first 10 seconds for testing" = "仅转换前 10 秒用于测试";
+"Limit generated video to the first 10 seconds" = "仅生成视频的前 10 秒";
 "OK" = "确定";
 "Please choose left-right side-by-side 3D images or videos." = "请选择左右并排 3D 图片或视频。";
 "Photo" = "照片";
@@ -110,7 +110,7 @@
 "Unlock StereoShift" = "解锁 StereoShift";
 "Video features require an active subscription." = "视频功能需要有效订阅。";
 "Upgrade" = "升级";
-"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "解锁完整视频转换、全屏预览以及照片和视频的保存与分享。";
+"Unlock full-length video exports and save and share your photos and videos." = "解锁完整视频导出，并保存和分享照片与视频。";
 "iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "切换应用或锁定 iPhone 时，iOS 可能会暂停共享。如果访客无法访问，请重新打开 StereoShift。";
 "简体中文" = "简体中文";
 "한국어" = "韩语";
@@ -298,3 +298,9 @@
 "Local Web Share" = "本地网络共享";
 "Show QR Code" = "显示二维码";
 "Show public link QR code" = "显示公网链接二维码";
+
+"SBS Preview" = "SBS 预览";
+"Preparing preview…" = "正在准备预览…";
+"Mute" = "静音";
+"Unmute" = "取消静音";
+"This device cannot play spatial video in 3D." = "此设备无法以 3D 模式播放空间视频。";

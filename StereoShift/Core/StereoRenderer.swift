@@ -201,12 +201,6 @@ final class StereoRenderer {
         try makeSBSWithRawDepth(from: rgb, rawDepth: rawDepth, strength: strength, options: options, session: session)
     }
 
-    /// Creates fresh per-video state. Call once before rendering a video's frames via
-    /// `makeSBSVideoFrame` so stats from a previous (or concurrent) video don't leak in.
-    func beginVideoTemporalSession() -> VideoTemporalSession {
-        VideoTemporalSession()
-    }
-
     /// Renders one video frame. Identical to `makeSBS(from:depth:strength:options:)` except
     /// depth normalization statistics are exponentially smoothed across frames (via the
     /// session) to prevent the depth scale and convergence plane from pumping frame to frame.

@@ -42,7 +42,7 @@
 "Mode" = "모드";
 "No media in In-App Gallery yet." = "앱 내 갤러리에 아직 미디어가 없습니다.";
 "No subscription plans available right now." = "현재 이용 가능한 구독 상품이 없습니다.";
-"Only convert first 10 seconds for testing" = "테스트용으로 처음 10초만 변환";
+"Limit generated video to the first 10 seconds" = "처음 10초만 변환";
 "OK" = "확인";
 "Please choose left-right side-by-side 3D images or videos." = "좌우 병렬 3D 이미지 또는 동영상을 선택해 주세요.";
 "Photo" = "사진";
@@ -110,7 +110,7 @@
 "Unlock StereoShift" = "StereoShift 잠금 해제";
 "Video features require an active subscription." = "동영상 기능은 활성 구독이 필요합니다.";
 "Upgrade" = "업그레이드";
-"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "전체 길이 동영상 변환, 전체 화면 미리보기, 사진 및 동영상 저장과 공유를 이용하세요.";
+"Unlock full-length video exports and save and share your photos and videos." = "전체 길이 동영상을 내보내고 사진과 동영상을 저장하고 공유하세요.";
 "iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "다른 앱으로 전환하거나 iPhone을 잠그면 iOS가 공유를 일시 중지할 수 있습니다. 보는 사람이 접속할 수 없다면 StereoShift를 다시 여세요.";
 "简体中文" = "중국어(간체)";
 "한국어" = "한국어";
@@ -298,3 +298,9 @@
 "Local Web Share" = "로컬 네트워크 공유";
 "Show QR Code" = "QR 코드 표시";
 "Show public link QR code" = "공개 링크 QR 코드 표시";
+
+"SBS Preview" = "SBS 미리보기";
+"Preparing preview…" = "미리보기 준비 중…";
+"Mute" = "음소거";
+"Unmute" = "음소거 해제";
+"This device cannot play spatial video in 3D." = "이 기기에서는 공간 비디오를 3D로 재생할 수 없습니다.";

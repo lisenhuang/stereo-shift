@@ -14,7 +14,7 @@ struct VideoSubscriptionPaywallView: View {
 #endif
                     Text("Unlock StereoShift")
                         .font(.title2.bold())
-                    Text("Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos.")
+                    Text("Unlock full-length video exports and save and share your photos and videos.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
 

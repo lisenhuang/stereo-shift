@@ -54,18 +54,9 @@ final class VideoProcessor {
         let readerOutputSettings: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
         ]
-        let readerComposition = AVMutableVideoComposition()
-        readerComposition.renderSize = orientedSize
         let frameRate = nominalFrameRate > 0 ? Double(nominalFrameRate) : 30.0
-        readerComposition.frameDuration = CMTime(seconds: 1.0 / frameRate, preferredTimescale: 600)
-
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-        layerInstruction.setTransform(preferredTransform, at: .zero)
-        instruction.layerInstructions = [layerInstruction]
-        readerComposition.instructions = [instruction]
+        let readerComposition = Self.videoComposition(track: videoTrack, duration: duration, frameRate: frameRate,
+                                                      renderSize: orientedSize, transform: preferredTransform)
 
         let readerOutput = AVAssetReaderVideoCompositionOutput(
             videoTracks: [videoTrack],
@@ -128,11 +119,7 @@ final class VideoProcessor {
 
             progress(VideoProcessingProgress(fractionCompleted: 0, processedSeconds: 0, totalSeconds: effectiveDurationSeconds))
 
-            var frameIndex = 0
-            var cachedRawDepth: RawDepthMap?
-            let cadence = max(1, options.videoDepthCadence.rawValue)
-            let smoothingAlpha = max(0, min(1, options.videoDepthSmoothing))
-            let temporalSession = renderer.beginVideoTemporalSession()
+            let frameState = FrameState()
 
             while reader.status == .reading {
                 try Task.checkCancellation()
@@ -156,40 +143,7 @@ final class VideoProcessor {
                     targetSize: processingSize
                 )
 
-                let shouldRecomputeDepth: Bool = {
-                    if cachedRawDepth == nil { return true }
-                    if cadence <= 1 { return true }
-                    return frameIndex % cadence == 0
-                }()
-
-                if shouldRecomputeDepth {
-                    let rawDepth = try await depthEstimator.predictRawDepth(
-                        pixelBuffer: preparedFrame,
-                        model: options.depthModel,
-                        quality: options.depthQuality
-                    )
-
-                    // Smoothing blends in model space (float16, ~0.4 MP buffers), so it
-                    // stays cheap and never quantizes depth to 8 bits mid-stream.
-                    if smoothingAlpha > 0, let previousDepth = cachedRawDepth {
-                        cachedRawDepth = blendRawDepth(previous: previousDepth, current: rawDepth, alpha: smoothingAlpha)
-                    } else {
-                        cachedRawDepth = rawDepth
-                    }
-                }
-
-                guard let depthForFrame = cachedRawDepth else {
-                    throw StereoPipelineError.modelOutputNotFound
-                }
-                let stereoFrame = try renderer.makeSBSVideoFrame(
-                    from: preparedFrame,
-                    rawDepth: depthForFrame,
-                    strength: strength,
-                    options: options,
-                    session: temporalSession
-                )
-
-                let exportFrame = try StereoFocusDots.addingIfEnabled(to: stereoFrame, enabled: options.focusDotsEnabled)
+                let exportFrame = try await renderFrame(preparedFrame, strength: strength, options: options, state: frameState)
                 try await append(
                     pixelBuffer: exportFrame,
                     at: presentationTime,
@@ -205,8 +159,6 @@ final class VideoProcessor {
                     processedSeconds: processedSeconds,
                     totalSeconds: effectiveDurationSeconds
                 ))
-
-                frameIndex += 1
             }
 
             if reader.status == .failed {
@@ -240,6 +192,50 @@ final class VideoProcessor {
             }
             throw error
         }
+    }
+
+    static func videoComposition(track videoTrack: AVAssetTrack, duration: CMTime, frameRate: Double,
+                                 renderSize: CGSize, transform: CGAffineTransform) -> AVVideoComposition {
+        let readerComposition = AVMutableVideoComposition()
+        readerComposition.renderSize = renderSize
+        readerComposition.frameDuration = CMTime(seconds: 1.0 / frameRate, preferredTimescale: 600)
+
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        layerInstruction.setTransform(transform, at: .zero)
+        instruction.layerInstructions = [layerInstruction]
+        readerComposition.instructions = [instruction]
+
+        return readerComposition
+    }
+
+    // Each playback or export owns its own depth history, including after a seek.
+    final class FrameState {
+        fileprivate var frameIndex = 0
+        fileprivate var cachedDepth: RawDepthMap?
+        fileprivate let temporalSession = StereoRenderer.VideoTemporalSession()
+    }
+
+    func renderFrame(_ frame: CVPixelBuffer, strength: Float, options: Stereo3DOptions,
+                     state: FrameState) async throws -> CVPixelBuffer {
+        let cadence = max(1, options.videoDepthCadence.rawValue)
+        if state.frameIndex % cadence == 0 || state.cachedDepth == nil {
+            let prediction = try await depthEstimator.predictRawDepth(pixelBuffer: frame, model: options.depthModel,
+                                                                      quality: options.depthQuality)
+            try Task.checkCancellation()
+            if options.videoDepthSmoothing > 0, let previous = state.cachedDepth {
+                state.cachedDepth = blendRawDepth(previous: previous, current: prediction, alpha: options.videoDepthSmoothing)
+            } else {
+                state.cachedDepth = prediction
+            }
+        }
+        guard let depth = state.cachedDepth else { throw StereoPipelineError.modelOutputNotFound }
+        let stereo = try renderer.makeSBSVideoFrame(from: frame, rawDepth: depth, strength: strength,
+                                                    options: options, session: state.temporalSession)
+        state.frameIndex += 1
+        return try StereoFocusDots.addingIfEnabled(to: stereo, enabled: options.focusDotsEnabled)
     }
 
     static func processingSize(for sourceSize: CGSize, maxDimension: Int) -> CGSize {

@@ -42,7 +42,7 @@
 "Mode" = "मोड";
 "No media in In-App Gallery yet." = "इन-ऐप गैलरी में अभी कोई मीडिया नहीं है।";
 "No subscription plans available right now." = "अभी कोई सदस्यता योजना उपलब्ध नहीं है।";
-"Only convert first 10 seconds for testing" = "टेस्ट के लिए केवल पहले 10 सेकंड बदलें";
+"Limit generated video to the first 10 seconds" = "वीडियो के केवल पहले 10 सेकंड बनाएँ";
 "OK" = "ठीक है";
 "Please choose left-right side-by-side 3D images or videos." = "कृपया बाएं-दाएं साइड-बाय-साइड 3D इमेज या वीडियो चुनें।";
 "Photo" = "फोटो";
@@ -110,7 +110,7 @@
 "Unlock StereoShift" = "StereoShift अनलॉक करें";
 "Video features require an active subscription." = "वीडियो फीचर्स के लिए सक्रिय सदस्यता जरूरी है।";
 "Upgrade" = "अपग्रेड";
-"Unlock full-length video conversion, fullscreen previews, and saving and sharing photos and videos." = "पूरे वीडियो का रूपांतरण, फ़ुलस्क्रीन प्रीव्यू और फ़ोटो व वीडियो सहेजना और शेयर करना अनलॉक करें।";
+"Unlock full-length video exports and save and share your photos and videos." = "पूरे वीडियो एक्सपोर्ट करें और अपनी फ़ोटो और वीडियो सहेजें और शेयर करें।";
 "iOS may pause sharing when you switch apps or lock your iPhone. Reopen StereoShift if viewers lose access." = "ऐप बदलने या iPhone लॉक करने पर iOS शेयरिंग को कुछ समय के लिए रोक सकता है। अगर दर्शक गैलरी नहीं खोल पा रहे हैं, तो StereoShift फिर से खोलें।";
 "简体中文" = "सरलीकृत चीनी";
 "한국어" = "कोरियाई";
@@ -298,3 +298,9 @@
 "Local Web Share" = "स्थानीय नेटवर्क शेयरिंग";
 "Show QR Code" = "QR कोड दिखाएँ";
 "Show public link QR code" = "सार्वजनिक लिंक का QR कोड दिखाएँ";
+
+"SBS Preview" = "SBS प्रीव्यू";
+"Preparing preview…" = "प्रीव्यू तैयार हो रहा है…";
+"Mute" = "आवाज़ बंद करें";
+"Unmute" = "आवाज़ चालू करें";
+"This device cannot play spatial video in 3D." = "यह डिवाइस स्पैशियल वीडियो को 3D में नहीं चला सकता।";

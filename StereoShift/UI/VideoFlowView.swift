@@ -26,6 +26,7 @@ struct VideoFlowView: View {
     @State private var isLoadingSelection = false
     @State private var isProcessing = false
     @State private var isSaving = false
+    @State private var showLivePreview = false
     @State private var showShareSheet = false
     @State private var showStopConfirmation = false
     @State private var errorMessage: String?
@@ -57,6 +58,19 @@ struct VideoFlowView: View {
             if let sourceVideoURL {
                 ResultPreviewView(title: "Input", media: .video(sourceVideoURL),
                                   subtitle: sourceVideoMetadata?.summary, allowsFullscreenPreview: true)
+                Button {
+                    showLivePreview = true
+                } label: {
+                    Label("SBS Preview", systemImage: "play.rectangle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(!canGenerate)
+                .fullScreenCover(isPresented: $showLivePreview) {
+                    LiveVideoPreviewView(url: sourceVideoURL, spatial: inputMode == .spatial,
+                                         processor: pipeline.videoProcessor, strength: strength, options: videoOptions)
+                }
                 pickerControls
             }
 
@@ -73,8 +87,6 @@ struct VideoFlowView: View {
             if let outputVideoURL {
                 ResultPreviewView(title: "SBS Output", media: .video(outputVideoURL),
                                   allowsFullscreenPreview: true,
-                                  canOpenFullscreen: subscriptionManager.canAccessVideo,
-                                  onRequireFullscreenAccess: onRequireSubscription,
                                   allowsInlinePlayback: true)
 
                 VStack(spacing: 10) {
@@ -419,6 +431,14 @@ struct VideoFlowView: View {
         }
     }
 
+    private var videoOptions: Stereo3DOptions {
+        var options = stereo3DOptions
+        options.depthModel = .depthAnythingV2SmallF16
+        options.renderEngine = .metal
+        options.renderProfile = .ultraFast
+        return options
+    }
+
     private func generateSBSVideo() {
         guard let sourceVideoURL else { return }
 
@@ -428,10 +448,7 @@ struct VideoFlowView: View {
 
         let processor = pipeline.videoProcessor
         let appliedStrength = strength
-        var appliedOptions = stereo3DOptions
-        appliedOptions.depthModel = .depthAnythingV2SmallF16
-        appliedOptions.renderEngine = .metal
-        appliedOptions.renderProfile = .ultraFast
+        let appliedOptions = videoOptions
         let usingSpatialMode = inputMode == .spatial
         // Enforce access here too, even if a previous paid session left the switch off.
         let shouldLimitDuration = !subscriptionManager.canAccessVideo || limitToFirstTenSeconds
@@ -693,7 +710,7 @@ struct VideoFlowView: View {
             }
 
             if (sourceVideoMetadata?.durationSeconds ?? 0) > 10 {
-                Toggle("Only convert first 10 seconds for testing", isOn: Binding(
+                Toggle("Limit generated video to the first 10 seconds", isOn: Binding(
                     get: { !subscriptionManager.canAccessVideo || limitToFirstTenSeconds },
                     set: { enabled in
                         guard enabled || subscriptionManager.canAccessVideo else {
