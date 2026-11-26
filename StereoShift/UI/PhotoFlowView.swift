@@ -1,10 +1,21 @@
-import CoreVideo
 import PhotosUI
 import StoreKit
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct PhotoFlowView: View {
+    private enum SourcePhoto {
+        case regular(CGImage)
+        case spatial(StereoImagePair)
+
+        var preview: CGImage {
+            switch self {
+            case let .regular(image): return image
+            case let .spatial(pair): return pair.left
+            }
+        }
+    }
+
     let pipeline: StereoPipeline
     @Binding var inputMode: InputMediaMode
     @Binding var strength: Float
@@ -22,9 +33,8 @@ struct PhotoFlowView: View {
 
     @State private var didLoadImportedFile = false
     @State private var selectedItem: PhotosPickerItem?
-    @State private var sourceImage: CGImage?
-    @State private var sourceSpatialPair: StereoImagePair?
-    @State private var sourceEmbeddedDepth: CVPixelBuffer?
+    @State private var sourcePhoto: SourcePhoto?
+    @State private var isEditingStrength = false
     @State private var outputImage: CGImage?
     @State private var outputFileURL: URL?
     @State private var isLoadingSelection = false
@@ -50,8 +60,8 @@ struct PhotoFlowView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if let sourceImage {
-                ResultPreviewView(title: "Input", media: .image(sourceImage), allowsFullscreenPreview: true)
+            if let sourcePhoto {
+                ResultPreviewView(title: "Input", media: .image(sourcePhoto.preview), allowsFullscreenPreview: true)
             }
 
             PhotosPicker(selection: $selectedItem, matching: photoPickerFilter, preferredItemEncoding: .current) {
@@ -75,14 +85,16 @@ struct PhotoFlowView: View {
             }
 
             controlsCard
+                .disabled(isLoadingSelection)
 
-            Button(action: generateSBSPhoto) {
-                Label(generateButtonTitle, systemImage: "sparkles.rectangle.stack")
-                    .frame(maxWidth: .infinity)
+            if canGenerate && outputImage == nil {
+                Button(action: generateSBSPhoto) {
+                    Label("Retry", systemImage: "arrow.clockwise")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!canGenerate)
 
             if let outputImage {
                 ResultPreviewView(title: "SBS Output", media: .image(outputImage),
@@ -140,6 +152,7 @@ struct PhotoFlowView: View {
                     RedditPostButton()
                         .disabled(isGenerating || isSaving)
                 }
+                .disabled(isLoadingSelection)
                 .sheet(isPresented: $showShareSheet) {
                     ShareSheet(items: [outputFileURL]) { completed in
                         if completed { scheduleReviewPromptAfterExport() }
@@ -154,7 +167,7 @@ struct PhotoFlowView: View {
                 }
             }
         }
-        .allowsHitTesting(!isGenerating)
+        .allowsHitTesting(!isGenerating && !isSaving)
         .overlay {
             if isGenerating {
                 ProgressViewOverlay(
@@ -176,10 +189,16 @@ struct PhotoFlowView: View {
         }
         .onChange(of: selectedItem) { _, newValue in
             // File imports clear picker selection after loading their own source.
-            if newValue != nil { loadSelectedPhoto(newValue) }
+            if let newValue { loadSelectedPhoto(newValue) }
         }
         .onChange(of: inputMode) { _, _ in
             resetForSourceModeChange()
+        }
+        .onChange(of: isEditingStrength ? nil : strength) { _, settledStrength in
+            if settledStrength != nil { generateSBSPhoto() }
+        }
+        .onChange(of: stereo3DOptions.focusDotsEnabled) { _, _ in
+            generateSBSPhoto()
         }
         .onChange(of: isGenerating) { _, newValue in
             updateScreenAwakeLock(isActive: newValue)
@@ -188,7 +207,8 @@ struct PhotoFlowView: View {
         .onDisappear {
             updateScreenAwakeLock(isActive: false)
             selectionTask?.cancel()
-            generateTask?.cancel()
+            isLoadingSelection = false
+            cancelGenerating()
             reviewPromptTask?.cancel()
             onProcessingStateChanged(false)
         }
@@ -261,34 +281,21 @@ struct PhotoFlowView: View {
 
     private var pickerButtonTitle: LocalizedStringKey {
         if inputMode == .spatial {
-            return sourceImage == nil ? "Pick Spatial Photo" : "Pick Another Spatial Photo"
+            return sourcePhoto == nil ? "Pick Spatial Photo" : "Pick Another Spatial Photo"
         }
-        return sourceImage == nil ? "Pick Photo" : "Pick Another Photo"
+        return sourcePhoto == nil ? "Pick Photo" : "Pick Another Photo"
     }
 
     private var filePickerButtonTitle: LocalizedStringKey {
         if inputMode == .spatial {
-            return sourceImage == nil ? "Pick Spatial Photo from Files" : "Pick Another Spatial Photo from Files"
+            return sourcePhoto == nil ? "Pick Spatial Photo from Files" : "Pick Another Spatial Photo from Files"
         }
-        return sourceImage == nil ? "Pick Photo from Files" : "Pick Another Photo from Files"
-    }
-
-    private var generateButtonTitle: LocalizedStringKey {
-        if isGenerating {
-            return inputMode == .spatial ? "Converting…" : "Generating…"
-        }
-        return inputMode == .spatial ? "Convert Spatial to SBS" : "Generate"
+        return sourcePhoto == nil ? "Pick Photo from Files" : "Pick Another Photo from Files"
     }
 
     private var canGenerate: Bool {
-        guard sourceImage != nil, !isGenerating else { return false }
-        if inputMode == .spatial, !supportsSpatialPicker {
-            return false
-        }
-        if inputMode == .regular2D {
-            return sbsLayoutEnabled
-        }
-        return true
+        guard sourcePhoto != nil, !isGenerating, !isLoadingSelection else { return false }
+        return inputMode == .spatial ? supportsSpatialPicker : sbsLayoutEnabled
     }
 
     private var progressTitleText: Text {
@@ -303,74 +310,19 @@ struct PhotoFlowView: View {
 
     private func resetForSourceModeChange() {
         selectionTask?.cancel()
-        generateTask?.cancel()
-
+        cancelGenerating()
         selectedItem = nil
-        sourceImage = nil
-        sourceSpatialPair = nil
-        sourceEmbeddedDepth = nil
-        outputImage = nil
-        outputFileURL = nil
-        saveMessageKey = nil
+        sourcePhoto = nil
+        clearOutput()
         isLoadingSelection = false
         showFileImporter = false
-        clearRenderCache()
     }
 
-    private func loadSelectedPhoto(_ item: PhotosPickerItem?) {
-        selectionTask?.cancel()
-
-        guard let item else {
-            sourceImage = nil
-            sourceSpatialPair = nil
-            outputImage = nil
-            outputFileURL = nil
-            clearRenderCache()
-            return
-        }
-
-        isLoadingSelection = true
-        selectionTask = Task {
-            do {
-                if inputMode == .spatial {
-                    guard supportsSpatialPicker else {
-                        throw StereoPipelineError.spatialPickerUnavailable
-                    }
-
-                    let pair = try await MediaPicker.loadSpatialPhotoPair(from: item)
-                    if Task.isCancelled { return }
-
-                    await MainActor.run {
-                        sourceImage = pair.left
-                        sourceSpatialPair = pair
-                        sourceEmbeddedDepth = nil
-                        outputImage = nil
-                        outputFileURL = nil
-                        saveMessageKey = nil
-                        isLoadingSelection = false
-                        clearRenderCache()
-                    }
-                } else {
-                    let picked = try await MediaPicker.loadPhotoWithEmbeddedDepth(from: item)
-                    if Task.isCancelled { return }
-
-                    await MainActor.run {
-                        sourceImage = picked.image
-                        sourceSpatialPair = nil
-                        sourceEmbeddedDepth = picked.embeddedDepth
-                        outputImage = nil
-                        outputFileURL = nil
-                        saveMessageKey = nil
-                        isLoadingSelection = false
-                        clearRenderCache()
-                    }
-                }
-            } catch {
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    isLoadingSelection = false
-                    errorMessage = error.localizedDescription
-                }
+    private func loadSelectedPhoto(_ item: PhotosPickerItem) {
+        loadPhoto { mode in
+            switch mode {
+            case .regular2D: return .regular(try await MediaPicker.loadPhoto(from: item))
+            case .spatial: return .spatial(try await MediaPicker.loadSpatialPhotoPair(from: item))
             }
         }
     }
@@ -386,109 +338,49 @@ struct PhotoFlowView: View {
     }
 
     private func loadSelectedPhotoFile(_ url: URL) {
+        loadPhoto(clearingPickerSelection: true) { mode in
+            try await Task.detached(priority: .userInitiated) { () throws -> SourcePhoto in
+                switch mode {
+                case .regular2D: return .regular(try MediaPicker.loadPhoto(fromFileURL: url))
+                case .spatial: return .spatial(try MediaPicker.loadSpatialPhotoPair(fromFileURL: url))
+                }
+            }.value
+        }
+    }
+
+    private func loadPhoto(
+        clearingPickerSelection: Bool = false,
+        using load: @escaping (InputMediaMode) async throws -> SourcePhoto
+    ) {
         selectionTask?.cancel()
+        cancelGenerating()
         isLoadingSelection = true
+        let mode = inputMode
 
-        selectionTask = Task {
+        selectionTask = Task { @MainActor in
             do {
-                if inputMode == .spatial {
-                    guard supportsSpatialPicker else {
-                        throw StereoPipelineError.spatialPickerUnavailable
-                    }
-
-                    let pair = try await Task.detached(priority: .userInitiated) {
-                        try MediaPicker.loadSpatialPhotoPair(fromFileURL: url)
-                    }.value
-                    if Task.isCancelled { return }
-
-                    await MainActor.run {
-                        selectedItem = nil
-                        sourceImage = pair.left
-                        sourceSpatialPair = pair
-                        sourceEmbeddedDepth = nil
-                        outputImage = nil
-                        outputFileURL = nil
-                        saveMessageKey = nil
-                        isLoadingSelection = false
-                        clearRenderCache()
-                    }
-                } else {
-                    let picked = try await Task.detached(priority: .userInitiated) {
-                        try MediaPicker.loadPhotoWithEmbeddedDepth(fromFileURL: url)
-                    }.value
-                    if Task.isCancelled { return }
-
-                    await MainActor.run {
-                        selectedItem = nil
-                        sourceImage = picked.image
-                        sourceSpatialPair = nil
-                        sourceEmbeddedDepth = picked.embeddedDepth
-                        outputImage = nil
-                        outputFileURL = nil
-                        saveMessageKey = nil
-                        isLoadingSelection = false
-                        clearRenderCache()
-                    }
+                if mode == .spatial && !supportsSpatialPicker {
+                    throw StereoPipelineError.spatialPickerUnavailable
                 }
+                let photo = try await load(mode)
+                try Task.checkCancellation()
+                if clearingPickerSelection { selectedItem = nil }
+                sourcePhoto = photo
+                isLoadingSelection = false
+                generateSBSPhoto()
             } catch {
-                if Task.isCancelled { return }
-                await MainActor.run {
-                    isLoadingSelection = false
-                    errorMessage = error.localizedDescription
-                }
+                guard !Task.isCancelled else { return }
+                if !clearingPickerSelection { selectedItem = nil }
+                isLoadingSelection = false
+                errorMessage = error.localizedDescription
             }
         }
     }
 
     private func generateSBSPhoto() {
-        generateTask?.cancel()
+        guard canGenerate, let sourcePhoto else { return }
+        clearOutput()
         isGenerating = true
-        let focusDotsEnabled = stereo3DOptions.focusDotsEnabled
-
-        if inputMode == .spatial {
-            guard let sourceSpatialPair else {
-                isGenerating = false
-                return
-            }
-
-            generateTask = Task.detached(priority: .userInitiated) {
-                do {
-                    try Task.checkCancellation()
-                    let output = try SpatialMediaConverter.makeSBSImage(from: sourceSpatialPair, focusDotsEnabled: focusDotsEnabled)
-                    let fileURL = try TempFiles.writePNG(cgImage: output, prefix: "stereoshift-spatial-photo")
-
-                    if Task.isCancelled {
-                        TempFiles.removeItemIfExists(at: fileURL)
-                        return
-                    }
-
-                    await MainActor.run {
-                        outputImage = output
-                        outputFileURL = fileURL
-                        saveMessageKey = nil
-                        isGenerating = false
-                        onGenerated()
-                    }
-                } catch {
-                    if Task.isCancelled {
-                        await MainActor.run {
-                            isGenerating = false
-                        }
-                        return
-                    }
-                    await MainActor.run {
-                        isGenerating = false
-                        errorMessage = error.localizedDescription
-                    }
-                }
-            }
-            return
-        }
-
-        guard let sourceImage else {
-            isGenerating = false
-            return
-        }
 
         let renderer = pipeline.stereoRenderer
         let depthEstimator = pipeline.depthEstimator
@@ -498,46 +390,47 @@ struct PhotoFlowView: View {
         appliedOptions.renderEngine = .metal
         appliedOptions.renderProfile = .ultraFast
 
-        generateTask = Task.detached(priority: .userInitiated) {
+        generateTask = Task.detached(priority: .userInitiated) { [appliedOptions] in
             do {
                 try Task.checkCancellation()
-                let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: sourceImage)
-                let rawDepth = try await depthEstimator.predictRawDepth(
-                    pixelBuffer: rgbBuffer,
-                    model: appliedOptions.depthModel,
-                    quality: appliedOptions.depthQuality
-                )
-                let outputBuffer = try renderer.makeSBS(
-                    from: rgbBuffer,
-                    rawDepth: rawDepth,
-                    strength: appliedStrength,
-                    options: appliedOptions
-                )
-                let exportBuffer = try StereoFocusDots.addingIfEnabled(to: outputBuffer, enabled: appliedOptions.focusDotsEnabled)
-                let output = try PixelBufferUtilities.makeCGImage(from: exportBuffer)
-                let jpegQuality: Float = 0.95
-                let fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: jpegQuality)
-
-                if Task.isCancelled {
-                    TempFiles.removeItemIfExists(at: fileURL)
-                    return
+                let output: CGImage
+                let fileURL: URL
+                switch sourcePhoto {
+                case let .spatial(pair):
+                    output = try SpatialMediaConverter.makeSBSImage(from: pair, focusDotsEnabled: appliedOptions.focusDotsEnabled)
+                    fileURL = try TempFiles.writePNG(cgImage: output, prefix: "stereoshift-spatial-photo")
+                case let .regular(image):
+                    let rgbBuffer = try PixelBufferUtilities.makePixelBuffer(from: image)
+                    let rawDepth = try await depthEstimator.predictRawDepth(
+                        pixelBuffer: rgbBuffer,
+                        model: appliedOptions.depthModel,
+                        quality: appliedOptions.depthQuality
+                    )
+                    try Task.checkCancellation()
+                    let outputBuffer = try renderer.makeSBS(
+                        from: rgbBuffer,
+                        rawDepth: rawDepth,
+                        strength: appliedStrength,
+                        options: appliedOptions
+                    )
+                    let exportBuffer = try StereoFocusDots.addingIfEnabled(to: outputBuffer, enabled: appliedOptions.focusDotsEnabled)
+                    output = try PixelBufferUtilities.makeCGImage(from: exportBuffer)
+                    fileURL = try TempFiles.writeJPEG(cgImage: output, prefix: "stereoshift-photo", quality: 0.95)
                 }
 
                 await MainActor.run {
+                    guard !Task.isCancelled else {
+                        TempFiles.removeItemIfExists(at: fileURL)
+                        return
+                    }
                     outputImage = output
                     outputFileURL = fileURL
-                    saveMessageKey = nil
                     isGenerating = false
                     onGenerated()
                 }
             } catch {
-                if Task.isCancelled {
-                    await MainActor.run {
-                        isGenerating = false
-                    }
-                    return
-                }
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     isGenerating = false
                     errorMessage = error.localizedDescription
                 }
@@ -545,8 +438,13 @@ struct PhotoFlowView: View {
         }
     }
 
-    private func clearRenderCache() {
-        // No-op: strength changes no longer trigger automatic regeneration.
+    private func clearOutput() {
+        if let outputFileURL, !isSaving {
+            TempFiles.removeItemIfExists(at: outputFileURL)
+        }
+        outputImage = nil
+        outputFileURL = nil
+        saveMessageKey = nil
     }
 
     private func cancelGenerating() {
@@ -696,7 +594,8 @@ struct PhotoFlowView: View {
                         get: { Double(strength) },
                         set: { strength = Float($0) }
                     ),
-                    in: 0.1...1.5
+                    in: 0.1...1.5,
+                    onEditingChanged: { isEditingStrength = $0 }
                 )
 
                 Toggle("Side-by-Side (SBS)", isOn: $sbsLayoutEnabled)

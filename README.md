@@ -478,7 +478,7 @@ open StereoShift.xcodeproj
 ```
 
 **3** · Pick an iOS 17+ device or simulator → **Run** ▶️
-**4** · Choose a photo or video → drag **3D Strength** → tap **Generate** ✨
+**4** · Choose a photo to generate its SBS image automatically. For video, choose a clip, adjust **3D Strength**, then tap **Generate**.
 
 ```bash
 # Build (no signing needed)
