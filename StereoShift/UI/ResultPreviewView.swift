@@ -21,7 +21,7 @@ struct ResultPreviewView: View {
     /// and videos play inline with the system controls instead of needing fullscreen.
     var isEdgeToEdge: Bool = false
 
-    @State private var player: AVPlayer?
+    @State private var inlinePlayback: LoopingVideoPlayback?
     @State private var isShowingFullscreen = false
     @State private var videoAspectRatio: CGFloat?
 
@@ -57,9 +57,9 @@ struct ResultPreviewView: View {
                 case let .video(url):
                     Group {
                         if allowsInlinePlayback {
-                            InlineVideoPreview(player: player)
+                            InlineVideoPreview(player: inlinePlayback?.player)
                         } else {
-                            VideoPlayer(player: player)
+                            VideoPlayer(player: inlinePlayback?.player)
                                 .allowsHitTesting(isEdgeToEdge)
                         }
                     }
@@ -68,25 +68,14 @@ struct ResultPreviewView: View {
                             guard isEdgeToEdge else { return }
                             videoAspectRatio = await Self.displayAspectRatio(of: url)
                         }
-                        .onAppear {
-                            if player?.currentItem?.asset as? AVURLAsset == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != url {
-                                player = AVPlayer(url: url)
-                            }
-                            player?.actionAtItemEnd = .pause
-                            player?.pause()
-                            player?.seek(to: .zero)
-                        }
-                        .onChange(of: url) { _, newURL in
-                            if player?.currentItem?.asset as? AVURLAsset == nil || (player?.currentItem?.asset as? AVURLAsset)?.url != newURL {
-                                player = AVPlayer(url: newURL)
-                            }
-                            player?.actionAtItemEnd = .pause
-                            player?.pause()
-                            player?.seek(to: .zero)
+                        .onChange(of: url, initial: true) { _, newURL in
+                            let playback = inlinePlayback ?? LoopingVideoPlayback()
+                            playback.prepare(newURL)
+                            inlinePlayback = playback
                         }
                         .onDisappear {
-                            player?.pause()
-                            player?.seek(to: .zero)
+                            inlinePlayback?.stopAndReset()
+                            inlinePlayback = nil
                         }
                 }
             }
@@ -140,14 +129,14 @@ struct ResultPreviewView: View {
             }
         }
         .fullScreenCover(isPresented: $isShowingFullscreen, onDismiss: {
-            FullscreenVideoPlaybackCenter.shared.stopAndReset()
+            LoopingVideoPlayback.fullscreen.stopAndReset()
         }) {
             FullscreenPreviewView(media: media)
         }
     }
 
     private func openFullscreen() {
-        player?.pause()
+        inlinePlayback?.player.pause()
         guard canOpenFullscreen else {
             onRequireFullscreenAccess?()
             return
@@ -191,7 +180,6 @@ private struct FullscreenPreviewView: View {
     let media: PreviewMedia
     @Environment(\.dismiss) private var dismiss
 
-    @State private var player: AVPlayer?
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -201,22 +189,10 @@ private struct FullscreenPreviewView: View {
                 if let previewImage = previewUIImage {
                     ZoomableImageView(image: previewImage)
                 } else if case let .video(url) = media {
-                    VideoPlayer(player: player)
-                        .onAppear {
-                            player = FullscreenVideoPlaybackCenter.shared.player(for: url)
-                            player?.actionAtItemEnd = .none
-                            player?.play()
-                        }
-                        .onChange(of: url) { _, newURL in
-                            player = FullscreenVideoPlaybackCenter.shared.player(for: newURL)
-                            player?.actionAtItemEnd = .none
-                            player?.play()
-                        }
-                        .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime)) { notification in
-                            guard let currentItem = player?.currentItem else { return }
-                            guard let endedItem = notification.object as? AVPlayerItem, endedItem == currentItem else { return }
-                            player?.seek(to: .zero)
-                            player?.play()
+                    VideoPlayer(player: LoopingVideoPlayback.fullscreen.player)
+                        .onChange(of: url, initial: true) { _, newURL in
+                            LoopingVideoPlayback.fullscreen.prepare(newURL)
+                            LoopingVideoPlayback.fullscreen.player.play()
                         }
                 } else {
                     unavailable
@@ -226,9 +202,7 @@ private struct FullscreenPreviewView: View {
             .ignoresSafeArea()
 
             Button {
-                player?.pause()
-                player?.seek(to: .zero)
-                FullscreenVideoPlaybackCenter.shared.stopAndReset()
+                LoopingVideoPlayback.fullscreen.stopAndReset()
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
@@ -264,27 +238,26 @@ private struct FullscreenPreviewView: View {
     }
 }
 
-private final class FullscreenVideoPlaybackCenter {
-    static let shared = FullscreenVideoPlaybackCenter()
+@MainActor
+final class LoopingVideoPlayback {
+    static let fullscreen = LoopingVideoPlayback()
 
-    private let sharedPlayer = AVPlayer()
+    let player = AVQueuePlayer()
+    private var looper: AVPlayerLooper?
     private var activeURL: URL?
 
-    private init() {}
-
-    func player(for url: URL) -> AVPlayer {
-        if activeURL != url {
-            sharedPlayer.pause()
-            sharedPlayer.replaceCurrentItem(with: AVPlayerItem(url: url))
-            activeURL = url
-        }
-        return sharedPlayer
+    func prepare(_ url: URL) {
+        guard activeURL != url else { return }
+        stopAndReset()
+        looper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
+        activeURL = url
     }
 
     func stopAndReset() {
-        sharedPlayer.pause()
-        sharedPlayer.seek(to: .zero)
-        sharedPlayer.replaceCurrentItem(with: nil)
+        player.pause()
+        looper?.disableLooping()
+        looper = nil
+        player.removeAllItems()
         activeURL = nil
     }
 }

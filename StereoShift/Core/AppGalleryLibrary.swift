@@ -94,33 +94,26 @@ final class AppGalleryLibrary: ObservableObject {
         let directory = try galleryDirectory()
         let files = try FileManager.default.contentsOfDirectory(
             at: directory,
-            includingPropertiesForKeys: [.creationDateKey, .contentModificationDateKey],
+            includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .creationDateKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]
         )
 
-        var results: [GalleryItem] = []
-        results.reserveCapacity(files.count)
+        return files.compactMap(galleryItem(at:)).sorted { $0.createdAt > $1.createdAt }
+    }
 
-        for url in files {
-            guard let mediaType = mediaType(for: url) else {
-                continue
-            }
+    /// Resolve a single listed filename without scanning the whole gallery for every cover or video range.
+    static func itemForWeb(named name: String) -> GalleryItem? {
+        guard !name.isEmpty, !name.hasPrefix("."), !name.contains("/"), !name.utf8.contains(0),
+              let directory = try? galleryDirectory() else { return nil }
+        return galleryItem(at: directory.appendingPathComponent(name, isDirectory: false))
+    }
 
-            let values = try? url.resourceValues(forKeys: [.creationDateKey, .contentModificationDateKey])
-            let createdAt = values?.creationDate ?? values?.contentModificationDate ?? .distantPast
-
-            results.append(
-                GalleryItem(
-                    id: url.lastPathComponent,
-                    url: url,
-                    thumbnailURL: existingThumbnailURL(for: url),
-                    type: mediaType,
-                    createdAt: createdAt
-                )
-            )
-        }
-
-        return results.sorted { $0.createdAt > $1.createdAt }
+    private static func galleryItem(at url: URL) -> GalleryItem? {
+        guard let type = mediaType(for: url),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .creationDateKey, .contentModificationDateKey]),
+              values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
+        return GalleryItem(id: url.lastPathComponent, url: url, thumbnailURL: existingThumbnailURL(for: url),
+                           type: type, createdAt: values.creationDate ?? values.contentModificationDate ?? .distantPast)
     }
 
     private static func copyMediaFileToGallery(sourceURL: URL, type: GalleryMediaType) throws -> URL {
@@ -310,17 +303,56 @@ final class AppGalleryLibrary: ObservableObject {
         return FileManager.default.fileExists(atPath: thumbnailURL.path) ? thumbnailURL : nil
     }
 
-    static func ensureThumbnailExists(for item: GalleryItem) -> URL? {
-        if let existing = existingThumbnailURL(for: item.url) {
-            return existing
+    static func leftEyeThumbnail(for item: GalleryItem, rebuild: Bool = false) -> CGImage? {
+        var source = item.thumbnailURL.flatMap(decodeImage(at:))
+        if rebuild || (source.map({ isLegacyThumbnail(pixelWidth: $0.width, pixelHeight: $0.height) }) ?? true) {
+            // Missing, or written by an older version at a size too small to crop — rebuild it once.
+            if let upgradedURL = try? generateThumbnail(for: item.url, type: item.type),
+               let upgraded = decodeImage(at: upgradedURL) {
+                source = upgraded
+            }
         }
 
-        return try? generateThumbnail(for: item.url, type: item.type)
+        guard let source else { return nil }
+        return squareLeftEye(of: source)
     }
 
-    /// Rebuilds the cached preview from the original media.
-    static func regenerateThumbnail(for item: GalleryItem) -> URL? {
-        try? generateThumbnail(for: item.url, type: item.type)
+    private static func decodeImage(at url: URL) -> CGImage? {
+        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else {
+            return nil
+        }
+        let decodeOptions = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
+        guard let image = CGImageSourceCreateImageAtIndex(imageSource, 0, decodeOptions),
+              CGImageSourceGetStatusAtIndex(imageSource, 0) == .statusComplete else { return nil }
+        return image
+    }
+
+    /// Copies the visible eye into its own bitmap so the cache does not retain the whole SBS thumbnail.
+    private static func squareLeftEye(of image: CGImage) -> CGImage? {
+        let eyeWidth = max(image.width / 2, 1)
+        let side = min(eyeWidth, image.height)
+        let cropRect = CGRect(
+            x: (eyeWidth - side) / 2,
+            y: (image.height - side) / 2,
+            width: side,
+            height: side
+        )
+        guard let cropped = image.cropping(to: cropRect) else { return nil }
+
+        guard let context = CGContext(
+            data: nil,
+            width: side,
+            height: side,
+            bitsPerComponent: 8,
+            bytesPerRow: 0,
+            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+        ) else {
+            return cropped
+        }
+        context.draw(cropped, in: CGRect(x: 0, y: 0, width: side, height: side))
+        return context.makeImage() ?? cropped
     }
 
     /// Thumbnails written before the Photos-style grid were capped at 320 px on the long side,
@@ -414,9 +446,14 @@ final class AppGalleryLibrary: ObservableObject {
             throw StereoPipelineError.graphicsContextCreationFailed
         }
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        guard let preview = context.makeImage() else { throw StereoPipelineError.graphicsContextCreationFailed }
+        // Concurrent rebuilds each write their own temporary file.
+        try jpegData(for: preview).write(to: destinationURL, options: .atomic)
+    }
+
+    static func jpegData(for preview: CGImage) throws -> Data {
         let data = NSMutableData()
-        guard let preview = context.makeImage(),
-              let imageDestination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
+        guard let imageDestination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
             throw StereoPipelineError.temporaryFileCreationFailed
         }
 
@@ -428,8 +465,7 @@ final class AppGalleryLibrary: ObservableObject {
         guard CGImageDestinationFinalize(imageDestination) else {
             throw StereoPipelineError.temporaryFileCreationFailed
         }
-        // Each writer gets its own temporary file when the native and web galleries rebuild together.
-        try (data as Data).write(to: destinationURL, options: .atomic)
+        return data as Data
     }
 
     private static func removeThumbnailIfExists(for mediaURL: URL) {

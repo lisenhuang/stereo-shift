@@ -66,14 +66,12 @@ final class LiveVideoPreview: ObservableObject {
             let ended = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification,
                                                                object: item, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
-                    guard let self, !self.seeking else { return }
-                    self.position = self.duration
-                    self.pause()
+                    guard let self, self.player.currentItem === item, self.wantsPlayback, !self.seeking else { return }
+                    self.seek(to: 0, resume: true)
                 }
             }
             defer { NotificationCenter.default.removeObserver(ended) }
             player.replaceCurrentItem(with: item)
-            if spatial, wantsPlayback { play() }
             // Hold the playback clock at the beginning during the first depth prediction.
             var seenRevision = revision
             var state = VideoProcessor.FrameState()
@@ -93,6 +91,8 @@ final class LiveVideoPreview: ObservableObject {
                     try await Task.sleep(for: .milliseconds(20))
                     continue
                 }
+                // Tagged spatial output needs a running clock after a seek, including a loop.
+                if spatial, needsFrame, wantsPlayback, !isPlaying { play() }
                 let time = player.currentTime().seconds
                 if time.isFinite, isPlaying {
                     position = min(duration, max(0, time))

@@ -396,11 +396,12 @@ final class GalleryWebServer: ObservableObject {
             guard isThumb || request.path.hasPrefix("/media/"),
                   let item = item(forPath: request.path, prefix: isThumb ? "/thumb/" : "/media/") else { return GalleryHTTPResponse(404) }
             if isThumb {
-                let thumbnail = request.queryItems["rebuild"] == "1"
-                    ? AppGalleryLibrary.regenerateThumbnail(for: item)
-                    : AppGalleryLibrary.ensureThumbnailExists(for: item)
-                guard let thumbnail else { return GalleryHTTPResponse(404) }
-                return fileResponse(thumbnail, request: request)
+                guard let cover = AppGalleryLibrary.leftEyeThumbnail(for: item, rebuild: request.queryItems["rebuild"] == "1"),
+                      let jpeg = try? AppGalleryLibrary.jpegData(for: cover) else { return GalleryHTTPResponse(404) }
+                return byteResponse(request, size: Int64(jpeg.count), contentType: "image/jpeg") { offset, length in
+                    let bytes = offset == 0 && length == jpeg.count ? jpeg : jpeg.subdata(in: Int(offset)..<Int(offset + length))
+                    return GalleryResponseBody(bytes)
+                }
             }
             return fileResponse(item.url, request: request)
         }
@@ -503,40 +504,39 @@ final class GalleryWebServer: ObservableObject {
         let encodedID = String(path.dropFirst(prefix.count))
         let decodedID = encodedID.removingPercentEncoding ?? encodedID
 
-        guard !decodedID.isEmpty else {
-            return nil
-        }
-
-        guard let items = try? AppGalleryLibrary.loadItemsForWeb() else {
-            return nil
-        }
-
-        return items.first { $0.id == decodedID }
+        return AppGalleryLibrary.itemForWeb(named: decodedID)
     }
 
     private func fileResponse(_ url: URL, request: GalleryHTTPRequest) -> GalleryHTTPResponse {
         do {
-            // The gallery may replace a thumbnail. Measure and stream the same open file.
+            // Measure and stream the same open file.
             let file = try FileHandle(forReadingFrom: url)
             let size = Int64(try file.seekToEnd())
-            var headers = ["Content-Type": Self.contentType(for: url) ?? "application/octet-stream", "Accept-Ranges": "bytes"]
-            var offset: Int64 = 0
-            var length = size
-            var status = 200
-            if let header = request.headers["range"] {
-                guard let range = Self.byteRange(from: header, fileSize: size) else {
-                    return GalleryHTTPResponse(416, headers: ["Content-Range": "bytes */\(size)", "Accept-Ranges": "bytes"])
-                }
-                offset = range.lowerBound
-                length = range.upperBound - offset + 1
-                status = 206
-                headers["Content-Range"] = "bytes \(offset)-\(range.upperBound)/\(size)"
+            return try byteResponse(request, size: size, contentType: Self.contentType(for: url) ?? "application/octet-stream") {
+                try GalleryResponseBody(file: file, offset: $0, length: $1)
             }
-            let body = request.method == "HEAD" ? GalleryResponseBody(Data()) : try GalleryResponseBody(file: file, offset: offset, length: length)
-            return GalleryHTTPResponse(status, headers, body: body, length: length)
         } catch {
             return GalleryHTTPResponse(500, "Failed to read file.")
         }
+    }
+
+    private func byteResponse(_ request: GalleryHTTPRequest, size: Int64, contentType: String,
+                              makeBody: (Int64, Int64) throws -> GalleryResponseBody) rethrows -> GalleryHTTPResponse {
+        var headers = ["Content-Type": contentType, "Accept-Ranges": "bytes"]
+        var offset: Int64 = 0
+        var length = size
+        var status = 200
+        if let header = request.headers["range"] {
+            guard let range = Self.byteRange(from: header, fileSize: size) else {
+                return GalleryHTTPResponse(416, headers: ["Content-Range": "bytes */\(size)", "Accept-Ranges": "bytes"])
+            }
+            offset = range.lowerBound
+            length = range.upperBound - offset + 1
+            status = 206
+            headers["Content-Range"] = "bytes \(offset)-\(range.upperBound)/\(size)"
+        }
+        let body = request.method == "HEAD" ? GalleryResponseBody(Data()) : try makeBody(offset, length)
+        return GalleryHTTPResponse(status, headers, body: body, length: length)
     }
 
     private func send(_ response: GalleryHTTPResponse, headOnly: Bool, on connection: NWConnection) {
@@ -1563,6 +1563,16 @@ final class GalleryWebServer: ObservableObject {
       display: block;
     }
 
+    .thumb.unavailable::before {
+      content: attr(data-icon);
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 28px;
+    }
+
     .badge {
       position: absolute;
       right: 8px;
@@ -1816,7 +1826,6 @@ final class GalleryWebServer: ObservableObject {
       offset: 0,
       limit: 120,
       hasMore: false,
-      items: [],
       activeItem: null
     };
 
@@ -2819,7 +2828,9 @@ final class GalleryWebServer: ObservableObject {
       activeListRequest?.abort();
       activeListRequest = null;
       state.offset = 0;
-      state.items = [];
+      coverObserver.disconnect();
+      coverQueue.clear();
+      grid.replaceChildren();
       state.hasMore = false;
       render();
       await loadItems();
@@ -2846,11 +2857,10 @@ final class GalleryWebServer: ObservableObject {
         if (request.signal.aborted) return;
         const incoming = Array.isArray(payload.items) ? payload.items : [];
 
-        state.items = state.items.concat(incoming);
         state.offset += incoming.length;
         state.hasMore = Boolean(payload.hasMore);
 
-        render();
+        render(incoming);
       } catch (error) {
         if (!request.signal.aborted) setError(error?.message || 'Unable to load gallery.');
       } finally {
@@ -2861,16 +2871,53 @@ final class GalleryWebServer: ObservableObject {
       }
     }
 
-    function render() {
-      grid.innerHTML = '';
-
-      if (state.items.length === 0) {
-        emptyState.style.display = 'block';
-      } else {
-        emptyState.style.display = 'none';
+    // The public connector has eight request slots. Leave room for playback and other requests.
+    const coverQueue = new Set();
+    let activeCovers = 0;
+    const coverObserver = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) coverQueue.add(entry.target);
+        else coverQueue.delete(entry.target);
       }
+      pumpCovers();
+    }, { rootMargin: '400px' });
 
-      for (const item of state.items) {
+    function pumpCovers() {
+      for (const thumb of coverQueue) {
+        if (activeCovers >= 4) break;
+        coverQueue.delete(thumb);
+        if (!thumb.isConnected) continue;
+        coverObserver.unobserve(thumb);
+        activeCovers++;
+        loadCover(thumb).finally(() => {
+          activeCovers--;
+          pumpCovers();
+        });
+      }
+    }
+
+    async function loadCover(thumb) {
+      for (const delay of [0, 400, 1200, 3000]) {
+        if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+        if (!thumb.isConnected) return;
+        const image = new Image();
+        image.alt = '';
+        image.src = delay ? thumb.dataset.src + '?retry=' + delay : thumb.dataset.src;
+        try {
+          await image.decode();
+          thumb.prepend(image);
+          return;
+        } catch {
+          // A busy tunnel or a brief disconnect can interrupt an otherwise valid cover.
+        }
+      }
+      thumb.classList.add('unavailable');
+      thumb.setAttribute('aria-label', 'Preview unavailable');
+    }
+
+    function render(items = []) {
+      emptyState.style.display = state.offset === 0 ? 'block' : 'none';
+      for (const item of items) {
         const card = document.createElement('article');
         card.className = 'card';
         card.addEventListener('click', () => openViewer(item));
@@ -2887,15 +2934,11 @@ final class GalleryWebServer: ObservableObject {
           </div>
         `;
 
-        const thumbnail = document.createElement('img');
-        thumbnail.loading = 'lazy';
-        thumbnail.alt = 'thumbnail';
-        thumbnail.addEventListener('error', () => {
-          // A cached preview can exist on disk but still fail to decode in the browser.
-          thumbnail.src = item.thumbnailPath + '?rebuild=1';
-        }, { once: true });
-        thumbnail.src = item.thumbnailPath;
-        card.querySelector('.thumb').prepend(thumbnail);
+        const thumb = card.querySelector('.thumb');
+        thumb.dataset.src = item.thumbnailPath;
+        thumb.dataset.kind = item.type;
+        thumb.dataset.icon = item.type === 'video' ? '▶' : '▧';
+        coverObserver.observe(thumb);
         grid.appendChild(card);
       }
 

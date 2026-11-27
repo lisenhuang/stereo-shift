@@ -1200,7 +1200,7 @@ private struct WebShareQRCodeSheet: View {
     }
 }
 
-/// Shows one eye of the SBS thumbnail. Photos fit inside the grid cell and videos fill it.
+/// Square cover cropped from the left eye of the SBS item.
 private struct GalleryThumbnailView: View {
     let item: GalleryItem
     @State private var thumbnail: UIImage?
@@ -1216,7 +1216,7 @@ private struct GalleryThumbnailView: View {
             if let thumbnail {
                 Image(uiImage: thumbnail)
                     .resizable()
-                    .aspectRatio(contentMode: item.type == .image ? .fit : .fill)
+                    .scaledToFill()
             } else {
                 Rectangle()
                     .fill(Color.secondary.opacity(0.15))
@@ -1245,65 +1245,13 @@ private struct GalleryThumbnailView: View {
 
         let item = item
         let loaded = await Task.detached(priority: .utility) {
-            Self.makeLeftEyeThumbnail(for: item)
+            AppGalleryLibrary.leftEyeThumbnail(for: item).map(UIImage.init(cgImage:))
         }.value
 
         guard let loaded else { return }
         Self.cache.setObject(loaded, forKey: cacheKey, cost: Self.pixelCost(for: loaded))
         guard !Task.isCancelled else { return }
         thumbnail = loaded
-    }
-
-    nonisolated private static func makeLeftEyeThumbnail(for item: GalleryItem) -> UIImage? {
-        var source = item.thumbnailURL.flatMap(decodeImage(at:))
-        if source.map({ AppGalleryLibrary.isLegacyThumbnail(pixelWidth: $0.width, pixelHeight: $0.height) }) ?? true {
-            // Missing, or written by an older version at a size too small to crop — rebuild it once.
-            if let upgradedURL = AppGalleryLibrary.regenerateThumbnail(for: item),
-               let upgraded = decodeImage(at: upgradedURL) {
-                source = upgraded
-            }
-        }
-
-        guard let source else { return nil }
-        return leftEye(of: source, cropToSquare: item.type == .video).map(UIImage.init(cgImage:))
-    }
-
-    nonisolated private static func decodeImage(at url: URL) -> CGImage? {
-        let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let imageSource = CGImageSourceCreateWithURL(url as CFURL, sourceOptions) else {
-            return nil
-        }
-        let decodeOptions = [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
-        return CGImageSourceCreateImageAtIndex(imageSource, 0, decodeOptions)
-    }
-
-    /// Copies the visible eye into its own bitmap so the cache does not retain the whole SBS thumbnail.
-    nonisolated private static func leftEye(of image: CGImage, cropToSquare: Bool) -> CGImage? {
-        let eyeWidth = max(image.width / 2, 1)
-        let side = min(eyeWidth, image.height)
-        let width = cropToSquare ? side : eyeWidth
-        let height = cropToSquare ? side : image.height
-        let cropRect = CGRect(
-            x: (eyeWidth - width) / 2,
-            y: (image.height - height) / 2,
-            width: width,
-            height: height
-        )
-        guard let cropped = image.cropping(to: cropRect) else { return nil }
-
-        guard let context = CGContext(
-            data: nil,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: 0,
-            space: CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-        ) else {
-            return cropped
-        }
-        context.draw(cropped, in: CGRect(x: 0, y: 0, width: width, height: height))
-        return context.makeImage() ?? cropped
     }
 
     private static func pixelCost(for image: UIImage) -> Int {

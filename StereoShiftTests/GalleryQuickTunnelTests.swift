@@ -83,9 +83,11 @@ final class GalleryQuickTunnelTests: XCTestCase {
         let directory = try AppGalleryLibrary.galleryDirectory()
         let photoURL = directory.appendingPathComponent("photo-\(UUID()).jpg")
         let videoURL = directory.appendingPathComponent("video-\(UUID()).mp4")
+        // A single screenful can exceed the public connector's eight request slots.
+        let extraPhotos = (0..<12).map { _ in directory.appendingPathComponent("photo-\(UUID()).jpg") }
         defer {
             server.stop()
-            for file in [photoURL, videoURL] {
+            for file in [photoURL, videoURL] + extraPhotos {
                 try? FileManager.default.removeItem(at: file)
                 if let thumb = AppGalleryLibrary.existingThumbnailURL(for: file) { try? FileManager.default.removeItem(at: thumb) }
             }
@@ -93,10 +95,12 @@ final class GalleryQuickTunnelTests: XCTestCase {
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
         let jpeg = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 80), format: format).jpegData(withCompressionQuality: 0.8) { ctx in
-            UIColor.systemTeal.setFill()
+            UIColor.blue.setFill()
             ctx.fill(CGRect(x: 0, y: 0, width: 48, height: 80))
+            UIColor.red.setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 24, height: 80))
         }
-        try jpeg.write(to: photoURL)
+        for file in [photoURL] + extraPhotos { try jpeg.write(to: file) }
         let thumbnailURL = try AppGalleryLibrary.thumbnailURL(forMediaFilename: photoURL.lastPathComponent)
         try jpeg.prefix(12).write(to: thumbnailURL)
         try FileManager.default.copyItem(at: movie, to: videoURL)
@@ -159,26 +163,51 @@ final class GalleryQuickTunnelTests: XCTestCase {
         let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first)
         window.addSubview(web)
         defer { web.removeFromSuperview() }
-        web.load(URLRequest(url: viewer))
-        try await waitUntil { (try? await web.evaluateJavaScript("!!document.querySelector('#pin')") as? Bool) == true }
-        _ = try await web.callAsyncJavaScript("document.querySelector('#pin').value = pin; document.querySelector('form').requestSubmit()",
-                                              arguments: ["pin": server.accessPIN], in: nil, contentWorld: .page)
-        try await waitUntil {
-            if !web.isLoading, web.url?.path == "/session-auth",
-               let message = try? await web.evaluateJavaScript("document.body.innerText") as? String {
-                throw NSError(domain: "WebShareBrowser", code: 1, userInfo: [NSLocalizedDescriptionKey: String(message.prefix(150))])
+        for base in [local, viewer] {
+            // Each route must repair its own deliberately damaged starting preview.
+            try jpeg.prefix(12).write(to: thumbnailURL, options: .atomic)
+            web.load(URLRequest(url: base))
+            try await waitUntil { (try? await web.evaluateJavaScript("!!document.querySelector('#pin')") as? Bool) == true }
+            _ = try await web.callAsyncJavaScript("document.querySelector('#pin').value = pin; document.querySelector('form').requestSubmit()",
+                                                  arguments: ["pin": server.accessPIN], in: nil, contentWorld: .page)
+            try await waitUntil {
+                if !web.isLoading, web.url?.path == "/session-auth",
+                   let message = try? await web.evaluateJavaScript("document.body.innerText") as? String {
+                    throw NSError(domain: "WebShareBrowser", code: 1, userInfo: [NSLocalizedDescriptionKey: String(message.prefix(150))])
+                }
+                return (try? await web.evaluateJavaScript("document.querySelectorAll('#grid .card').length") as? Int) == list.count
             }
-            return (try? await web.evaluateJavaScript("document.querySelectorAll('#grid .card').length") as? Int) == list.count
+            try await waitUntil {
+                let verified = try await web.callAsyncJavaScript("""
+                    const cards = [...document.querySelectorAll('#grid .thumb')];
+                    const pending = cards.find(card => !card.querySelector('img')?.naturalWidth);
+                    if (pending) {
+                      if (pending.classList.contains('unavailable')) throw new Error('Cover unavailable: ' + pending.dataset.src);
+                      pending.scrollIntoView({ block: 'center' });
+                      return false;
+                    }
+                    const canvas = document.createElement('canvas');
+                    canvas.width = canvas.height = 1;
+                    const ctx = canvas.getContext('2d');
+                    return cards.every(card => {
+                      const img = card.querySelector('img');
+                      if (card.dataset.kind === 'video') {
+                        if (img.naturalWidth !== img.naturalHeight) throw new Error('Expected a square video cover');
+                        return true;
+                      }
+                      // Sampling the right edge distinguishes the left eye from a resized stereo pair.
+                      ctx.drawImage(img, img.naturalWidth - 3, 12, 1, 1, 0, 0, 1, 1);
+                      const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+                      if (img.naturalWidth !== 24 || img.naturalHeight !== 24 || r < 200 || b > 50) {
+                        throw new Error('Unexpected photo cover ' + [img.naturalWidth, img.naturalHeight, r, g, b].join(', '));
+                      }
+                      return true;
+                    });
+                    """, arguments: [:], in: nil, contentWorld: .page)
+                return verified as? Bool == true
+            }
+            XCTAssertNotNil(UIImage(contentsOfFile: thumbnailURL.path))
         }
-        try await waitUntil {
-            let decoded = try await web.callAsyncJavaScript("""
-                const card = [...document.querySelectorAll('#grid .card')].find(card => card.querySelector('.name').textContent === photoID);
-                const thumbnail = card?.querySelector('img');
-                return thumbnail?.complete && thumbnail.naturalWidth === 48 && thumbnail.naturalHeight === 80;
-                """, arguments: ["photoID": photoURL.lastPathComponent], in: nil, contentWorld: .page)
-            return decoded as? Bool == true
-        }
-        XCTAssertNotNil(UIImage(contentsOfFile: thumbnailURL.path))
         let played = try await web.callAsyncJavaScript("""
             const cards = [...document.querySelectorAll('#grid .card')];
             const open = id => cards.find(card => card.querySelector('.name').textContent === id).click();
@@ -197,13 +226,15 @@ final class GalleryQuickTunnelTests: XCTestCase {
               const timer = setTimeout(() => reject(new Error('Playback timed out: ' +
                 [video.readyState, video.networkState, video.currentTime, video.duration, video.paused, ...events].join(' '))), 30000);
               let sought = false;
+              let playedAfterSeek = false;
               video.onerror = () => reject(new Error('Media error ' + video.error.code));
               video.addEventListener('playing', () => { video.currentTime = 5; }, {once: true});
               video.onseeked = () => { sought = true; };
               video.ontimeupdate = () => {
-                if (sought && video.currentTime > 5.2 && !video.paused) {
+                if (sought && video.currentTime > 5.2) playedAfterSeek = true;
+                if (playedAfterSeek && video.currentTime > 0 && video.currentTime < 2 && !video.paused) {
                   clearTimeout(timer); video.pause();
-                  resolve(photo.naturalHeight === 80 && video.videoWidth === 160);
+                  resolve(photo.naturalWidth === 48 && photo.naturalHeight === 80 && video.videoWidth === 160);
                 }
               };
               video.play().catch(reject);

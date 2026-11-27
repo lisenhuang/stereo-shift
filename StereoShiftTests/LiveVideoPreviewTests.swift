@@ -39,9 +39,12 @@ final class LiveVideoPreviewTests: XCTestCase {
         XCTAssertEqual(preview.position, 11.5, accuracy: 0.01)
 
         preview.togglePlayback()
-        try await waitFor(preview) { !preview.isPlaying && preview.position > 13.9 }
-        preview.togglePlayback()
-        try await waitFor(preview) { preview.isPlaying && preview.position < 2 }
+        try await waitFor(preview) { preview.isPlaying && preview.position > 0.1 && preview.position < 2 }
+        preview.pause()
+        let loopPosition = preview.position
+        try await Task.sleep(for: .milliseconds(350))
+        XCTAssertEqual(preview.position, loopPosition)
+        XCTAssertFalse(preview.isMuted)
         task.cancel()
         await task.value
         XCTAssertFalse(preview.isPlaying)
@@ -63,6 +66,37 @@ final class LiveVideoPreviewTests: XCTestCase {
         XCTAssertEqual(first.width, 256)
         XCTAssertEqual(first.height, 96)
         try await waitFor(preview) { preview.position > 0 && preview.image !== first }
+    }
+
+    @MainActor
+    func testInlineAndFullscreenPlayerLoopsAndStopsOnDismissal() async throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "web-share-seek", withExtension: "mp4"))
+        let playback = LoopingVideoPlayback()
+        defer { playback.stopAndReset() }
+        playback.prepare(url)
+        let player = playback.player
+        player.isMuted = true
+        player.play()
+        let deadline = ContinuousClock.now.advanced(by: .seconds(30))
+        while player.currentTime().seconds < 0.1 || player.currentItem == nil {
+            guard ContinuousClock.now < deadline else { throw TestError.timeout }
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        let first = try XCTUnwrap(player.currentItem)
+        let duration = try await first.asset.load(.duration)
+        await player.seek(to: CMTime(seconds: duration.seconds - 0.5, preferredTimescale: 600),
+                          toleranceBefore: .zero, toleranceAfter: .zero)
+        while player.currentItem === first || player.currentTime().seconds < 0.1 {
+            guard ContinuousClock.now < deadline else { throw TestError.timeout }
+            try await Task.sleep(for: .milliseconds(40))
+        }
+        XCTAssertGreaterThan(player.rate, 0)
+        player.pause()
+        let pausedTime = player.currentTime().seconds
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(player.currentTime().seconds, pausedTime, accuracy: 0.05)
+        playback.stopAndReset()
+        XCTAssertNil(player.currentItem)
     }
 
     func testRegularExportStillProducesStereoFramesAndAudio() async throws {

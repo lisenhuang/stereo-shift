@@ -4,19 +4,22 @@ import SwiftUI
 struct VideoSubscriptionPaywallView: View {
     @ObservedObject var subscriptionManager: SubscriptionManager
     @Environment(\.dismiss) private var dismiss
+    @State private var purchasingProductID: String?
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 20) {
 #if DEBUG
                     debugAccessSection
 #endif
-                    Text("Unlock StereoShift")
-                        .font(.title2.bold())
-                    Text("Unlock full-length video exports and save and share your photos and videos.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Unlock StereoShift")
+                            .font(.largeTitle.bold())
+                        Text("Unlock full-length video exports and save and share your photos and videos.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
 
                     if subscriptionManager.isSubscribed {
                         Label("Subscription Active", systemImage: "checkmark.seal.fill")
@@ -31,9 +34,12 @@ struct VideoSubscriptionPaywallView: View {
 
                     legalLinksSection
                 }
-                .padding(16)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 16)
             }
+            .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle("Upgrade")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Close") {
@@ -96,7 +102,8 @@ struct VideoSubscriptionPaywallView: View {
     private func purchaseSection(title: LocalizedStringKey, productID: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title)
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
 
             if subscriptionManager.isLoadingProducts {
                 ProgressView("Loading plans…")
@@ -123,56 +130,86 @@ struct VideoSubscriptionPaywallView: View {
     }
 
     private func purchaseButton(for product: Product) -> some View {
-        Button {
+        let isWeekly = product.id == SubscriptionManager.weeklyVideoProductID
+        let actionTitle: LocalizedStringKey = isWeekly ? "Subscribe Weekly" : "Buy Once"
+
+        return Button {
+            guard purchasingProductID == nil else { return }
+            purchasingProductID = product.id
             Task {
+                defer { purchasingProductID = nil }
                 await subscriptionManager.purchase(product)
             }
         } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(product.displayName)
-                        .font(.headline)
+                        .font(.title3.weight(.semibold))
                     Text(product.description)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    if product.id == SubscriptionManager.weeklyVideoProductID {
+                    if isWeekly {
                         Text("Billed weekly. Renews automatically until canceled.")
-                            .font(.caption)
+                            .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
-                .multilineTextAlignment(.leading)
 
-                Spacer()
-
-                Text(product.displayPrice)
-                    .font(.headline)
-                    .fixedSize(horizontal: true, vertical: false)
+                HStack(spacing: 10) {
+                    Text(actionTitle)
+                    Spacer(minLength: 4)
+                    if purchasingProductID == product.id {
+                        ProgressView().tint(.white)
+                    }
+                    Text(product.displayPrice)
+                }
+                .font(.headline)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(minHeight: 48)
+                .background(Color(red: 0.15, green: 0.28, blue: 0.72), in: RoundedRectangle(cornerRadius: 12))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .multilineTextAlignment(.leading)
             .padding(14)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+            .contentShape(RoundedRectangle(cornerRadius: 18))
         }
-        .buttonStyle(.plain)
-        .disabled(subscriptionManager.isPurchasing)
+        .buttonStyle(PurchaseCardStyle())
+        .accessibilityIdentifier("purchase.\(product.id)")
+        .disabled(subscriptionManager.isPurchasing || purchasingProductID != nil)
     }
 
     private var legalLinksSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Button("Restore Purchases") {
-                Task {
-                    await subscriptionManager.restorePurchases()
-                }
+        VStack(spacing: 10) {
+            Button {
+                Task { await subscriptionManager.restorePurchases() }
+            } label: {
+                Label("Restore Purchases", systemImage: "arrow.clockwise")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 6)
             }
-            .disabled(subscriptionManager.isPurchasing)
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .disabled(subscriptionManager.isPurchasing || purchasingProductID != nil)
 
-            Link("Privacy Policy", destination: AppLegalLinks.privacyPolicy)
-            Link("Terms of Use (EULA)", destination: AppLegalLinks.termsOfUse)
+            HStack(spacing: 20) {
+                Link("Privacy Policy", destination: AppLegalLinks.privacyPolicy)
+                Link("Terms of Use (EULA)", destination: AppLegalLinks.termsOfUse)
+            }
+            .font(.footnote)
+            .multilineTextAlignment(.center)
         }
-        .font(.footnote)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
     }
+}
 
+private struct PurchaseCardStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(isEnabled ? (configuration.isPressed ? 0.75 : 1) : 0.6)
+    }
 }
