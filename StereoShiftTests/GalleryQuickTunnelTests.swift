@@ -20,7 +20,7 @@ final class GalleryQuickTunnelTests: XCTestCase {
         let size = GalleryResponseBody.chunkSize
         let data = Data((0..<(size + 99)).map { UInt8($0 % 251) })
         try data.write(to: file)
-        let cursor = try GalleryResponseBody(fileURL: file, offset: 8, length: Int64(size + 12))
+        let cursor = try GalleryResponseBody(file: FileHandle(forReadingFrom: file), offset: 8, length: Int64(size + 12))
         XCTAssertEqual(try cursor.read(), data.subdata(in: 8..<(size + 8)))
         XCTAssertEqual(try cursor.read(), data.subdata(in: (size + 8)..<(size + 20)))
         XCTAssertEqual(cursor.remaining, 0)
@@ -97,6 +97,8 @@ final class GalleryQuickTunnelTests: XCTestCase {
             ctx.fill(CGRect(x: 0, y: 0, width: 48, height: 80))
         }
         try jpeg.write(to: photoURL)
+        let thumbnailURL = try AppGalleryLibrary.thumbnailURL(forMediaFilename: photoURL.lastPathComponent)
+        try jpeg.prefix(12).write(to: thumbnailURL)
         try FileManager.default.copyItem(at: movie, to: videoURL)
         server.start()
         try await waitUntil(seconds: 160) { server.publicLink.url != nil && server.hostAddress != nil }
@@ -168,6 +170,15 @@ final class GalleryQuickTunnelTests: XCTestCase {
             }
             return (try? await web.evaluateJavaScript("document.querySelectorAll('#grid .card').length") as? Int) == list.count
         }
+        try await waitUntil {
+            let decoded = try await web.callAsyncJavaScript("""
+                const card = [...document.querySelectorAll('#grid .card')].find(card => card.querySelector('.name').textContent === photoID);
+                const thumbnail = card?.querySelector('img');
+                return thumbnail?.complete && thumbnail.naturalWidth === 48 && thumbnail.naturalHeight === 80;
+                """, arguments: ["photoID": photoURL.lastPathComponent], in: nil, contentWorld: .page)
+            return decoded as? Bool == true
+        }
+        XCTAssertNotNil(UIImage(contentsOfFile: thumbnailURL.path))
         let played = try await web.callAsyncJavaScript("""
             const cards = [...document.querySelectorAll('#grid .card')];
             const open = id => cards.find(card => card.querySelector('.name').textContent === id).click();

@@ -156,6 +156,8 @@ func (g *gallery) ProxyHTTP(w connection.ResponseWriter, tr *tracing.TracedHTTPR
 				}
 			}
 			target.RawQuery = params.Encode()
+		} else if strings.HasPrefix(p, "/thumb/") && r.URL.Query().Get("rebuild") == "1" {
+			target.RawQuery = "rebuild=1"
 		}
 	}
 	req, err := http.NewRequestWithContext(r.Context(), method, target.String(), nil)

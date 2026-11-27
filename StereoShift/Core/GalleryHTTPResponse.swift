@@ -15,8 +15,7 @@ final class GalleryResponseBody {
         remaining = length
     }
 
-    init(fileURL: URL, offset: Int64, length: Int64) throws {
-        let file = try FileHandle(forReadingFrom: fileURL)
+    init(file: FileHandle, offset: Int64, length: Int64) throws {
         try file.seek(toOffset: UInt64(offset))
         self.file = file
         data = nil

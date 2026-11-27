@@ -37,6 +37,7 @@ func TestGalleryProxy(t *testing.T) {
 		{"head", "HEAD", "/media/test.mp4", "", "", "/media/test.mp4", 206},
 		{"page", "GET", "/?code=1234", "", "", "/", 206},
 		{"pagination", "GET", "/api/items?limit=4&code=0000", "", "", "/api/items?limit=4", 206},
+		{"rebuild thumbnail", "GET", "/thumb/photo.jpg?rebuild=1&code=0000", "", "", "/thumb/photo.jpg?rebuild=1", 206},
 		{"form", "POST", "/session-auth?pin=2468", "https://four-test-words-here.trycloudflare.com", "pin=1234", "/session-auth?pin=1234", 206},
 		{"foreign origin", "POST", "/session-auth", "https://example.org", "pin=1234", "", 403},
 		{"get form", "GET", "/session-auth?pin=1234", "", "", "", 405},

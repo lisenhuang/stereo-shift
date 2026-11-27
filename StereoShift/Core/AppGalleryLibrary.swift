@@ -318,7 +318,7 @@ final class AppGalleryLibrary: ObservableObject {
         return try? generateThumbnail(for: item.url, type: item.type)
     }
 
-    /// Rewrites the item's thumbnail at the current size (used to upgrade legacy thumbnails).
+    /// Rebuilds the cached preview from the original media.
     static func regenerateThumbnail(for item: GalleryItem) -> URL? {
         try? generateThumbnail(for: item.url, type: item.type)
     }
@@ -406,35 +406,30 @@ final class AppGalleryLibrary: ObservableObject {
     }
 
     private static func writeJPEG(image: CGImage, to destinationURL: URL) throws {
-        // Write beside the destination and swap it in, so a thumbnail being upgraded is never
-        // missing or half-written while the grid or Web Share reads it.
-        let temporaryURL = destinationURL.appendingPathExtension("tmp")
-        try? FileManager.default.removeItem(at: temporaryURL)
-
-        guard let imageDestination = CGImageDestinationCreateWithURL(
-            temporaryURL as CFURL,
-            UTType.jpeg.identifier as CFString,
-            1,
-            nil
-        ) else {
+        // Browsers need a conventional JPEG even when ImageIO decodes a higher-precision source.
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: image.width, height: image.height,
+                                      bitsPerComponent: 8, bytesPerRow: 0, space: colorSpace,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else {
+            throw StereoPipelineError.graphicsContextCreationFailed
+        }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        let data = NSMutableData()
+        guard let preview = context.makeImage(),
+              let imageDestination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else {
             throw StereoPipelineError.temporaryFileCreationFailed
         }
 
         let options: [CFString: Any] = [
             kCGImageDestinationLossyCompressionQuality: 0.82
         ]
-        CGImageDestinationAddImage(imageDestination, image, options as CFDictionary)
+        CGImageDestinationAddImage(imageDestination, preview, options as CFDictionary)
 
         guard CGImageDestinationFinalize(imageDestination) else {
-            try? FileManager.default.removeItem(at: temporaryURL)
             throw StereoPipelineError.temporaryFileCreationFailed
         }
-
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: temporaryURL)
-        } else {
-            try FileManager.default.moveItem(at: temporaryURL, to: destinationURL)
-        }
+        // Each writer gets its own temporary file when the native and web galleries rebuild together.
+        try (data as Data).write(to: destinationURL, options: .atomic)
     }
 
     private static func removeThumbnailIfExists(for mediaURL: URL) {

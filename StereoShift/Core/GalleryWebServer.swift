@@ -395,9 +395,14 @@ final class GalleryWebServer: ObservableObject {
             let isThumb = request.path.hasPrefix("/thumb/")
             guard isThumb || request.path.hasPrefix("/media/"),
                   let item = item(forPath: request.path, prefix: isThumb ? "/thumb/" : "/media/") else { return GalleryHTTPResponse(404) }
-            let url = isThumb ? (item.thumbnailURL ?? AppGalleryLibrary.ensureThumbnailExists(for: item)) : item.url
-            guard let url else { return GalleryHTTPResponse(404) }
-            return fileResponse(url, request: request)
+            if isThumb {
+                let thumbnail = request.queryItems["rebuild"] == "1"
+                    ? AppGalleryLibrary.regenerateThumbnail(for: item)
+                    : AppGalleryLibrary.ensureThumbnailExists(for: item)
+                guard let thumbnail else { return GalleryHTTPResponse(404) }
+                return fileResponse(thumbnail, request: request)
+            }
+            return fileResponse(item.url, request: request)
         }
     }
 
@@ -470,7 +475,6 @@ final class GalleryWebServer: ObservableObject {
             let formatter = ISO8601DateFormatter()
 
             for item in slice {
-                let thumbnailURL = item.thumbnailURL ?? AppGalleryLibrary.ensureThumbnailExists(for: item)
                 let encodedID = Self.encodedPathComponent(item.id)
 
                 payloadItems.append(
@@ -479,7 +483,7 @@ final class GalleryWebServer: ObservableObject {
                         type: item.type.rawValue,
                         createdAt: formatter.string(from: item.createdAt),
                         mediaPath: "/media/\(encodedID)",
-                        thumbnailPath: thumbnailURL == nil ? nil : "/thumb/\(encodedID)"
+                        thumbnailPath: "/thumb/\(encodedID)"
                     )
                 )
             }
@@ -512,13 +516,15 @@ final class GalleryWebServer: ObservableObject {
 
     private func fileResponse(_ url: URL, request: GalleryHTTPRequest) -> GalleryHTTPResponse {
         do {
-            guard let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize else { throw CocoaError(.fileReadUnknown) }
+            // The gallery may replace a thumbnail. Measure and stream the same open file.
+            let file = try FileHandle(forReadingFrom: url)
+            let size = Int64(try file.seekToEnd())
             var headers = ["Content-Type": Self.contentType(for: url) ?? "application/octet-stream", "Accept-Ranges": "bytes"]
             var offset: Int64 = 0
-            var length = Int64(size)
+            var length = size
             var status = 200
             if let header = request.headers["range"] {
-                guard let range = Self.byteRange(from: header, fileSize: Int64(size)) else {
+                guard let range = Self.byteRange(from: header, fileSize: size) else {
                     return GalleryHTTPResponse(416, headers: ["Content-Range": "bytes */\(size)", "Accept-Ranges": "bytes"])
                 }
                 offset = range.lowerBound
@@ -526,7 +532,7 @@ final class GalleryWebServer: ObservableObject {
                 status = 206
                 headers["Content-Range"] = "bytes \(offset)-\(range.upperBound)/\(size)"
             }
-            let body = request.method == "HEAD" ? GalleryResponseBody(Data()) : try GalleryResponseBody(fileURL: url, offset: offset, length: length)
+            let body = request.method == "HEAD" ? GalleryResponseBody(Data()) : try GalleryResponseBody(file: file, offset: offset, length: length)
             return GalleryHTTPResponse(status, headers, body: body, length: length)
         } catch {
             return GalleryHTTPResponse(500, "Failed to read file.")
@@ -2869,12 +2875,10 @@ final class GalleryWebServer: ObservableObject {
         card.className = 'card';
         card.addEventListener('click', () => openViewer(item));
 
-        const thumbnailURL = item.thumbnailPath || '';
         const mediaType = item.type === 'video' ? 'Video' : 'Photo';
 
         card.innerHTML = `
           <div class="thumb">
-            ${thumbnailURL ? `<img src="${escapeAttribute(thumbnailURL)}" loading="lazy" alt="thumbnail" />` : ''}
             <span class="badge">${mediaType}</span>
           </div>
           <div class="meta">
@@ -2883,6 +2887,15 @@ final class GalleryWebServer: ObservableObject {
           </div>
         `;
 
+        const thumbnail = document.createElement('img');
+        thumbnail.loading = 'lazy';
+        thumbnail.alt = 'thumbnail';
+        thumbnail.addEventListener('error', () => {
+          // A cached preview can exist on disk but still fail to decode in the browser.
+          thumbnail.src = item.thumbnailPath + '?rebuild=1';
+        }, { once: true });
+        thumbnail.src = item.thumbnailPath;
+        card.querySelector('.thumb').prepend(thumbnail);
         grid.appendChild(card);
       }
 
@@ -2985,10 +2998,6 @@ final class GalleryWebServer: ObservableObject {
         .replaceAll("'", '&#39;');
     }
 
-    function escapeAttribute(value) {
-      return escapeHTML(value).replaceAll('`', '&#96;');
-    }
-
     resetAndLoad();
   </script>
 </body>
@@ -3068,5 +3077,5 @@ private struct GalleryPayloadItem: Encodable {
     let type: String
     let createdAt: String
     let mediaPath: String
-    let thumbnailPath: String?
+    let thumbnailPath: String
 }
