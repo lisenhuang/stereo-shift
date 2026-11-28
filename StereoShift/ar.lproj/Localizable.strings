@@ -310,3 +310,25 @@
 "Share Live 3D Video" = "مشاركة فيديو ثلاثي الأبعاد مباشرةً";
 "Stop Live Video" = "إيقاف مشاركة الفيديو المباشر";
 "Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "افتح الرابط في نظارة الواقع الافتراضي واختر Watch Live 3D ثم Enter VR. أبقِ StereoShift مفتوحًا أثناء المشاهدة.";
+
+"Sharing selected iPhone photos and videos" = "تتم مشاركة الصور والفيديوهات المحددة من iPhone";
+"Sharing your limited Photos library" = "تتم مشاركة مكتبة الصور ذات الوصول المحدود";
+"Sharing your Photos library" = "تتم مشاركة مكتبة الصور";
+"Share from" = "مصدر المشاركة";
+"StereoShift Gallery" = "معرض StereoShift";
+"iPhone Photos" = "صور iPhone";
+"Photos to share" = "عناصر المشاركة";
+"Choose Photos & Videos" = "اختيار الصور والفيديوهات";
+"Browse My Library on Quest" = "تصفح مكتبتي على Quest";
+"Selected items: %lld" = "العناصر المحددة: %lld";
+"Anyone with the link and PIN can browse the photos and videos you allow in iOS for this session." = "يمكن لأي شخص لديه الرابط ورمز PIN تصفح الصور والفيديوهات التي تسمح بها في iOS خلال هذه الجلسة.";
+"With full access, anyone with the link and PIN can browse your photos and videos during this session. Hidden items are excluded." = "عند منح وصول كامل، يمكن لأي شخص لديه الرابط ورمز PIN تصفح صورك وفيديوهاتك خلال هذه الجلسة. لا تشمل المشاركة العناصر المخفية.";
+"Anyone with the link and PIN can view only the items you choose for this session." = "يمكن لأي شخص لديه الرابط ورمز PIN عرض العناصر التي تختارها لهذه الجلسة فقط.";
+"Open a photo or video on Quest to convert it to 3D on your iPhone." = "افتح صورة أو فيديو على Quest لتحويله إلى عرض ثلاثي الأبعاد على iPhone.";
+"Open a photo on Quest to view it in 3D. Live 3D video requires paid access." = "افتح صورة على Quest لعرضها بأبعاد ثلاثية. يتطلب الفيديو ثلاثي الأبعاد المباشر وصولاً مدفوعاً.";
+"Anyone with the link and PIN can view the converted items in your StereoShift gallery." = "يمكن لأي شخص لديه الرابط ورمز PIN عرض العناصر المحوّلة في معرض StereoShift.";
+"Web Share" = "المشاركة عبر الويب";
+"Allow Library Access" = "السماح بالوصول إلى المكتبة";
+"Limited access" = "وصول محدود";
+"Full library access" = "وصول كامل إلى المكتبة";
+"Library access is unavailable. You can still choose individual items." = "الوصول إلى المكتبة غير متاح. لا يزال بإمكانك اختيار عناصر منفردة.";

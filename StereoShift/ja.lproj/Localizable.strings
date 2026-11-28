@@ -310,3 +310,25 @@
 "Share Live 3D Video" = "リアルタイム3D動画を共有";
 "Stop Live Video" = "リアルタイム動画の共有を停止";
 "Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "ヘッドセットでリンクを開き、「Watch Live 3D」、「Enter VR」の順に選択してください。視聴中は StereoShift を開いたままにしてください。";
+
+"Sharing selected iPhone photos and videos" = "選択したiPhoneの写真とビデオを共有中";
+"Sharing your limited Photos library" = "アクセスを許可した写真とビデオを共有中";
+"Sharing your Photos library" = "写真ライブラリを共有中";
+"Share from" = "共有元";
+"StereoShift Gallery" = "StereoShiftギャラリー";
+"iPhone Photos" = "iPhoneの写真";
+"Photos to share" = "共有する項目";
+"Choose Photos & Videos" = "写真とビデオを選択";
+"Browse My Library on Quest" = "Questでライブラリを閲覧";
+"Selected items: %lld" = "選択した項目：%lld件";
+"Anyone with the link and PIN can browse the photos and videos you allow in iOS for this session." = "このセッション中は、リンクとPINを知っている人が、iOSでアクセスを許可した写真とビデオを閲覧できます。";
+"With full access, anyone with the link and PIN can browse your photos and videos during this session. Hidden items are excluded." = "フルアクセスを許可すると、このセッション中はリンクとPINを知っている人が写真とビデオを閲覧できます。非表示の項目は除きます。";
+"Anyone with the link and PIN can view only the items you choose for this session." = "リンクとPINを知っている人は、このセッション用に選択した項目だけを閲覧できます。";
+"Open a photo or video on Quest to convert it to 3D on your iPhone." = "Questで写真やビデオを開くと、iPhoneで3Dに変換されます。";
+"Open a photo on Quest to view it in 3D. Live 3D video requires paid access." = "Questで写真を開くと3Dで表示されます。リアルタイム3Dビデオの視聴には有料アクセスが必要です。";
+"Anyone with the link and PIN can view the converted items in your StereoShift gallery." = "リンクとPINを知っている人が、StereoShiftギャラリー内の変換済みの項目を閲覧できます。";
+"Web Share" = "Web共有";
+"Allow Library Access" = "ライブラリへのアクセスを許可";
+"Limited access" = "制限付きアクセス";
+"Full library access" = "ライブラリへのフルアクセス";
+"Library access is unavailable. You can still choose individual items." = "ライブラリにアクセスできません。項目を個別に選択できます。";

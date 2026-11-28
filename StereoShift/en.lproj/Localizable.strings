@@ -310,3 +310,25 @@
 "Share Live 3D Video" = "Share Live 3D Video";
 "Stop Live Video" = "Stop Live Video";
 "Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching.";
+
+"Sharing selected iPhone photos and videos" = "Sharing selected iPhone photos and videos";
+"Sharing your limited Photos library" = "Sharing your limited Photos library";
+"Sharing your Photos library" = "Sharing your Photos library";
+"Share from" = "Share from";
+"StereoShift Gallery" = "StereoShift Gallery";
+"iPhone Photos" = "iPhone Photos";
+"Photos to share" = "Photos to share";
+"Choose Photos & Videos" = "Choose Photos & Videos";
+"Browse My Library on Quest" = "Browse My Library on Quest";
+"Selected items: %lld" = "Selected items: %lld";
+"Anyone with the link and PIN can browse the photos and videos you allow in iOS for this session." = "Anyone with the link and PIN can browse the photos and videos you allow in iOS for this session.";
+"With full access, anyone with the link and PIN can browse your photos and videos during this session. Hidden items are excluded." = "With full access, anyone with the link and PIN can browse your photos and videos during this session. Hidden items are excluded.";
+"Anyone with the link and PIN can view only the items you choose for this session." = "Anyone with the link and PIN can view only the items you choose for this session.";
+"Open a photo or video on Quest to convert it to 3D on your iPhone." = "Open a photo or video on Quest to convert it to 3D on your iPhone.";
+"Open a photo on Quest to view it in 3D. Live 3D video requires paid access." = "Open a photo on Quest to view it in 3D. Live 3D video requires paid access.";
+"Anyone with the link and PIN can view the converted items in your StereoShift gallery." = "Anyone with the link and PIN can view the converted items in your StereoShift gallery.";
+"Web Share" = "Web Share";
+"Allow Library Access" = "Allow Library Access";
+"Limited access" = "Limited access";
+"Full library access" = "Full library access";
+"Library access is unavailable. You can still choose individual items." = "Library access is unavailable. You can still choose individual items.";

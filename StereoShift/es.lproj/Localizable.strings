@@ -310,3 +310,25 @@
 "Share Live 3D Video" = "Compartir vídeo 3D en directo";
 "Stop Live Video" = "Dejar de compartir el vídeo en directo";
 "Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "Abre el enlace en tus gafas, selecciona Watch Live 3D y luego Enter VR. Mantén StereoShift abierto mientras ves el vídeo.";
+
+"Sharing selected iPhone photos and videos" = "Compartiendo las fotos y vídeos seleccionados del iPhone";
+"Sharing your limited Photos library" = "Compartiendo la fototeca con acceso limitado";
+"Sharing your Photos library" = "Compartiendo tu fototeca";
+"Share from" = "Compartir desde";
+"StereoShift Gallery" = "Galería de StereoShift";
+"iPhone Photos" = "Fotos del iPhone";
+"Photos to share" = "Contenido para compartir";
+"Choose Photos & Videos" = "Elegir fotos y vídeos";
+"Browse My Library on Quest" = "Explorar mi fototeca en Quest";
+"Selected items: %lld" = "Elementos seleccionados: %lld";
+"Anyone with the link and PIN can browse the photos and videos you allow in iOS for this session." = "Quien tenga el enlace y el PIN podrá explorar las fotos y los vídeos que permitas en iOS durante esta sesión.";
+"With full access, anyone with the link and PIN can browse your photos and videos during this session. Hidden items are excluded." = "Con acceso completo, quien tenga el enlace y el PIN podrá explorar tus fotos y vídeos durante esta sesión. Se excluyen los elementos ocultos.";
+"Anyone with the link and PIN can view only the items you choose for this session." = "Quien tenga el enlace y el PIN solo podrá ver los elementos que elijas para esta sesión.";
+"Open a photo or video on Quest to convert it to 3D on your iPhone." = "Abre una foto o un vídeo en Quest para convertirlo en 3D en tu iPhone.";
+"Open a photo on Quest to view it in 3D. Live 3D video requires paid access." = "Abre una foto en Quest para verla en 3D. El vídeo 3D en tiempo real requiere acceso de pago.";
+"Anyone with the link and PIN can view the converted items in your StereoShift gallery." = "Quien tenga el enlace y el PIN podrá ver los elementos convertidos de tu galería de StereoShift.";
+"Web Share" = "Compartir en la web";
+"Allow Library Access" = "Permitir acceso a la fototeca";
+"Limited access" = "Acceso limitado";
+"Full library access" = "Acceso completo a la fototeca";
+"Library access is unavailable. You can still choose individual items." = "No se puede acceder a la fototeca. Puedes seguir eligiendo elementos individuales.";

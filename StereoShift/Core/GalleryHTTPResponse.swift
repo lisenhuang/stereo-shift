@@ -52,6 +52,7 @@ struct PhotoWebRequest {
 struct GalleryHTTPResponse {
     private(set) var photoRequest: PhotoWebRequest?
     private(set) var liveVideo: LiveWebVideo?
+    private(set) var omitContentLength = false
     let status: Int
     var headers: [String: String]
     let body: GalleryResponseBody
@@ -63,6 +64,11 @@ struct GalleryHTTPResponse {
         self.headers["Cache-Control"] = "private, no-store"
         self.body = body
         self.length = length ?? body.length
+    }
+
+    init(photoHeadContentType: String) {
+        self.init(200, headers: ["Content-Type": photoHeadContentType, "Accept-Ranges": "none"])
+        omitContentLength = true
     }
 
     init(photoRequest: PhotoWebRequest) {

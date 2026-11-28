@@ -48,6 +48,11 @@ final class PhotoWebShareTests: XCTestCase {
         let imageURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
         try jpeg.write(to: imageURL)
         defer { try? FileManager.default.removeItem(at: imageURL) }
+        let saved = try await AppGalleryLibrary().saveMedia(at: imageURL, type: .image)
+        defer {
+            try? FileManager.default.removeItem(at: saved.url)
+            if let thumbnail = saved.thumbnailURL { try? FileManager.default.removeItem(at: thumbnail) }
+        }
         let selected = share(.selected([NSItemProvider(contentsOf: imageURL)!, movie]))
         let ready = expectation(description: "Loopback listener")
         var port: UInt16 = 0
@@ -100,7 +105,7 @@ final class PhotoWebShareTests: XCTestCase {
         XCTAssertNotNil(UIImage(data: thumb))
         let (_, unpaid) = try await get(videoPath)
         XCTAssertEqual(unpaid.statusCode, 403)
-        let (_, otherMedia) = try await get("/media/in-app-gallery.jpg")
+        let (_, otherMedia) = try await get("/media/" + saved.id)
         XCTAssertEqual(otherMedia.statusCode, 404)
         let (_, otherStream) = try await get("/live/\(UUID()).mp4")
         XCTAssertEqual(otherStream.statusCode, 404)

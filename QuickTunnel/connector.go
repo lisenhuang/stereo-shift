@@ -290,8 +290,9 @@ func serve(ctx context.Context, port int, key string, ready func(string)) error 
 	defer cancel(nil)
 	stopClose := context.AfterFunc(ctx, func() { edge.Close() })
 	defer stopClose()
+	// Photos may need to retrieve an iCloud asset before the origin can return media headers.
 	g := &gallery{origin: fmt.Sprintf("127.0.0.1:%d", port), key: key, host: t.Host, slots: make(chan struct{}, 8),
-		transport: &http.Transport{DisableCompression: true, DisableKeepAlives: true, ResponseHeaderTimeout: 20 * time.Second}}
+		transport: &http.Transport{DisableCompression: true, DisableKeepAlives: true, ResponseHeaderTimeout: 2 * time.Minute}}
 	defer g.transport.CloseIdleConnections()
 	clientConfig, err := client.NewConfig(connectorVersion, runtime.GOOS+"_"+runtime.GOARCH, staticFeatures{})
 	if err != nil {

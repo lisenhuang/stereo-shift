@@ -310,3 +310,25 @@
 "Share Live 3D Video" = "लाइव 3D वीडियो शेयर करें";
 "Stop Live Video" = "लाइव वीडियो शेयर करना बंद करें";
 "Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "हेडसेट पर लिंक खोलें, Watch Live 3D चुनें और फिर Enter VR चुनें। वीडियो देखते समय StereoShift खुला रखें।";
+
+"Sharing selected iPhone photos and videos" = "iPhone की चुनी हुई फ़ोटो और वीडियो शेयर हो रहे हैं";
+"Sharing your limited Photos library" = "सीमित ऐक्सेस वाली फ़ोटो लाइब्रेरी शेयर हो रही है";
+"Sharing your Photos library" = "आपकी फ़ोटो लाइब्रेरी शेयर हो रही है";
+"Share from" = "शेयर करने का स्रोत";
+"StereoShift Gallery" = "StereoShift गैलरी";
+"iPhone Photos" = "iPhone फ़ोटो";
+"Photos to share" = "शेयर करने के लिए आइटम";
+"Choose Photos & Videos" = "फ़ोटो और वीडियो चुनें";
+"Browse My Library on Quest" = "Quest पर मेरी लाइब्रेरी देखें";
+"Selected items: %lld" = "चुने गए आइटम: %lld";
+"Anyone with the link and PIN can browse the photos and videos you allow in iOS for this session." = "इस सत्र में लिंक और PIN वाला कोई भी व्यक्ति वे फ़ोटो और वीडियो देख सकता है जिनकी अनुमति आपने iOS में दी है।";
+"With full access, anyone with the link and PIN can browse your photos and videos during this session. Hidden items are excluded." = "पूरी अनुमति देने पर लिंक और PIN वाला कोई भी व्यक्ति इस सत्र में आपकी फ़ोटो और वीडियो देख सकता है। छिपे हुए आइटम शामिल नहीं हैं।";
+"Anyone with the link and PIN can view only the items you choose for this session." = "लिंक और PIN वाला कोई भी व्यक्ति सिर्फ़ इस सत्र के लिए चुने गए आइटम देख सकता है।";
+"Open a photo or video on Quest to convert it to 3D on your iPhone." = "अपने iPhone पर 3D में बदलने के लिए Quest पर कोई फ़ोटो या वीडियो खोलें।";
+"Open a photo on Quest to view it in 3D. Live 3D video requires paid access." = "3D में देखने के लिए Quest पर कोई फ़ोटो खोलें। लाइव 3D वीडियो के लिए सशुल्क ऐक्सेस चाहिए।";
+"Anyone with the link and PIN can view the converted items in your StereoShift gallery." = "लिंक और PIN वाला कोई भी व्यक्ति आपकी StereoShift गैलरी में बदले गए आइटम देख सकता है।";
+"Web Share" = "वेब शेयर";
+"Allow Library Access" = "लाइब्रेरी के ऐक्सेस की अनुमति दें";
+"Limited access" = "सीमित ऐक्सेस";
+"Full library access" = "पूरी लाइब्रेरी का ऐक्सेस";
+"Library access is unavailable. You can still choose individual items." = "लाइब्रेरी का ऐक्सेस उपलब्ध नहीं है। आप अब भी अलग-अलग आइटम चुन सकते हैं।";

@@ -310,3 +310,25 @@
 "Share Live 3D Video" = "分享实时 3D 视频";
 "Stop Live Video" = "停止分享实时视频";
 "Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "在头显中打开链接，选择“Watch Live 3D”，然后选择“Enter VR”。观看时请保持 StereoShift 在前台运行。";
+
+"Sharing selected iPhone photos and videos" = "正在分享所选的 iPhone 照片和视频";
+"Sharing your limited Photos library" = "正在分享有限访问的照片图库";
+"Sharing your Photos library" = "正在分享你的照片图库";
+"Share from" = "分享来源";
+"StereoShift Gallery" = "StereoShift 图库";
+"iPhone Photos" = "iPhone 照片";
+"Photos to share" = "要分享的内容";
+"Choose Photos & Videos" = "选择照片和视频";
+"Browse My Library on Quest" = "在 Quest 上浏览我的图库";
+"Selected items: %lld" = "已选择 %lld 项";
+"Anyone with the link and PIN can browse the photos and videos you allow in iOS for this session." = "在本次分享期间，任何拥有链接和 PIN 码的人都可以浏览你在 iOS 中允许访问的照片和视频。";
+"With full access, anyone with the link and PIN can browse your photos and videos during this session. Hidden items are excluded." = "如果授予完全访问权限，任何拥有链接和 PIN 码的人都可以在本次分享期间浏览你的照片和视频。已隐藏的项目除外。";
+"Anyone with the link and PIN can view only the items you choose for this session." = "任何拥有链接和 PIN 码的人都只能查看你为本次分享选择的项目。";
+"Open a photo or video on Quest to convert it to 3D on your iPhone." = "在 Quest 上打开照片或视频，即可由 iPhone 将其转换为 3D。";
+"Open a photo on Quest to view it in 3D. Live 3D video requires paid access." = "在 Quest 上打开照片即可以 3D 观看。实时 3D 视频需要付费解锁。";
+"Anyone with the link and PIN can view the converted items in your StereoShift gallery." = "任何拥有链接和 PIN 码的人都可以查看 StereoShift 图库中已转换的项目。";
+"Web Share" = "网页分享";
+"Allow Library Access" = "允许访问图库";
+"Limited access" = "有限访问";
+"Full library access" = "完全访问图库";
+"Library access is unavailable. You can still choose individual items." = "无法访问图库。你仍可单独选择要分享的项目。";

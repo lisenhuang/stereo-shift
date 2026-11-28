@@ -84,6 +84,7 @@ final class GalleryWebServer: ObservableObject {
     }
 
     deinit {
+        if let photoObserver { PHPhotoLibrary.shared().unregisterChangeObserver(photoObserver) }
         if let memoryWarningObserver {
             NotificationCenter.default.removeObserver(memoryWarningObserver)
         }
@@ -137,6 +138,9 @@ final class GalleryWebServer: ObservableObject {
         queue.sync {
             self.cancelLivePlayback()
             self.cancelPhotoRequests()
+            for connection in connections.values { connection.cancel() }
+            connections.removeAll()
+            tunnelConnections.removeAll()
             self.servingPIN = newPIN
             self.failedAuthAttempts = 0
             self.authorizedSessionTokens.removeAll()
@@ -520,7 +524,7 @@ final class GalleryWebServer: ObservableObject {
                 let thumbnail = parts[1] == "thumb"
                 if !thumbnail && item.isVideo && !photosCanPlayVideo { return GalleryHTTPResponse(403) }
                 if request.method == "HEAD" {
-                    return GalleryHTTPResponse(200, headers: ["Content-Type": !thumbnail && item.isVideo ? "video/mp4" : "image/jpeg"])
+                    return GalleryHTTPResponse(photoHeadContentType: !thumbnail && item.isVideo ? "video/mp4" : "image/jpeg")
                 }
                 return GalleryHTTPResponse(photoRequest: .init(id: id, item: item, thumbnail: thumbnail, request: request))
             }
@@ -559,9 +563,8 @@ final class GalleryWebServer: ObservableObject {
             guard remaining > 0 else {
                 let id = servingID
                 servingID = nil
-            cancelPhotoRequests()
-            photos = nil
-            photosCanPlayVideo = false
+                cancelPhotoRequests()
+                cancelLivePlayback()
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.shareSessionID == id else { return }
                     self.stop()
@@ -701,7 +704,7 @@ final class GalleryWebServer: ObservableObject {
                 guard let self, !Task.isCancelled else { return }
                 self.queue.async {
                     guard self.photoTasks.removeValue(forKey: key) != nil, self.connections[key] != nil,
-                          self.photos === photos, self.isAuthorized(request: selection.request),
+                          self.servingID != nil, self.photos === photos, self.isAuthorized(request: selection.request),
                           photos.item(selection.id) != nil else { connection.cancel(); return }
                     if let video = resolved.liveVideo {
                         guard self.photosCanPlayVideo else {
@@ -719,7 +722,7 @@ final class GalleryWebServer: ObservableObject {
             return
         }
         var headers = response.headers
-        headers["Content-Length"] = String(response.length)
+        if !response.omitContentLength { headers["Content-Length"] = String(response.length) }
         headers["Connection"] = "close"
         let lines = headers.map { "\($0.key): \($0.value)" }.joined(separator: "\r\n")
         let head = "HTTP/1.1 \(response.status) \(HTTPURLResponse.localizedString(forStatusCode: response.status))\r\n\(lines)\r\n\r\n"

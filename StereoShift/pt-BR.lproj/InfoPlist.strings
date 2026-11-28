@@ -1,2 +1,3 @@
 // Camera permission
 "NSCameraUsageDescription" = "O StereoShift usa a câmera para tirar uma foto esquerda e uma direita. Suas fotos ficam no seu dispositivo.";
+"NSPhotoLibraryUsageDescription" = "Ao compartilhar sua fototeca, o StereoShift mostra as fotos e os vídeos permitidos a quem tiver o link de compartilhamento pela web e o PIN.";

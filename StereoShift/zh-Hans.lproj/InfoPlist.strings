@@ -1,2 +1,3 @@
 // Camera permission
 "NSCameraUsageDescription" = "StereoShift 使用相机拍摄左侧和右侧照片。照片只保存在你的设备上。";
+"NSPhotoLibraryUsageDescription" = "选择分享图库后，StereoShift 会向持有网页分享链接和 PIN 码的人展示你允许访问的照片和视频。";

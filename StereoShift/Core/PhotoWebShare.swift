@@ -99,7 +99,7 @@ final class PhotoWebShare {
             }
             let token = id.uuidString
             return GalleryPayloadItem(id: "\(video ? "Video" : "Photo") \(index + 1)",
-                type: video ? "video" : "photo", createdAt: date, mediaPath: "/media/\(token)",
+                type: video ? GalleryMediaType.video.rawValue : GalleryMediaType.image.rawValue, createdAt: date, mediaPath: "/media/\(token)",
                 thumbnailPath: "/thumb/\(token)", live: video, locked: video && !canPlayVideo)
         }
         return (items, end < count)
@@ -232,7 +232,10 @@ final class PhotoWebFile {
 
     init(copying source: URL) throws {
         url = try TempFiles.makeTemporaryFileURL(prefix: "web-photos", fileExtension: source.pathExtension)
-        try FileManager.default.copyItem(at: source, to: url)
+        // The item provider can withdraw its URL when the callback returns. Keep a
+        // private link for the request, copying only if the filesystem requires it.
+        do { try FileManager.default.linkItem(at: source.resolvingSymlinksInPath(), to: url) }
+        catch { try FileManager.default.copyItem(at: source, to: url) }
     }
 
     deinit { TempFiles.removeItemIfExists(at: url) }
