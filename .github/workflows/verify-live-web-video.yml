@@ -1,0 +1,28 @@
+name: Verify live 3D web sharing
+on:
+  push:
+    branches: [feature/live-3d-web-sharing]
+permissions:
+  contents: read
+jobs:
+  simulator:
+    runs-on: macos-26
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: QuickTunnel/go.mod
+          cache-dependency-path: QuickTunnel/go.sum
+      - name: Make Go available to Xcode build phases
+        run: sudo ln -sf "$(command -v go)" /usr/local/bin/go
+      - name: Build and run the live video tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! xcrun -sdk iphonesimulator metal -v >/dev/null 2>&1; then xcodebuild -downloadComponent MetalToolchain; fi
+          device=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; print(next(d["udid"] for runtime, devices in sorted(json.load(sys.stdin)["devices"].items(), reverse=True) if "iOS" in runtime for d in devices if d["name"].startswith("iPhone")))')
+          xcrun simctl boot "$device" || true
+          xcodebuild -project StereoShift.xcodeproj -scheme StereoShiftTests -destination "platform=iOS Simulator,id=$device" -parallel-testing-enabled NO -collect-test-diagnostics never -only-testing:StereoShiftTests/LiveWebVideoTests test CODE_SIGNING_ALLOWED=NO

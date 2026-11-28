@@ -1,5 +1,6 @@
 import AVFoundation
 import AudioToolbox
+import CoreMedia
 import CoreVideo
 import Foundation
 import UniformTypeIdentifiers
@@ -84,7 +85,6 @@ final class LiveWebEncoder: NSObject, AVAssetWriterDelegate {
                 AVVideoMaxKeyFrameIntervalDurationKey: 1
             ]
         ])
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: videoInput, sourcePixelBufferAttributes: nil)
         guard writer.canAdd(videoInput) else { throw StereoPipelineError.writerSetupFailed }
         writer.add(videoInput)
 
@@ -140,10 +140,16 @@ final class LiveWebEncoder: NSObject, AVAssetWriterDelegate {
                     let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                     // The browser may eagerly read the entire HTTP response. Stay just ahead of playback.
                     try await clock.sleep(until: start.advanced(by: .seconds(max(0, pts.seconds - 2))))
-                    if pts.seconds + frameStep * 0.25 >= nextFrameTime || pts.seconds + frameStep >= duration.seconds {
+                    let remaining = CMTimeSubtract(duration, pts)
+                    let lastFrames = remaining.seconds <= 2 * frameStep + 0.0001
+                    if pts.seconds + frameStep * 0.25 >= nextFrameTime || lastFrames {
                         let renderStart = ProcessInfo.processInfo.systemUptime
                         let sbs = try await processor.renderFrame(pixels, strength: source.strength, options: source.options, state: state)
-                        guard adaptor.append(sbs, withPresentationTime: pts) else { throw writer.error ?? StereoPipelineError.writerAppendFailed }
+                        let inputDuration = CMSampleBufferGetDuration(sample)
+                        let step = inputDuration.isNumeric && inputDuration > .zero
+                            ? inputDuration : CMTime(seconds: frameStep, preferredTimescale: 60_000)
+                        let timed = try Self.videoSample(sbs, at: pts, duration: CMTimeMinimum(step, remaining))
+                        guard videoInput.append(timed) else { throw writer.error ?? StereoPipelineError.writerAppendFailed }
                         // On slower devices, sample fewer pictures while retaining source timestamps and continuous audio.
                         // Exclude the first inference, which may pay the one-off model loading cost.
                         if hasRendered {
@@ -172,7 +178,26 @@ final class LiveWebEncoder: NSObject, AVAssetWriterDelegate {
             if !advanced { try await Task.sleep(for: .milliseconds(4)) }
         }
         guard reader.status == .completed else { throw reader.error ?? StereoPipelineError.mediaDecodingFailed }
+        writer.endSession(atSourceTime: duration)
         await writer.finishWriting()
         guard writer.status == .completed else { throw writer.error ?? StereoPipelineError.exportFailed }
+    }
+
+    // A pixel-buffer adaptor only records the PTS. After a dropped frame the writer can
+    // otherwise reuse the previous frame's long duration for the final picture.
+    private static func videoSample(_ pixels: CVPixelBuffer, at pts: CMTime, duration: CMTime) throws -> CMSampleBuffer {
+        var format: CMVideoFormatDescription?
+        guard CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixels,
+                                                           formatDescriptionOut: &format) == noErr, let format else {
+            throw StereoPipelineError.writerSetupFailed
+        }
+        var timing = CMSampleTimingInfo(duration: duration, presentationTimeStamp: pts, decodeTimeStamp: .invalid)
+        var sample: CMSampleBuffer?
+        guard CMSampleBufferCreateReadyWithImageBuffer(allocator: kCFAllocatorDefault, imageBuffer: pixels,
+                                                       formatDescription: format, sampleTiming: &timing,
+                                                       sampleBufferOut: &sample) == noErr, let sample else {
+            throw StereoPipelineError.writerAppendFailed
+        }
+        return sample
     }
 }
