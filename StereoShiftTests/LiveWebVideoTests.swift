@@ -9,19 +9,26 @@ final class LiveWebVideoTests: XCTestCase {
         options.focusDotsEnabled = false
         let source = LiveWebVideo(sourceURL: url, strength: 0.8, options: options, depthEstimator: DepthEstimator())
         let encoder = LiveWebEncoder()
+        let start = ContinuousClock.now
         let task = encoder.start(source)
         defer { task.cancel() }
 
         // Reassemble the same fragments the browser receives and inspect the actual tracks.
         var bytes = Data()
         var count = 0
+        var firstMediaTime: ContinuousClock.Instant?
         for try await fragment in encoder.fragments {
             if count == 0 { XCTAssertNotNil(fragment.range(of: Data("ftyp".utf8))) }
+            if count == 1 { firstMediaTime = .now }
             bytes.append(fragment)
             encoder.didSend(fragment.count)
             count += 1
         }
         XCTAssertGreaterThan(count, 2)
+        let firstMedia = try XCTUnwrap(firstMediaTime)
+        let streamingTime = firstMedia.duration(to: .now)
+        XCTAssertGreaterThan(streamingTime, .milliseconds(500), "Media should arrive progressively")
+        print("Live Web Share, 14-second clip: first media after \(start.duration(to: firstMedia)), remaining stream in \(streamingTime)")
         let output = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
         defer { try? FileManager.default.removeItem(at: output) }
         try bytes.write(to: output)

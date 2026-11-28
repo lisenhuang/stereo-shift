@@ -151,7 +151,7 @@ final class LiveWebEncoder: NSObject, AVAssetWriterDelegate {
                             estimatedRenderSeconds = estimatedRenderSeconds == 0 ? cost : estimatedRenderSeconds * 0.8 + cost * 0.2
                         }
                         hasRendered = true
-                        let spacing = max(frameStep, min(0.25, estimatedRenderSeconds * 1.15))
+                        let spacing = max(frameStep, min(1.0, estimatedRenderSeconds * 1.15))
                         nextFrameTime = max(nextFrameTime, pts.seconds - frameStep * 0.75) + spacing
                     }
                 } else {
