@@ -90,7 +90,7 @@ final class GalleryQuickTunnelUITests: XCTestCase {
     }
 }
 
-private final class GalleryTestTrust: NSObject, URLSessionDelegate {
+final class GalleryTestTrust: NSObject, URLSessionDelegate {
     let host: String
     let fingerprint: String
 

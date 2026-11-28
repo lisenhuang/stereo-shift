@@ -25,29 +25,15 @@ jobs:
           if ! xcrun -sdk iphonesimulator metal -v >/dev/null 2>&1; then xcodebuild -downloadComponent MetalToolchain; fi
           device=$(xcrun simctl list devices available -j | python3 -c 'import sys,json; print(next(d["udid"] for runtime, devices in sorted(json.load(sys.stdin)["devices"].items(), reverse=True) if "iOS" in runtime for d in devices if d["name"].startswith("iPhone")))')
           xcrun simctl boot "$device" || true
-          args=(-project StereoShift.xcodeproj -scheme StereoShiftTests -destination "platform=iOS Simulator,id=$device" -derivedDataPath "$RUNNER_TEMP/PhotoBuild" -parallel-testing-enabled NO -collect-test-diagnostics never CODE_SIGNING_ALLOWED=NO)
-          xcodebuild "${args[@]}" build-for-testing
-          app="$RUNNER_TEMP/PhotoBuild/Build/Products/Debug-iphonesimulator/StereoShift.app"
-          xcrun simctl install "$device" "$app"
-          xcrun simctl privacy "$device" grant photos com.huanglisen.StereoShift
+          xcrun simctl bootstatus "$device" -b
+          args=(-project StereoShift.xcodeproj -destination "platform=iOS Simulator,id=$device" -derivedDataPath "$RUNNER_TEMP/PhotoBuild" -parallel-testing-enabled NO -collect-test-diagnostics never CODE_SIGNING_ALLOWED=NO)
           xcrun simctl addmedia "$device" "$(find StereoShiftTests -name live-preview-portrait.mp4)"
-          # XCTest can reinstall the host or boot a cloned simulator after provisioning.
-          # Grant the permission to each installed test host while the suite runs.
-          (
-            while true; do
-              for udid in $(xcrun simctl list devices booted -j | python3 -c 'import sys,json; print(" ".join(d["udid"] for ds in json.load(sys.stdin)["devices"].values() for d in ds))'); do
-                if xcrun simctl get_app_container "$udid" com.huanglisen.StereoShift >/dev/null 2>&1; then
-                  xcrun simctl privacy "$udid" grant photos com.huanglisen.StereoShift || true
-                  if [[ "$udid" != "$device" && ! -f "$RUNNER_TEMP/seeded-$udid" ]]; then
-                    xcrun simctl addmedia "$udid" "$(find StereoShiftTests -name live-preview-portrait.mp4)" && touch "$RUNNER_TEMP/seeded-$udid"
-                  fi
-                fi
-              done
-              sleep 4
-            done
-          ) &
-          provision=$!
-          trap 'kill "$provision" 2>/dev/null || true' EXIT
-          xcodebuild "${args[@]}" -only-testing:StereoShiftTests/PhotoWebShareTests -only-testing:StereoShiftTests/LiveWebVideoTests test-without-building | tee "$RUNNER_TEMP/photos-tests.log"
-          grep -F "testLibraryUsesPhotosAuthorisationAndResolvesPermittedVideo]' passed" "$RUNNER_TEMP/photos-tests.log"
-          xcodebuild -project StereoShift.xcodeproj -scheme StereoShiftUITests -destination "platform=iOS Simulator,id=$device" -derivedDataPath "$RUNNER_TEMP/PhotoBuild" -parallel-testing-enabled NO -collect-test-diagnostics never -only-testing:StereoShiftUITests/PhotoWebShareUITests test CODE_SIGNING_ALLOWED=NO
+          cert=StereoShift/Resources/WebShareIdentity.p12
+          if ! openssl pkcs12 -legacy -in "$cert" -clcerts -nokeys -passin pass:StereoShiftLocalWebShare > "$RUNNER_TEMP/gallery.pem" 2>/dev/null; then
+            openssl pkcs12 -in "$cert" -clcerts -nokeys -passin pass:StereoShiftLocalWebShare > "$RUNNER_TEMP/gallery.pem"
+          fi
+          digest=$(openssl x509 -in "$RUNNER_TEMP/gallery.pem" -outform DER | shasum -a 256 | awk '{print $1}')
+          export TEST_RUNNER_STEREOSHIFT_LAN_CERT_SHA256="$digest"
+          xcodebuild "${args[@]}" -scheme StereoShiftUITests -only-testing:StereoShiftUITests/PhotoWebShareUITests test | tee "$RUNNER_TEMP/ui.log"
+          grep -F "testGrantedPhotosLibraryServesSeededVideoThumbnail]' passed" "$RUNNER_TEMP/ui.log"
+          xcodebuild "${args[@]}" -scheme StereoShiftTests -only-testing:StereoShiftTests/PhotoWebShareTests -only-testing:StereoShiftTests/LiveWebVideoTests test
