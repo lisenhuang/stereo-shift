@@ -35,6 +35,73 @@ final class LiveWebVideoTests: XCTestCase {
         XCTAssertEqual(length.seconds, 14, accuracy: 0.3)
     }
 
+#if DEBUG
+    @MainActor
+    func testAuthenticatedLiveOnlyHTTPShare() async throws {
+        let movie = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "live-preview-portrait", withExtension: "mp4"))
+        let source = LiveWebVideo(sourceURL: movie, strength: 0.8, options: Stereo3DOptions(), depthEstimator: DepthEstimator())
+        let access = SubscriptionManager(productIDs: [], userDefaults: UserDefaults(suiteName: UUID().uuidString)!)
+        access.enableDebugPaidAccessForSession()
+
+        // Exercise the real loopback listener used by the public connector without publishing a URL.
+        let listening = expectation(description: "Origin listener ready")
+        var endpoint: (port: UInt16, key: String)?
+        let server = GalleryWebServer(runTunnel: { port, key, _ in
+            await MainActor.run {
+                endpoint = (port, key)
+                listening.fulfill()
+            }
+            try await Task.sleep(for: .seconds(180))
+        }, localAddress: { nil })
+        server.shareLiveVideo(source, access: access)
+        defer { server.stop() }
+        await fulfillment(of: [listening], timeout: 10)
+        let origin = try XCTUnwrap(endpoint)
+        let base = try XCTUnwrap(URL(string: "http://127.0.0.1:\(origin.port)"))
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        let client = URLSession(configuration: config, delegate: NoRedirect(), delegateQueue: nil)
+        defer { client.invalidateAndCancel() }
+        var cookie: String?
+        func request(_ path: String, method: String = "GET") async throws -> (Data, HTTPURLResponse) {
+            var request = URLRequest(url: try XCTUnwrap(URL(string: path, relativeTo: base)))
+            request.httpMethod = method
+            request.setValue(origin.key, forHTTPHeaderField: "X-StereoShift-Origin")
+            request.setValue(cookie, forHTTPHeaderField: "Cookie")
+            let (data, response) = try await client.data(for: request)
+            return (data, try XCTUnwrap(response as? HTTPURLResponse))
+        }
+
+        let (_, locked) = try await request(source.path)
+        XCTAssertEqual(locked.statusCode, 302)
+        let (_, login) = try await request("/session-auth?pin=" + server.accessPIN)
+        XCTAssertEqual(login.statusCode, 303)
+        cookie = try XCTUnwrap(login.value(forHTTPHeaderField: "Set-Cookie")?.components(separatedBy: ";").first)
+        let (list, _) = try await request("/api/items")
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: list) as? [String: Any])
+        XCTAssertEqual(payload["liveVideoPath"] as? String, source.path)
+        XCTAssertEqual(payload["liveOnly"] as? Bool, true)
+        XCTAssertEqual((payload["items"] as? [Any])?.count, 0)
+        let (_, info) = try await request(source.path, method: "HEAD")
+        XCTAssertEqual(info.mimeType, "video/mp4")
+        let (bytes, response) = try await request(source.path)
+        XCTAssertEqual(response.statusCode, 200)
+        XCTAssertNotNil(bytes.range(of: Data("ftyp".utf8)))
+        XCTAssertNotNil(bytes.range(of: Data("moof".utf8)))
+        server.resetAccessPIN()
+        let (_, expired) = try await request(source.path)
+        XCTAssertEqual(expired.statusCode, 302)
+    }
+
+    private final class NoRedirect: NSObject, URLSessionTaskDelegate {
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
+        }
+    }
+#endif
+
     @MainActor
     func testFreeAccountCannotStartLiveShare() {
         let defaults = UserDefaults(suiteName: UUID().uuidString)!
