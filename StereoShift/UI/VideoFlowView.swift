@@ -14,6 +14,7 @@ struct VideoFlowView: View {
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     let importedFileURL: URL?
     let onRequireSubscription: () -> Void
+    let onShareLiveVideo: (LiveWebVideo) -> Void
     let onGenerated: () -> Void
     let onProcessingStateChanged: (Bool) -> Void
 
@@ -70,6 +71,19 @@ struct VideoFlowView: View {
                 .fullScreenCover(isPresented: $showLivePreview) {
                     LiveVideoPreviewView(url: sourceVideoURL, spatial: inputMode == .spatial,
                                          processor: pipeline.videoProcessor, strength: strength, options: videoOptions)
+                }
+                if inputMode == .regular2D {
+                    Button {
+                        guard subscriptionManager.canAccessVideo else { onRequireSubscription(); return }
+                        onShareLiveVideo(LiveWebVideo(sourceURL: sourceVideoURL, strength: strength,
+                                                      options: videoOptions, depthEstimator: pipeline.depthEstimator))
+                    } label: {
+                        Label("Share Live 3D Video", systemImage: "visionpro")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
+                    .disabled(!canGenerate)
                 }
                 pickerControls
             }

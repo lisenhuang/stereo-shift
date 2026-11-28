@@ -306,3 +306,7 @@
 "Mute" = "كتم الصوت";
 "Unmute" = "تشغيل الصوت";
 "This device cannot play spatial video in 3D." = "لا يدعم هذا الجهاز تشغيل الفيديو المكاني بالأبعاد الثلاثة.";
+
+"Share Live 3D Video" = "مشاركة فيديو ثلاثي الأبعاد مباشرةً";
+"Stop Live Video" = "إيقاف مشاركة الفيديو المباشر";
+"Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "افتح الرابط في نظارة الواقع الافتراضي واختر Watch Live 3D ثم Enter VR. أبقِ StereoShift مفتوحًا أثناء المشاهدة.";

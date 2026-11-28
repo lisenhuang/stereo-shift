@@ -144,7 +144,7 @@ func (g *gallery) ProxyHTTP(w connection.ResponseWriter, tr *tracing.TracedHTTPR
 			return nil
 		}
 		p := r.URL.Path
-		if p != "/" && p != "/api/items" && !strings.HasPrefix(p, "/media/") && !strings.HasPrefix(p, "/thumb/") {
+		if p != "/" && p != "/api/items" && !strings.HasPrefix(p, "/media/") && !strings.HasPrefix(p, "/thumb/") && !strings.HasPrefix(p, "/live/") {
 			w.WriteHeader(404)
 			return nil
 		}

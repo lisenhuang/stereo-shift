@@ -306,3 +306,7 @@
 "Mute" = "静音";
 "Unmute" = "取消静音";
 "This device cannot play spatial video in 3D." = "此设备无法以 3D 模式播放空间视频。";
+
+"Share Live 3D Video" = "分享实时 3D 视频";
+"Stop Live Video" = "停止分享实时视频";
+"Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "在头显中打开链接，选择“Watch Live 3D”，然后选择“Enter VR”。观看时请保持 StereoShift 在前台运行。";

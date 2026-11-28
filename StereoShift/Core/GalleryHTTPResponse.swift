@@ -43,6 +43,7 @@ final class GalleryResponseBody {
 }
 
 struct GalleryHTTPResponse {
+    private(set) var liveVideo: LiveWebVideo?
     let status: Int
     var headers: [String: String]
     let body: GalleryResponseBody
@@ -54,6 +55,11 @@ struct GalleryHTTPResponse {
         self.headers["Cache-Control"] = "private, no-store"
         self.body = body
         self.length = length ?? body.length
+    }
+
+    init(liveVideo: LiveWebVideo) {
+        self.init(200, "", headers: ["Content-Type": "video/mp4", "Accept-Ranges": "none"])
+        self.liveVideo = liveVideo
     }
 
     init(_ status: Int, _ text: String = "", headers: [String: String] = [:]) {

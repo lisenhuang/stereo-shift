@@ -374,6 +374,13 @@ struct GalleryView: View {
 
                 if webServer.isRunning {
                     VStack(alignment: .leading, spacing: 8) {
+                        if webServer.isSharingLiveVideo {
+                            Text("Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching.")
+                                .font(.subheadline)
+                            Button("Stop Live Video") { webServer.removeLiveVideo() }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
                         if let hostAddress = webServer.hostAddress {
                             webShareAddress("Local Web Share", address: hostAddress, qr: .local)
                         }

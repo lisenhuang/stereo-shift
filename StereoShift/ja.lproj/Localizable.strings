@@ -306,3 +306,7 @@
 "Mute" = "消音";
 "Unmute" = "消音を解除";
 "This device cannot play spatial video in 3D." = "このデバイスでは空間ビデオを3Dで再生できません。";
+
+"Share Live 3D Video" = "リアルタイム3D動画を共有";
+"Stop Live Video" = "リアルタイム動画の共有を停止";
+"Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching." = "ヘッドセットでリンクを開き、「Watch Live 3D」、「Enter VR」の順に選択してください。視聴中は StereoShift を開いたままにしてください。";

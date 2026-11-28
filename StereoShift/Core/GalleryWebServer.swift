@@ -13,6 +13,7 @@ import UIKit
 #endif
 
 final class GalleryWebServer: ObservableObject {
+    @Published private(set) var isSharingLiveVideo = false
     @Published private(set) var isRunning = false
     @Published private(set) var hostAddress: String?
     @Published private(set) var publicLink: WebShareLinkState = .connecting
@@ -35,6 +36,12 @@ final class GalleryWebServer: ObservableObject {
     private var tunnelGeneration: UUID?
     private var connections: [ObjectIdentifier: NWConnection] = [:]
     private var tunnelConnections: Set<ObjectIdentifier> = []
+    // Live selection, scope and encoder ownership are confined to the same queue as PIN authentication.
+    private var liveVideo: LiveWebVideo?
+    private var liveOnly = false
+    private var liveViewerCookie: String?
+    private var liveConnection: NWConnection?
+    private var liveTask: Task<Void, Never>?
     private var servingPIN = ""
     private let queue = DispatchQueue(label: "com.stereoshift.gallery-web-server", qos: .utility)
     private let pathMonitor = NWPathMonitor()
@@ -73,6 +80,7 @@ final class GalleryWebServer: ObservableObject {
         if let memoryWarningObserver {
             NotificationCenter.default.removeObserver(memoryWarningObserver)
         }
+        liveTask?.cancel()
         localRecoveryTask?.cancel()
         pathMonitor.cancel()
         tunnelOrigin?.cancel()
@@ -119,11 +127,44 @@ final class GalleryWebServer: ObservableObject {
         let newPIN = Self.generateAccessPIN()
         Self.saveAccessPIN(newPIN)
         accessPIN = newPIN
-        queue.async {
+        queue.sync {
+            self.cancelLivePlayback()
             self.servingPIN = newPIN
             self.failedAuthAttempts = 0
             self.authorizedSessionTokens.removeAll()
         }
+    }
+
+    @MainActor
+    func shareLiveVideo(_ source: LiveWebVideo, access: SubscriptionManager) {
+        guard access.canAccessVideo else { return }
+        let startingNewShare = !isRunning
+        queue.sync {
+            cancelLivePlayback()
+            if startingNewShare { liveOnly = true }
+            liveVideo = source
+        }
+        isSharingLiveVideo = true
+        if startingNewShare { start() }
+    }
+
+    func removeLiveVideo() {
+        guard isSharingLiveVideo else { return }
+        let shouldStop = queue.sync {
+            cancelLivePlayback()
+            liveVideo = nil
+            return liveOnly
+        }
+        isSharingLiveVideo = false
+        if shouldStop { stop() }
+    }
+
+    private func cancelLivePlayback() {
+        liveTask?.cancel()
+        liveTask = nil
+        liveViewerCookie = nil
+        liveConnection?.cancel()
+        liveConnection = nil
     }
 
     func start() {
@@ -221,9 +262,13 @@ final class GalleryWebServer: ObservableObject {
         // Take this barrier before returning so late requests cannot use the old session.
         queue.sync {
             servingID = nil
+            cancelLivePlayback()
+            liveVideo = nil
+            liveOnly = false
             authorizedSessionTokens.removeAll()
         }
         isRunning = false
+        isSharingLiveVideo = false
         publicLink = .connecting
         releaseScreenAwakeLockIfNeeded()
     }
@@ -320,9 +365,12 @@ final class GalleryWebServer: ObservableObject {
         connections[key] = connection
         if publicShare { tunnelConnections.insert(key) }
         connection.stateUpdateHandler = { [weak self] state in
-            if case .cancelled = state {
+            switch state {
+            case .failed, .cancelled:
+                if let active = self?.liveConnection, ObjectIdentifier(active) == key { self?.cancelLivePlayback() }
                 self?.connections.removeValue(forKey: key)
                 self?.tunnelConnections.remove(key)
+            default: break
             }
         }
         connection.start(queue: queue)
@@ -358,7 +406,7 @@ final class GalleryWebServer: ObservableObject {
                     } else {
                         response = GalleryHTTPResponse(400)
                     }
-                    self.send(response, headOnly: request?.method == "HEAD", on: connection)
+                    self.send(response, headOnly: request?.method == "HEAD", on: connection, viewerCookie: request?.headers["cookie"])
                     return
                 }
 
@@ -392,6 +440,11 @@ final class GalleryWebServer: ObservableObject {
         case "/api/items":
             return itemsJSON(request)
         default:
+            if request.path.hasPrefix("/live/") {
+                guard let liveVideo, request.path == liveVideo.path else { return GalleryHTTPResponse(404) }
+                return GalleryHTTPResponse(liveVideo: liveVideo)
+            }
+            guard !liveOnly else { return GalleryHTTPResponse(404) }
             let isThumb = request.path.hasPrefix("/thumb/")
             guard isThumb || request.path.hasPrefix("/media/"),
                   let item = item(forPath: request.path, prefix: isThumb ? "/thumb/" : "/media/") else { return GalleryHTTPResponse(404) }
@@ -468,7 +521,7 @@ final class GalleryWebServer: ObservableObject {
         let limit = min(max(Int(request.queryItems["limit"] ?? "") ?? 200, 1), 500)
 
         do {
-            let allItems = try AppGalleryLibrary.loadItemsForWeb()
+            let allItems = liveOnly ? [] : try AppGalleryLibrary.loadItemsForWeb()
             let slice = allItems.dropFirst(offset).prefix(limit)
             var payloadItems: [GalleryPayloadItem] = []
             payloadItems.reserveCapacity(slice.count)
@@ -489,7 +542,8 @@ final class GalleryWebServer: ObservableObject {
                 )
             }
 
-            let payload = GalleryPayload(items: payloadItems, hasMore: offset + payloadItems.count < allItems.count)
+            let payload = GalleryPayload(liveVideoPath: liveVideo?.path, liveOnly: liveOnly, items: payloadItems,
+                                         hasMore: offset + payloadItems.count < allItems.count)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.withoutEscapingSlashes]
             let body = try encoder.encode(payload)
@@ -539,7 +593,11 @@ final class GalleryWebServer: ObservableObject {
         return GalleryHTTPResponse(status, headers, body: body, length: length)
     }
 
-    private func send(_ response: GalleryHTTPResponse, headOnly: Bool, on connection: NWConnection) {
+    private func send(_ response: GalleryHTTPResponse, headOnly: Bool, on connection: NWConnection, viewerCookie: String? = nil) {
+        if let video = response.liveVideo {
+            sendLiveVideo(video, headOnly: headOnly, on: connection, viewerCookie: viewerCookie)
+            return
+        }
         var headers = response.headers
         headers["Content-Length"] = String(response.length)
         headers["Connection"] = "close"
@@ -552,6 +610,56 @@ final class GalleryWebServer: ObservableObject {
             connection.send(content: data, completion: .contentProcessed(sendNext))
         }
         connection.send(content: Data(head.utf8), completion: .contentProcessed(sendNext))
+    }
+
+    private func sendLiveVideo(_ video: LiveWebVideo, headOnly: Bool, on connection: NWConnection, viewerCookie: String?) {
+        if !headOnly, liveConnection != nil {
+            // A replay/reload can arrive before the previous socket reports that the viewer closed it.
+            guard let viewerCookie, viewerCookie == liveViewerCookie else {
+                send(GalleryHTTPResponse(409, "A viewer is already watching this video."), headOnly: false, on: connection)
+                return
+            }
+            cancelLivePlayback()
+        }
+        let headers = "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nCache-Control: private, no-store\r\nAccept-Ranges: none\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        if headOnly {
+            connection.send(content: Data(headers.utf8), completion: .contentProcessed { _ in connection.cancel() })
+            return
+        }
+        liveViewerCookie = viewerCookie
+        liveConnection = connection
+        liveTask = Task.detached(priority: .userInitiated) {
+            defer { connection.cancel() }
+            do {
+                try await Self.write(Data(headers.utf8), on: connection)
+                try Task.checkCancellation()
+                let encoder = LiveWebEncoder()
+                let producer = encoder.start(video)
+                defer { producer.cancel() }
+                for try await fragment in encoder.fragments {
+                    try Task.checkCancellation()
+                    var chunk = Data((String(fragment.count, radix: 16) + "\r\n").utf8)
+                    chunk.append(fragment)
+                    chunk.append(contentsOf: "\r\n".utf8)
+                    try await Self.write(chunk, on: connection)
+                    encoder.didSend(fragment.count)
+                }
+                try Task.checkCancellation()
+                try await Self.write(Data("0\r\n\r\n".utf8), on: connection)
+            } catch {
+                // Closing without the final chunk signals an interrupted conversion to the player.
+                if !Task.isCancelled { Self.logger.debug("Live Web Share ended: \(error.localizedDescription, privacy: .public)") }
+            }
+        }
+    }
+
+    private static func write(_ data: Data, on connection: NWConnection) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume() }
+            })
+        }
     }
 
     private func logMemoryFootprint(_ label: String) {
@@ -1784,6 +1892,7 @@ final class GalleryWebServer: ObservableObject {
       </div>
     </section>
 
+    <button id="liveButton" class="btn-primary" hidden>Watch Live 3D</button>
     <p class="hint">Tip: Use a VR browser on a headset for the full VR entry flow.</p>
     <div id="errorBanner" class="error"></div>
 
@@ -1829,6 +1938,8 @@ final class GalleryWebServer: ObservableObject {
       activeItem: null
     };
 
+    const liveButton = document.getElementById('liveButton');
+    liveButton.onclick = () => openViewer({ id: 'Live 3D Video', type: 'video', mediaPath: state.livePath, live: true });
     const grid = document.getElementById('grid');
     const emptyState = document.getElementById('emptyState');
     const loadMoreButton = document.getElementById('loadMoreButton');
@@ -2083,6 +2194,12 @@ final class GalleryWebServer: ObservableObject {
     }
 
     async function prepareXRMediaSource(item) {
+      if (item.live) {
+        const video = previewVideoElement;
+        if (!video || video.readyState < 2) throw new Error('Wait for the first 3D frame, then enter VR.');
+        await video.play();
+        return { type: 'video', element: video };
+      }
       if (item.type === 'video') {
         const video = document.createElement('video');
         video.src = item.mediaPath;
@@ -2319,7 +2436,7 @@ final class GalleryWebServer: ObservableObject {
 
       showVideoTimeLabel();
       const current = formatVideoTime(video.currentTime || 0);
-      const total = formatVideoTime(video.duration);
+      const total = video.dataset.live ? 'Live 3D' : formatVideoTime(video.duration);
       const labelText = `${current} / ${total}`;
       viewerTime.textContent = labelText;
       updateXRVideoTimeOverlay(labelText);
@@ -2331,7 +2448,7 @@ final class GalleryWebServer: ObservableObject {
       }
 
       const video = xrRuntime.mediaElement;
-      if (!Number.isFinite(video.duration) || video.duration <= 0) {
+      if (video.dataset.live || !Number.isFinite(video.duration) || video.duration <= 0) {
         return;
       }
 
@@ -2855,6 +2972,12 @@ final class GalleryWebServer: ObservableObject {
 
         const payload = await response.json();
         if (request.signal.aborted) return;
+        state.livePath = payload.liveVideoPath;
+        state.liveOnly = payload.liveOnly;
+        liveButton.hidden = !state.livePath;
+        document.querySelector('h1.title').textContent = state.liveOnly ? 'StereoShift Live 3D' : 'StereoShift In-App Gallery';
+        document.querySelector('.subtitle').textContent = state.liveOnly
+          ? 'Watch the selected video as your iPhone converts it to 3D.' : 'Browse your local converted photos and videos.';
         const incoming = Array.isArray(payload.items) ? payload.items : [];
 
         state.offset += incoming.length;
@@ -2916,7 +3039,7 @@ final class GalleryWebServer: ObservableObject {
     }
 
     function render(items = []) {
-      emptyState.style.display = state.offset === 0 ? 'block' : 'none';
+      emptyState.style.display = !state.liveOnly && state.offset === 0 ? 'block' : 'none';
       for (const item of items) {
         const card = document.createElement('article');
         card.className = 'card';
@@ -2954,7 +3077,9 @@ final class GalleryWebServer: ObservableObject {
         }
       }
 
+      releasePreview();
       state.activeItem = item;
+      vrButton.disabled = Boolean(item.live);
       viewerTitle.textContent = item.id || '';
       viewerBody.innerHTML = '';
       previewVideoElement = null;
@@ -2963,9 +3088,24 @@ final class GalleryWebServer: ObservableObject {
       if (item.type === 'video') {
         const video = document.createElement('video');
         video.src = item.mediaPath;
-        video.controls = true;
-        video.autoplay = false;
-        video.loop = true;
+        video.controls = !item.live;
+        video.autoplay = Boolean(item.live);
+        video.loop = !item.live;
+        if (item.live) {
+          video.dataset.live = 'true';
+          viewerTitle.textContent = 'Preparing live 3D…';
+          video.addEventListener('loadeddata', () => {
+            if (previewVideoElement !== video) return;
+            viewerTitle.textContent = item.id;
+            vrButton.disabled = false;
+          }, { once: true });
+          video.addEventListener('error', () => {
+            if (previewVideoElement !== video) return;
+            vrButton.disabled = true;
+            xrRuntime.session?.end().catch(() => {});
+            showDialog('The live stream could not continue. Keep StereoShift open, close any other viewer, and open the video again.', 'Live 3D');
+          });
+        }
         video.playsInline = true;
         video.addEventListener('loadedmetadata', () => updateVideoTimeLabel(video));
         video.addEventListener('durationchange', () => updateVideoTimeLabel(video));
@@ -2974,6 +3114,21 @@ final class GalleryWebServer: ObservableObject {
         previewVideoElement = video;
         updateVideoTimeLabel(video);
         viewerBody.appendChild(video);
+        if (item.live) {
+          const playbackButton = document.createElement('button');
+          playbackButton.className = 'btn-outline';
+          playbackButton.textContent = 'Play';
+          playbackButton.onclick = () => {
+            if (video.ended) { openViewer(item); return; }
+            if (video.paused) video.play().catch(() => {});
+            else video.pause();
+          };
+          video.onplay = () => { playbackButton.textContent = 'Pause'; };
+          video.onpause = () => { playbackButton.textContent = 'Play'; };
+          video.onended = () => { playbackButton.textContent = 'Watch again'; vrButton.disabled = true; };
+          viewerTitle.after(playbackButton);
+          playbackButton.id = 'livePlayback';
+        }
       } else {
         const image = document.createElement('img');
         image.src = item.mediaPath;
@@ -2985,6 +3140,19 @@ final class GalleryWebServer: ObservableObject {
       overlay.setAttribute('aria-hidden', 'false');
     }
 
+    function releasePreview() {
+      document.getElementById('livePlayback')?.remove();
+      const video = previewVideoElement;
+      previewVideoElement = null;
+      if (video) {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      }
+    }
+
+    window.addEventListener('pagehide', releasePreview);
+
     function closeViewer() {
       if (xrRuntime.session) {
         try {
@@ -2994,6 +3162,7 @@ final class GalleryWebServer: ObservableObject {
         }
       }
 
+      releasePreview();
       overlay.classList.remove('show');
       overlay.setAttribute('aria-hidden', 'true');
       viewerBody.innerHTML = '';
@@ -3111,6 +3280,8 @@ struct GalleryHTTPRequest {
 }
 
 private struct GalleryPayload: Encodable {
+    let liveVideoPath: String?
+    let liveOnly: Bool
     let items: [GalleryPayloadItem]
     let hasMore: Bool
 }

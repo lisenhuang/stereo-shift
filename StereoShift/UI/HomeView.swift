@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct HomeView: View {
+    private enum Destination: Hashable { case gallery }
+
     private enum Mode: String, CaseIterable, Identifiable {
         case photo
         case video
@@ -97,6 +99,10 @@ struct HomeView: View {
                                 onRequireSubscription: {
                                     showVideoSubscriptionSheet = true
                                 },
+                                onShareLiveVideo: { video in
+                                    galleryWebServer.shareLiveVideo(video, access: subscriptionManager)
+                                    navigationPath.append(Destination.gallery)
+                                },
                                 onGenerated: {
                                     scrollToBottom(using: proxy)
                                 },
@@ -141,17 +147,15 @@ struct HomeView: View {
 
                         preferencesMenu
 
-                        NavigationLink {
-                            GalleryView(
-                                galleryLibrary: galleryLibrary,
-                                webServer: galleryWebServer,
-                                subscriptionManager: subscriptionManager
-                            )
-                        } label: {
+                        NavigationLink(value: Destination.gallery) {
                             Label("Gallery", systemImage: "photo.on.rectangle.angled")
                         }
                         .disabled(isProcessing)
                     }
+                }
+                .navigationDestination(for: Destination.self) { _ in
+                    GalleryView(galleryLibrary: galleryLibrary, webServer: galleryWebServer,
+                                subscriptionManager: subscriptionManager)
                 }
                 .sheet(item: $pendingInstagramImport) { request in
                     InstagramImportView(request: request) { media in
@@ -217,6 +221,9 @@ struct HomeView: View {
                     await updateChecker.check()
                 }
             }
+        }
+        .onReceive(subscriptionManager.$canAccessVideo) { hasAccess in
+            if !hasAccess { galleryWebServer.removeLiveVideo() }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {

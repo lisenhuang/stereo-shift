@@ -34,6 +34,7 @@ func TestGalleryProxy(t *testing.T) {
 		status                                     int
 	}{
 		{"media with range", "GET", "/media/test.mp4?code=1234", "", "", "/media/test.mp4", 206},
+		{"live video", "GET", "/live/fixture.mp4?code=1234", "", "", "/live/fixture.mp4", 206},
 		{"head", "HEAD", "/media/test.mp4", "", "", "/media/test.mp4", 206},
 		{"page", "GET", "/?code=1234", "", "", "/", 206},
 		{"pagination", "GET", "/api/items?limit=4&code=0000", "", "", "/api/items?limit=4", 206},
