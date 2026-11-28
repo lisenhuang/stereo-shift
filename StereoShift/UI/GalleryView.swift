@@ -11,6 +11,10 @@ struct GalleryView: View {
     @ObservedObject var galleryLibrary: AppGalleryLibrary
     @ObservedObject var webServer: GalleryWebServer
     @ObservedObject var subscriptionManager: SubscriptionManager
+    let depthEstimator: DepthEstimator
+    let webStrength: Float
+    let webOptions: Stereo3DOptions
+    @State private var choosingWebSource = false
     @State private var selectedItem: GalleryItem?
     @State private var isSelecting = false
     @State private var selectedItemIDs: Set<String> = []
@@ -180,6 +184,10 @@ struct GalleryView: View {
         )
         .sheet(item: $selectedItem) { item in
             GalleryItemDetailView(item: item, galleryLibrary: galleryLibrary, subscriptionManager: subscriptionManager)
+        }
+        .sheet(isPresented: $choosingWebSource) {
+            WebShareSourceView(webServer: webServer, access: subscriptionManager, depthEstimator: depthEstimator,
+                               strength: webStrength, options: webOptions)
         }
         .sheet(item: $webShareQR) { source in
             let link = source == .local ? qrURLString : webServer.publicLink.url?.absoluteString
@@ -364,7 +372,7 @@ struct GalleryView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Button {
-                    webServer.toggle()
+                    if webServer.isRunning { webServer.stop() } else { choosingWebSource = true }
                 } label: {
                     Label(webServer.isRunning ? "Stop Web Share" : "Start Network Share", systemImage: webServer.isRunning ? "wifi.slash" : "wifi")
                         .frame(maxWidth: .infinity, alignment: .center)
@@ -374,6 +382,9 @@ struct GalleryView: View {
 
                 if webServer.isRunning {
                     VStack(alignment: .leading, spacing: 8) {
+                        if let source = webServer.photosSource {
+                            Text(source.title).font(.subheadline.bold())
+                        }
                         if webServer.isSharingLiveVideo {
                             Text("Open the link on your headset, choose Watch Live 3D, then Enter VR. Keep StereoShift open while watching.")
                                 .font(.subheadline)

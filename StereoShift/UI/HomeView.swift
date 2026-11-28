@@ -155,7 +155,8 @@ struct HomeView: View {
                 }
                 .navigationDestination(for: Destination.self) { _ in
                     GalleryView(galleryLibrary: galleryLibrary, webServer: galleryWebServer,
-                                subscriptionManager: subscriptionManager)
+                                subscriptionManager: subscriptionManager, depthEstimator: pipeline.depthEstimator,
+                                webStrength: strength, webOptions: stereo3DOptions)
                 }
                 .sheet(item: $pendingInstagramImport) { request in
                     InstagramImportView(request: request) { media in
@@ -223,12 +224,13 @@ struct HomeView: View {
             }
         }
         .onReceive(subscriptionManager.$canAccessVideo) { hasAccess in
-            if !hasAccess { galleryWebServer.removeLiveVideo() }
+            galleryWebServer.updateVideoAccess(hasAccess)
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background {
                 restoreLocalShareOnActivation = galleryWebServer.isRunning
             } else if phase == .active {
+                galleryWebServer.refreshPhotoAccess()
                 if restoreLocalShareOnActivation {
                     restoreLocalShareOnActivation = false
                     galleryWebServer.restoreLocalSharingAfterBackground()

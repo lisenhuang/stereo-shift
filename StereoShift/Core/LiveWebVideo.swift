@@ -8,10 +8,23 @@ import UniformTypeIdentifiers
 /// The phone publishes a session URL, never a URL for the original 2D file.
 struct LiveWebVideo {
     let id = UUID()
-    let sourceURL: URL
+    let asset: AVAsset
+    private let temporaryFile: PhotoWebFile?
     let strength: Float
     let options: Stereo3DOptions
     let depthEstimator: DepthEstimator
+
+    init(asset: AVAsset, temporaryFile: PhotoWebFile? = nil, strength: Float, options: Stereo3DOptions, depthEstimator: DepthEstimator) {
+        self.asset = asset
+        self.temporaryFile = temporaryFile
+        self.strength = strength
+        self.options = options
+        self.depthEstimator = depthEstimator
+    }
+
+    init(sourceURL: URL, strength: Float, options: Stereo3DOptions, depthEstimator: DepthEstimator) {
+        self.init(asset: AVURLAsset(url: sourceURL), strength: strength, options: options, depthEstimator: depthEstimator)
+    }
 
     var path: String { "/live/" + id.uuidString + ".mp4" }
 }
@@ -46,7 +59,8 @@ final class LiveWebEncoder: NSObject, AVAssetWriterDelegate {
     }
 
     private func encode(_ source: LiveWebVideo) async throws {
-        let asset = AVURLAsset(url: source.sourceURL)
+        let asset = source.asset
+        defer { withExtendedLifetime(source) {} }
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
             throw StereoPipelineError.noVideoTrack
         }

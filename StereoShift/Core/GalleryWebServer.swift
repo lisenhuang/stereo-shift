@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import Network
+import Photos
 import os
 import Security
 
@@ -13,6 +14,7 @@ import UIKit
 #endif
 
 final class GalleryWebServer: ObservableObject {
+    @Published private(set) var photosSource: PhotoWebSourceLabel?
     @Published private(set) var isSharingLiveVideo = false
     @Published private(set) var isRunning = false
     @Published private(set) var hostAddress: String?
@@ -39,6 +41,11 @@ final class GalleryWebServer: ObservableObject {
     // Live selection, scope and encoder ownership are confined to the same queue as PIN authentication.
     private var liveVideo: LiveWebVideo?
     private var liveOnly = false
+    private var photos: PhotoWebShare?
+    private var photoObserver: PhotoWebLibraryObserver?
+    private var photosCanPlayVideo = false
+    private var photoTasks: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var livePhotoID: UUID?
     private var liveViewerCookie: String?
     private var liveConnection: NWConnection?
     private var liveTask: Task<Void, Never>?
@@ -129,6 +136,7 @@ final class GalleryWebServer: ObservableObject {
         accessPIN = newPIN
         queue.sync {
             self.cancelLivePlayback()
+            self.cancelPhotoRequests()
             self.servingPIN = newPIN
             self.failedAuthAttempts = 0
             self.authorizedSessionTokens.removeAll()
@@ -138,6 +146,7 @@ final class GalleryWebServer: ObservableObject {
     @MainActor
     func shareLiveVideo(_ source: LiveWebVideo, access: SubscriptionManager) {
         guard access.canAccessVideo else { return }
+        if photosSource != nil { stop() }
         let startingNewShare = !isRunning
         queue.sync {
             cancelLivePlayback()
@@ -146,6 +155,58 @@ final class GalleryWebServer: ObservableObject {
         }
         isSharingLiveVideo = true
         if startingNewShare { start() }
+    }
+
+    @MainActor
+    @discardableResult
+    func startPhotos(_ share: PhotoWebShare, access: SubscriptionManager) -> Bool {
+        guard !isRunning, share.isAvailable else { return false }
+        let canPlay = access.canAccessVideo
+        queue.sync {
+            photos = share
+            photosCanPlayVideo = canPlay
+        }
+        switch share.source {
+        case .selected: photosSource = .selection
+        case .library(let consent):
+            photosSource = consent == .limited ? .limited : .library
+            let observer = PhotoWebLibraryObserver { [weak self] in self?.refreshPhotoAccess() }
+            photoObserver = observer
+            PHPhotoLibrary.shared().register(observer)
+        }
+        start()
+        return true
+    }
+
+    func updateVideoAccess(_ allowed: Bool) {
+        queue.sync {
+            photosCanPlayVideo = allowed
+            if !allowed, photos != nil { cancelLivePlayback() }
+        }
+        if !allowed { removeLiveVideo() }
+    }
+
+    func refreshPhotoAccess() {
+        queue.async {
+            guard let photos = self.photos else { return }
+            guard photos.isAvailable else {
+                self.cancelPhotoRequests()
+                self.cancelLivePlayback()
+                DispatchQueue.main.async {
+                    if self.queue.sync(execute: { self.photos === photos }) { self.stop() }
+                }
+                return
+            }
+            if let id = self.livePhotoID, photos.item(id) == nil { self.cancelLivePlayback() }
+        }
+    }
+
+    private func cancelPhotoRequests() {
+        for (key, task) in photoTasks {
+            task.cancel()
+            connections[key]?.cancel()
+        }
+        photoTasks.removeAll()
     }
 
     func removeLiveVideo() {
@@ -162,6 +223,7 @@ final class GalleryWebServer: ObservableObject {
     private func cancelLivePlayback() {
         liveTask?.cancel()
         liveTask = nil
+        livePhotoID = nil
         liveViewerCookie = nil
         liveConnection?.cancel()
         liveConnection = nil
@@ -254,6 +316,11 @@ final class GalleryWebServer: ObservableObject {
     }
 
     func stop() {
+        if let observer = photoObserver {
+            PHPhotoLibrary.shared().unregisterChangeObserver(observer)
+            photoObserver = nil
+        }
+        photosSource = nil
         localRecoveryTask?.cancel()
         localRecoveryTask = nil
         stopTunnel()
@@ -262,6 +329,9 @@ final class GalleryWebServer: ObservableObject {
         // Take this barrier before returning so late requests cannot use the old session.
         queue.sync {
             servingID = nil
+            cancelPhotoRequests()
+            photos = nil
+            photosCanPlayVideo = false
             cancelLivePlayback()
             liveVideo = nil
             liveOnly = false
@@ -368,6 +438,7 @@ final class GalleryWebServer: ObservableObject {
             switch state {
             case .failed, .cancelled:
                 if let active = self?.liveConnection, ObjectIdentifier(active) == key { self?.cancelLivePlayback() }
+                self?.photoTasks.removeValue(forKey: key)?.cancel()
                 self?.connections.removeValue(forKey: key)
                 self?.tunnelConnections.remove(key)
             default: break
@@ -440,6 +511,19 @@ final class GalleryWebServer: ObservableObject {
         case "/api/items":
             return itemsJSON(request)
         default:
+            if let photos {
+                let parts = request.path.split(separator: "/", omittingEmptySubsequences: false)
+                guard parts.count == 3, parts[0].isEmpty, parts[1] == "thumb" || parts[1] == "media",
+                      let id = UUID(uuidString: String(parts[2])), let item = photos.item(id) else {
+                    return GalleryHTTPResponse(404)
+                }
+                let thumbnail = parts[1] == "thumb"
+                if !thumbnail && item.isVideo && !photosCanPlayVideo { return GalleryHTTPResponse(403) }
+                if request.method == "HEAD" {
+                    return GalleryHTTPResponse(200, headers: ["Content-Type": !thumbnail && item.isVideo ? "video/mp4" : "image/jpeg"])
+                }
+                return GalleryHTTPResponse(photoRequest: .init(id: id, item: item, thumbnail: thumbnail, request: request))
+            }
             if request.path.hasPrefix("/live/") {
                 guard let liveVideo, request.path == liveVideo.path else { return GalleryHTTPResponse(404) }
                 return GalleryHTTPResponse(liveVideo: liveVideo)
@@ -475,6 +559,9 @@ final class GalleryWebServer: ObservableObject {
             guard remaining > 0 else {
                 let id = servingID
                 servingID = nil
+            cancelPhotoRequests()
+            photos = nil
+            photosCanPlayVideo = false
                 DispatchQueue.main.async { [weak self] in
                     guard let self, self.shareSessionID == id else { return }
                     self.stop()
@@ -521,6 +608,13 @@ final class GalleryWebServer: ObservableObject {
         let limit = min(max(Int(request.queryItems["limit"] ?? "") ?? 200, 1), 500)
 
         do {
+            if let photos {
+                guard photos.isAvailable else { return GalleryHTTPResponse(403) }
+                let page = photos.page(offset: offset, limit: limit, canPlayVideo: photosCanPlayVideo)
+                let payload = GalleryPayload(liveVideoPath: nil, liveOnly: false, photos: true, items: page.items, hasMore: page.hasMore)
+                return GalleryHTTPResponse(200, ["Content-Type": "application/json; charset=utf-8"],
+                                           body: GalleryResponseBody(try JSONEncoder().encode(payload)))
+            }
             let allItems = liveOnly ? [] : try AppGalleryLibrary.loadItemsForWeb()
             let slice = allItems.dropFirst(offset).prefix(limit)
             var payloadItems: [GalleryPayloadItem] = []
@@ -594,6 +688,32 @@ final class GalleryWebServer: ObservableObject {
     }
 
     private func send(_ response: GalleryHTTPResponse, headOnly: Bool, on connection: NWConnection, viewerCookie: String? = nil) {
+        if let selection = response.photoRequest, let photos {
+            let key = ObjectIdentifier(connection)
+            guard photoTasks.count < 8 else {
+                send(GalleryHTTPResponse(503, headers: ["Retry-After": "1"]), headOnly: false, on: connection)
+                return
+            }
+            photoTasks[key] = Task.detached(priority: .userInitiated) { [weak self] in
+                let resolved: GalleryHTTPResponse
+                do { resolved = try await photos.response(for: selection.item, thumbnail: selection.thumbnail) }
+                catch { resolved = GalleryHTTPResponse(404, "This item is unavailable on the iPhone.") }
+                guard let self, !Task.isCancelled else { return }
+                self.queue.async {
+                    guard self.photoTasks.removeValue(forKey: key) != nil, self.connections[key] != nil,
+                          self.photos === photos, self.isAuthorized(request: selection.request),
+                          photos.item(selection.id) != nil else { connection.cancel(); return }
+                    if let video = resolved.liveVideo {
+                        guard self.photosCanPlayVideo else {
+                            self.send(GalleryHTTPResponse(403), headOnly: false, on: connection)
+                            return
+                        }
+                        self.sendLiveVideo(video, headOnly: false, on: connection, viewerCookie: viewerCookie, photoID: selection.id)
+                    } else { self.send(resolved, headOnly: false, on: connection) }
+                }
+            }
+            return
+        }
         if let video = response.liveVideo {
             sendLiveVideo(video, headOnly: headOnly, on: connection, viewerCookie: viewerCookie)
             return
@@ -612,7 +732,7 @@ final class GalleryWebServer: ObservableObject {
         connection.send(content: Data(head.utf8), completion: .contentProcessed(sendNext))
     }
 
-    private func sendLiveVideo(_ video: LiveWebVideo, headOnly: Bool, on connection: NWConnection, viewerCookie: String?) {
+    private func sendLiveVideo(_ video: LiveWebVideo, headOnly: Bool, on connection: NWConnection, viewerCookie: String?, photoID: UUID? = nil) {
         if !headOnly, liveConnection != nil {
             // A replay/reload can arrive before the previous socket reports that the viewer closed it.
             guard let viewerCookie, viewerCookie == liveViewerCookie else {
@@ -628,6 +748,7 @@ final class GalleryWebServer: ObservableObject {
         }
         liveViewerCookie = viewerCookie
         liveConnection = connection
+        livePhotoID = photoID
         liveTask = Task.detached(priority: .userInitiated) {
             defer { connection.cancel() }
             do {
@@ -2248,6 +2369,11 @@ final class GalleryWebServer: ObservableObject {
         return { type: 'video', element: video };
       }
 
+      const preview = viewerBody.querySelector('img');
+      if (state.activeItem === item && preview) {
+        await preview.decode();
+        return { type: 'image', element: preview };
+      }
       const image = new Image();
       image.crossOrigin = 'anonymous';
       image.src = item.mediaPath;
@@ -2975,9 +3101,11 @@ final class GalleryWebServer: ObservableObject {
         state.livePath = payload.liveVideoPath;
         state.liveOnly = payload.liveOnly;
         liveButton.hidden = !state.livePath;
-        document.querySelector('h1.title').textContent = state.liveOnly ? 'StereoShift Live 3D' : 'StereoShift In-App Gallery';
+        document.querySelector('h1.title').textContent = payload.photos ? 'iPhone Photos' : state.liveOnly ? 'StereoShift Live 3D' : 'StereoShift In-App Gallery';
         document.querySelector('.subtitle').textContent = state.liveOnly
-          ? 'Watch the selected video as your iPhone converts it to 3D.' : 'Browse your local converted photos and videos.';
+          ? 'Watch the selected video as your iPhone converts it to 3D.' : payload.photos
+          ? 'Open a photo or video to view it in 3D. Keep StereoShift open on the iPhone.' : 'Browse your local converted photos and videos.';
+        emptyState.textContent = payload.photos ? 'There are no photos or videos in this share.' : 'No items in In-App Gallery yet.';
         const incoming = Array.isArray(payload.items) ? payload.items : [];
 
         state.offset += incoming.length;
@@ -3045,7 +3173,7 @@ final class GalleryWebServer: ObservableObject {
         card.className = 'card';
         card.addEventListener('click', () => openViewer(item));
 
-        const mediaType = item.type === 'video' ? 'Video' : 'Photo';
+        const mediaType = item.locked ? 'Video · Upgrade required' : item.type === 'video' ? 'Video' : 'Photo';
 
         card.innerHTML = `
           <div class="thumb">
@@ -3069,6 +3197,10 @@ final class GalleryWebServer: ObservableObject {
     }
 
     function openViewer(item) {
+      if (item.locked) {
+        showDialog('Upgrade on the iPhone to watch this video in live 3D.', 'Live 3D');
+        return;
+      }
       if (xrRuntime.session) {
         try {
           xrRuntime.session.end();
@@ -3133,6 +3265,9 @@ final class GalleryWebServer: ObservableObject {
         const image = document.createElement('img');
         image.src = item.mediaPath;
         image.alt = item.id || 'image';
+        image.addEventListener('error', () => {
+          if (state.activeItem === item) showDialog('The iPhone could not load this photo.', 'Photo unavailable');
+        });
         viewerBody.appendChild(image);
       }
 
@@ -3282,14 +3417,27 @@ struct GalleryHTTPRequest {
 private struct GalleryPayload: Encodable {
     let liveVideoPath: String?
     let liveOnly: Bool
+    var photos = false
     let items: [GalleryPayloadItem]
     let hasMore: Bool
 }
 
-private struct GalleryPayloadItem: Encodable {
+struct GalleryPayloadItem: Encodable {
     let id: String
     let type: String
     let createdAt: String
     let mediaPath: String
     let thumbnailPath: String
+    var live = false
+    var locked = false
+}
+
+enum PhotoWebSourceLabel {
+    case selection, limited, library
+}
+
+private final class PhotoWebLibraryObserver: NSObject, PHPhotoLibraryChangeObserver {
+    let changed: () -> Void
+    init(changed: @escaping () -> Void) { self.changed = changed }
+    func photoLibraryDidChange(_ changeInstance: PHChange) { changed() }
 }

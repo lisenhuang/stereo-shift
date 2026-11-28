@@ -268,7 +268,7 @@ enum MediaPicker {
         return false
     }
 
-    private static func normalizedCGImage(from image: UIImage) -> CGImage? {
+    static func normalizedCGImage(from image: UIImage) -> CGImage? {
         if image.imageOrientation == .up, let cgImage = image.cgImage {
             return cgImage
         }

@@ -42,7 +42,15 @@ final class GalleryResponseBody {
     deinit { try? file?.close() }
 }
 
+struct PhotoWebRequest {
+    let id: UUID
+    let item: PhotoWebShare.Item
+    let thumbnail: Bool
+    let request: GalleryHTTPRequest
+}
+
 struct GalleryHTTPResponse {
+    private(set) var photoRequest: PhotoWebRequest?
     private(set) var liveVideo: LiveWebVideo?
     let status: Int
     var headers: [String: String]
@@ -55,6 +63,11 @@ struct GalleryHTTPResponse {
         self.headers["Cache-Control"] = "private, no-store"
         self.body = body
         self.length = length ?? body.length
+    }
+
+    init(photoRequest: PhotoWebRequest) {
+        self.init(200)
+        self.photoRequest = photoRequest
     }
 
     init(liveVideo: LiveWebVideo) {
