@@ -119,6 +119,10 @@ final class LiveWebEncoder: NSObject, AVAssetWriterDelegate {
         let state = VideoProcessor.FrameState()
         let clock = ContinuousClock()
         let start = clock.now
+        var nextFrameTime = 0.0
+        var estimatedRenderSeconds = 0.0
+        var hasRendered = false
+        let frameStep = 1 / frameRate
         var videoDone = false
         var audioDone = audio == nil
         while !videoDone || !audioDone {
@@ -136,8 +140,20 @@ final class LiveWebEncoder: NSObject, AVAssetWriterDelegate {
                     let pts = CMSampleBufferGetPresentationTimeStamp(sample)
                     // The browser may eagerly read the entire HTTP response. Stay just ahead of playback.
                     try await clock.sleep(until: start.advanced(by: .seconds(max(0, pts.seconds - 2))))
-                    let sbs = try await processor.renderFrame(pixels, strength: source.strength, options: source.options, state: state)
-                    guard adaptor.append(sbs, withPresentationTime: pts) else { throw writer.error ?? StereoPipelineError.writerAppendFailed }
+                    if pts.seconds + frameStep * 0.25 >= nextFrameTime || pts.seconds + frameStep >= duration.seconds {
+                        let renderStart = ProcessInfo.processInfo.systemUptime
+                        let sbs = try await processor.renderFrame(pixels, strength: source.strength, options: source.options, state: state)
+                        guard adaptor.append(sbs, withPresentationTime: pts) else { throw writer.error ?? StereoPipelineError.writerAppendFailed }
+                        // On slower devices, sample fewer pictures while retaining source timestamps and continuous audio.
+                        // Exclude the first inference, which may pay the one-off model loading cost.
+                        if hasRendered {
+                            let cost = ProcessInfo.processInfo.systemUptime - renderStart
+                            estimatedRenderSeconds = estimatedRenderSeconds == 0 ? cost : estimatedRenderSeconds * 0.8 + cost * 0.2
+                        }
+                        hasRendered = true
+                        let spacing = max(frameStep, min(0.25, estimatedRenderSeconds * 1.15))
+                        nextFrameTime = max(nextFrameTime, pts.seconds - frameStep * 0.75) + spacing
+                    }
                 } else {
                     videoInput.markAsFinished()
                     videoDone = true
