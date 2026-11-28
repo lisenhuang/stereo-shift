@@ -99,14 +99,6 @@ final class GalleryWebServer: ObservableObject {
         releaseScreenAwakeLockIfNeeded()
     }
 
-    func toggle() {
-        if isRunning {
-            stop()
-        } else {
-            start()
-        }
-    }
-
     func refreshNetworkStatus() {
         refreshShareNetworkStatus()
     }
@@ -229,7 +221,10 @@ final class GalleryWebServer: ObservableObject {
         liveTask = nil
         livePhotoID = nil
         liveViewerCookie = nil
-        liveConnection?.cancel()
+        if let liveConnection {
+            photoTasks.removeValue(forKey: ObjectIdentifier(liveConnection))?.cancel()
+            liveConnection.cancel()
+        }
         liveConnection = nil
     }
 
@@ -697,6 +692,10 @@ final class GalleryWebServer: ObservableObject {
                 send(GalleryHTTPResponse(503, headers: ["Retry-After": "1"]), headOnly: false, on: connection)
                 return
             }
+            // Reserve the encoder before an iCloud download. A slow older selection
+            // must not replace the newer video when its asset eventually arrives.
+            if !selection.thumbnail && selection.item.isVideo,
+               !claimLivePlayback(on: connection, viewerCookie: viewerCookie, photoID: selection.id) { return }
             photoTasks[key] = Task.detached(priority: .userInitiated) { [weak self] in
                 let resolved: GalleryHTTPResponse
                 do { resolved = try await photos.response(for: selection.item, thumbnail: selection.thumbnail) }
@@ -735,23 +734,27 @@ final class GalleryWebServer: ObservableObject {
         connection.send(content: Data(head.utf8), completion: .contentProcessed(sendNext))
     }
 
-    private func sendLiveVideo(_ video: LiveWebVideo, headOnly: Bool, on connection: NWConnection, viewerCookie: String?, photoID: UUID? = nil) {
-        if !headOnly, liveConnection != nil {
-            // A replay/reload can arrive before the previous socket reports that the viewer closed it.
+    private func claimLivePlayback(on connection: NWConnection, viewerCookie: String?, photoID: UUID?) -> Bool {
+        if let active = liveConnection, active !== connection {
             guard let viewerCookie, viewerCookie == liveViewerCookie else {
-                send(GalleryHTTPResponse(409, "A viewer is already watching this video."), headOnly: false, on: connection)
-                return
+                send(GalleryHTTPResponse(409, "A viewer is already watching a video."), headOnly: false, on: connection)
+                return false
             }
             cancelLivePlayback()
         }
+        liveViewerCookie = viewerCookie
+        liveConnection = connection
+        livePhotoID = photoID
+        return true
+    }
+
+    private func sendLiveVideo(_ video: LiveWebVideo, headOnly: Bool, on connection: NWConnection, viewerCookie: String?, photoID: UUID? = nil) {
+        if !headOnly, !claimLivePlayback(on: connection, viewerCookie: viewerCookie, photoID: photoID) { return }
         let headers = "HTTP/1.1 200 OK\r\nContent-Type: video/mp4\r\nCache-Control: private, no-store\r\nAccept-Ranges: none\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
         if headOnly {
             connection.send(content: Data(headers.utf8), completion: .contentProcessed { _ in connection.cancel() })
             return
         }
-        liveViewerCookie = viewerCookie
-        liveConnection = connection
-        livePhotoID = photoID
         liveTask = Task.detached(priority: .userInitiated) {
             defer { connection.cancel() }
             do {

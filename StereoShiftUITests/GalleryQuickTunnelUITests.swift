@@ -12,6 +12,7 @@ final class GalleryQuickTunnelUITests: XCTestCase {
         app.launch()
         app.buttons["Gallery"].tap()
         app.buttons["Start Network Share"].tap()
+        app.buttons["confirmWebShare"].tap()
         var viewerURL: URL?
         var localQR: URLComponents?
         for (label, publicLink) in [("Show QR Code", false), ("Show public link QR code", true)] {

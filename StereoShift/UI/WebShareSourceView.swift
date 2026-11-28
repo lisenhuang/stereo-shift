@@ -75,6 +75,7 @@ struct WebShareSourceView: View {
                     Section { Text("Anyone with the link and PIN can view the converted items in your StereoShift gallery.") }
                 }
                 Button("Start Network Share", action: start)
+                    .accessibilityIdentifier("confirmWebShare")
                     .disabled(usePhotos && (browseLibrary ? !PhotoWebShare.permitsBrowsing(permission) : results.isEmpty))
             }
             .navigationTitle("Web Share")
